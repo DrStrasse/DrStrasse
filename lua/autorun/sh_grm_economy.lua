@@ -2281,12 +2281,34 @@ if CLIENT then
     surface.CreateFont("GRM_Eco_Title",  { font = "Roboto", size = 19, weight = 800, extended = true })
     surface.CreateFont("GRM_Eco_Normal", { font = "Roboto", size = 14, weight = 500, extended = true })
     surface.CreateFont("GRM_Eco_Small",  { font = "Roboto", size = 12, weight = 400, extended = true })
+    surface.CreateFont("GRMFac_Title",   { font = "Roboto", size = 20, weight = 800, extended = true })
+    surface.CreateFont("GRMFac_Sub",     { font = "Roboto", size = 15, weight = 700, extended = true })
+    surface.CreateFont("GRMFac_Normal",  { font = "Roboto", size = 13, weight = 500, extended = true })
+    surface.CreateFont("GRMFac_Small",   { font = "Roboto", size = 11, weight = 400, extended = true })
+    surface.CreateFont("GRMFac_Btn",     { font = "Roboto", size = 13, weight = 600, extended = true })
+    surface.CreateFont("GRMFac_StatVal", { font = "Roboto", size = 22, weight = 800, extended = true })
 
-    local CUI = {
-        bg = Color(19, 24, 33, 248), panel = Color(33, 42, 56, 245), accent = Color(70, 155, 255),
-        green = Color(55, 185, 105), red = Color(205, 70, 65), yellow = Color(235, 180, 60),
-        text = Color(240, 244, 250), dim = Color(166, 176, 191),
+    local C = {
+        bg         = Color(16, 20, 28, 252),
+        sidebar    = Color(12, 15, 22, 255),
+        card       = Color(22, 28, 38, 240),
+        cardLight  = Color(28, 36, 48, 240),
+        cardHover  = Color(36, 46, 62, 240),
+        border     = Color(38, 48, 66, 200),
+        borderLight= Color(55, 68, 92, 200),
+        accent     = Color(65, 145, 235),
+        accentHover= Color(85, 165, 255),
+        gold       = Color(245, 195, 65),
+        green      = Color(55, 185, 110),
+        greenHover = Color(70, 210, 125),
+        red        = Color(225, 70, 70),
+        redHover   = Color(245, 90, 90),
+        text       = Color(240, 244, 250),
+        dim        = Color(155, 170, 190),
     }
+    local CUI = C
+    CUI.panel = C.card
+    CUI.yellow = C.gold
 
     local function money(n) return GRM and GRM.Format and GRM.Format(n) or (tostring(n) .. " GRM") end
 
@@ -2297,12 +2319,14 @@ if CLIENT then
         -- прячем его и рисуем свой, контрастный.
         f:ShowCloseButton(false)
         f.Paint = function(_, pw, ph)
-            draw.RoundedBox(8, 0, 0, pw, ph, CUI.bg)
-            draw.RoundedBoxEx(8, 0, 0, pw, 36, Color(27, 35, 48), true, true, false, false)
-            draw.SimpleText(title, "GRM_Eco_Title", 13, 18, CUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.RoundedBox(8, 0, 0, pw, ph, C.bg)
+            draw.RoundedBox(8, 0, 0, pw, 46, C.sidebar)
+            surface.SetDrawColor(C.border)
+            surface.DrawOutlinedRect(0, 0, pw, ph)
+            draw.SimpleText(title, "GRMFac_Title", 18, 23, C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
         local bx = vgui.Create("DButton", f)
-        bx:SetText("") bx:SetPos(w - 42, 6) bx:SetSize(30, 24)
+        bx:SetText("") bx:SetPos(w - 44, 8) bx:SetSize(34, 30)
         bx:SetTooltip("Закрыть")
         bx.DoClick = function() f:Close() end
         bx.Paint = function(_, pw, ph)
@@ -2355,25 +2379,13 @@ if CLIENT then
     end
 
     local function buildAdminUI(d, parentTabs)
-        -- parentTabs (находка 172): встроить панель в чужие вкладки (/factions).
-        -- Если не задан — строим в собственном окне adminFrame.
-        -- Находка 177b: доступ к экономике может быть у лидера/зама (Нацбанк),
-        -- но АДМИНИСТРАТИВНЫЕ функции — только у суперадмина:
-        --   • вкладка «Настройки» — суперадмин;
-        --   • «Игроки»: без кнопок изъять/установить (просмотр);
-        --   • «Фракции» → «Штрафы»: настройка прав штрафов — только суперадмин.
         local isSuper = IsValid(LocalPlayer()) and LocalPlayer():IsSuperAdmin() == true
-        local tabs
-        local f
+        local host
         if IsValid(parentTabs) then
-            tabs = parentTabs
-            f = parentTabs
+            host = parentTabs
+            host:Clear()
         else
             if not IsValid(adminFrame) then return end
-            -- GRM-FIX: НЕ adminFrame:Clear() — он удалял служебные дети DFrame
-            -- (btnClose/btnMaxim/btnMinim/lblTitle), из-за чего PerformLayout
-            -- падал с "Tried to use a NULL Panel!" (dframe.lua, SetPos).
-            -- Снимаем только наши панели, потомки DFrame не трогаем.
             for _, ch in ipairs(adminFrame:GetChildren()) do
                 if ch ~= adminFrame.btnClose and ch ~= adminFrame.btnMaxim
                     and ch ~= adminFrame.btnMinim and ch ~= adminFrame.lblTitle
@@ -2381,64 +2393,149 @@ if CLIENT then
                     ch:Remove()
                 end
             end
-            f = adminFrame
-            tabs = vgui.Create("DPropertySheet", f)
-            tabs:Dock(FILL) tabs:DockMargin(8, 44, 8, 8)
-            tabs.Paint = function(_, w, h)
-                draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 245))
+            host = adminFrame
+        end
+
+        local lastTab = host._tabName or "overview"
+        local body = vgui.Create("DPanel", host)
+        body:Dock(FILL)
+        body:DockMargin(IsValid(parentTabs) and 0 or 0, IsValid(parentTabs) and 0 or 46, 0, 0)
+        body:SetPaintBackground(false)
+
+        local sidebar = vgui.Create("DPanel", body)
+        sidebar:Dock(LEFT)
+        sidebar:SetWide(214)
+        sidebar.Paint = function(_, w, h)
+            draw.RoundedBoxEx(0, 0, 0, w, h, C.sidebar, false, false, true, false)
+            surface.SetDrawColor(C.border.r, C.border.g, C.border.b, 80)
+            surface.DrawLine(w - 1, 0, w - 1, h)
+        end
+
+        local content = vgui.Create("DPanel", body)
+        content:Dock(FILL)
+        content:DockMargin(12, 10, 12, 10)
+        content:SetPaintBackground(false)
+
+        local function moneyFmt(n) return money(n) end
+        local function mkBtn(parent, text, col, hoverCol, doClick)
+            local b = vgui.Create("DButton", parent)
+            b:SetText("")
+            b:SetCursor("hand")
+            b.Paint = function(s, w, h)
+                local isHov, isDown, isDis = s:IsHovered(), s:IsDown(), not s:IsEnabled()
+                local bgCol = col or C.accent
+                if isDis then bgCol = Color(34, 40, 52)
+                elseif isDown then bgCol = Color(math.max(bgCol.r - 30, 0), math.max(bgCol.g - 30, 0), math.max(bgCol.b - 30, 0))
+                elseif isHov then bgCol = hoverCol or C.accentHover end
+                draw.RoundedBox(5, 0, isDown and 1 or 0, w, h - (isDown and 1 or 0), bgCol)
+                draw.SimpleText(text, "GRMFac_Btn", w / 2, h / 2 + (isDown and 1 or 0), isDis and C.dim or color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            end
+            b.DoClick = function()
+                surface.PlaySound("ui/buttonclick.wav")
+                if doClick then doClick() end
+            end
+            return b
+        end
+
+        local function skinEntry(te)
+            if not IsValid(te) then return te end
+            te:SetFont("GRMFac_Normal")
+            te:SetTextColor(C.text)
+            te.Paint = function(s, w, h)
+                draw.RoundedBox(4, 0, 0, w, h, Color(24, 30, 40, 245))
+                surface.SetDrawColor(C.border)
+                surface.DrawOutlinedRect(0, 0, w, h)
+                s:DrawTextEntryText(C.text, C.accent, C.text)
+            end
+            return te
+        end
+
+        local function skinCombo(cb)
+            if not IsValid(cb) then return cb end
+            cb:SetFont("GRMFac_Normal")
+            cb:SetTextColor(C.text)
+            cb.Paint = function(s, w, h)
+                draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(30, 38, 52, 245) or Color(24, 30, 40, 245))
+                surface.SetDrawColor(C.border)
+                surface.DrawOutlinedRect(0, 0, w, h)
+            end
+            return cb
+        end
+
+        local function skinListView(lv)
+            if not IsValid(lv) then return end
+            lv:SetPaintBackground(false)
+            lv:SetDataHeight(26)
+            lv:SetHeaderHeight(30)
+            lv.Paint = function(_, w, h)
+                draw.RoundedBox(6, 0, 0, w, h, C.card)
+                surface.SetDrawColor(C.border)
+                surface.DrawOutlinedRect(0, 0, w, h)
+            end
+            if lv.Columns then
+                for _, col in ipairs(lv.Columns) do
+                    if col.Header then
+                        col.Header:SetFont("GRMFac_Btn")
+                        col.Header:SetTextColor(C.gold)
+                        col.Header.Paint = function(s, w, h)
+                            draw.RoundedBox(0, 0, 0, w, h, Color(28, 35, 48))
+                        end
+                    end
+                end
             end
         end
 
-        -- запоминаем активную вкладку, чтобы пересборка свежими данными
-        -- возвращала админа на ту же вкладку (без переоткрытия окна)
-        local lastTab = f._tabName
-        local function sheetPanel(name, icon)
-            local p = vgui.Create("DPanel", tabs)
-            p:SetPaintBackground(false)
-            p.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, CUI.panel) end
-            local sh = tabs:AddSheet(name, p, icon)
-            local oldClick = sh.Tab.DoClick
-            sh.Tab.DoClick = function(...)
-                f._tabName = name
-                if oldClick then oldClick(...) end
-            end
-            if IsValid(sh.Tab) then
-                sh.Tab:SetFont("GRM_Eco_Normal")
-                sh.Tab:SetTextColor(CUI.dim)
-                sh.Tab.Paint = function(self, w, h)
-                    local on = self:IsActive()
-                    draw.RoundedBoxEx(5, 0, 0, w, h, on and Color(33, 42, 56) or Color(22, 28, 38), true, true, false, false)
-                    if on then draw.RoundedBox(0, 0, h - 3, w, 3, CUI.accent) end
+        local function skinLine(line)
+            if not IsValid(line) then return end
+            for _, col in pairs(line.Columns or {}) do
+                if IsValid(col) then
+                    col:SetFont("GRMFac_Normal")
+                    col:SetTextColor(C.text)
                 end
             end
-            if lastTab == name then tabs:SetActiveTab(sh.Tab) end
+            line.Paint = function(s, w, h)
+                if s:IsLineSelected() then
+                    draw.RoundedBox(4, 0, 0, w, h, Color(40, 62, 96, 240))
+                elseif s.Hovered then
+                    draw.RoundedBox(4, 0, 0, w, h, Color(30, 40, 56, 220))
+                end
+            end
+        end
+
+        local function card(parent, h)
+            local p = vgui.Create("DPanel", parent)
+            p:Dock(TOP)
+            p:SetTall(h or 88)
+            p:DockMargin(0, 0, 0, 8)
+            p.Paint = function(_, w, hh)
+                draw.RoundedBox(6, 0, 0, w, hh, C.card)
+                surface.SetDrawColor(C.border)
+                surface.DrawOutlinedRect(0, 0, w, hh)
+            end
+
             return p
         end
 
-        local function lbl(p, txt, col, x, y, w, font)
-            local l = vgui.Create("DLabel", p)
-            l:SetPos(x, y) l:SetSize(w or 560, 22)
-            l:SetText(txt) l:SetFont(font or "GRM_Eco_Normal")
-            l:SetTextColor(col or CUI.dim)
-            return l
-        end
-        local function amtEntry(p, x, y, w)
-            local t = vgui.Create("DTextEntry", p)
-            t:SetPos(x, y) t:SetSize(w or 150, 26)
-            t:SetNumeric(true) t:SetPlaceholderText("Сумма...")
-            return t
-        end
-        local function getAmt(t) return math.max(0, math.floor(tonumber(t:GetValue()) or 0)) end
-        local function histBox(p, list, x, y, w, h)
+        local function histBox(p, list)
             local box = vgui.Create("DScrollPanel", p)
-            box:SetPos(x, y) box:SetSize(w, h)
-            box.Paint = function(_, pw, ph) draw.RoundedBox(6, 0, 0, pw, ph, Color(22, 28, 38, 240)) end
-            for i = #list, math.max(1, #list - 80), -1 do
+            box:Dock(FILL)
+            box:DockMargin(10, 36, 10, 10)
+            box.Paint = function(_, w, h)
+                draw.RoundedBox(4, 0, 0, w, h, Color(18, 22, 30, 200))
+            end
+            local bar = box:GetVBar()
+            if IsValid(bar) then
+                bar:SetWide(6)
+                bar.Paint = function(_, w, h) draw.RoundedBox(3, 0, 0, w, h, Color(18, 22, 32)) end
+                bar.btnUp.Paint, bar.btnDown.Paint = function() end, function() end
+                bar.btnGrip.Paint = function(_, w, h) draw.RoundedBox(3, 0, 0, w, h, C.borderLight) end
+            end
+            for i = #(list or {}), math.max(1, #(list or {}) - 80), -1 do
                 local rec = list[i]
                 local l = vgui.Create("DLabel", box)
-                l:Dock(TOP) l:SetTall(16) l:DockMargin(6, 1, 4, 1)
-                l:SetFont("GRM_Eco_Small") l:SetTextColor(CUI.dim)
-                l:SetText(os.date("%d.%m %H:%M", rec.t or 0) .. " — " .. tostring(rec.s or ""))
+                l:Dock(TOP) l:SetTall(18) l:DockMargin(8, 1, 4, 1)
+                l:SetFont("GRMFac_Small") l:SetTextColor(C.dim)
+                l:SetText(os.date("%d.%m %H:%M", rec.t or 0) .. "  ·  " .. tostring(rec.s or ""))
             end
             return box
         end
@@ -2446,344 +2543,319 @@ if CLIENT then
         local stats = d.stats or {}
         local st = d.state or {}
         local full = d.fullconfig or {}
+        local tabButtons = {}
 
-        -- ═══ ВКЛАДКА 1: ОБЗОР ═══
-        do
-            local p = sheetPanel("Обзор", "icon16/chart_bar.png")
-            lbl(p, "Единая панель управления экономикой сервера", CUI.text, 12, 10, 800, "GRM_Eco_Title")
-            lbl(p, isSuper and "Доступ: только superadmin. Изменения сохраняются сразу и пишутся в фин.лог."
-                or "Режим: доступ к экономике фракции. Административные функции (игроки, штрафы, настройки) — только superadmin.", CUI.dim, 12, 36, 900)
-
-            lbl(p, "ГОС.БЮДЖЕТ: " .. money(st.budget or 0), CUI.yellow, 12, 70, 800, "GRM_Eco_Title")
-            lbl(p, ("Счетов игроков: %d | Наличными на руках: %s | На банковских счетах: %s"):format(
-                stats.players or 0, money(stats.cash or 0), money(stats.bank or 0)), CUI.text, 12, 102, 920)
-            lbl(p, ("Фракций с экономикой: %d | Записей в общем фин.логе: %d"):format(
-                stats.factions or 0, stats.logSize or 0), CUI.text, 12, 128, 920)
-            lbl(p, "Открыть панель: чат /feco_admin (или /salary_admin), консоль grm_salary_admin.", CUI.dim, 12, 154, 920)
-
-            local sv = btn(p, "Сохранить данные на диск", CUI.accent, 260, 32)
-            sv:SetPos(12, 196)
-            sv.DoClick = function() act({ action = "save_now" }) end
+        local function selectTab(key, builder)
+            host._tabName = key
+            for k, b in pairs(tabButtons) do b.isActive = (k == key) end
+            content:Clear()
+            if builder then builder(content) end
         end
 
-        -- ═══ ВКЛАДКА 2: ГОС.БЮДЖЕТ ═══
-        do
-            local p = sheetPanel("Гос.бюджет", "icon16/money.png")
-            lbl(p, "Гос.бюджет: " .. money(st.budget or 0), CUI.yellow, 12, 10, 800, "GRM_Eco_Title")
-            lbl(p, "Сюда поступают налоги с зарплат и штрафы (управляется во вкладке «Настройки»).", CUI.dim, 12, 36, 920)
+        local function addTab(key, label, builder)
+            local btn = vgui.Create("DButton", sidebar)
+            btn:Dock(TOP)
+            btn:SetTall(38)
+            btn:DockMargin(6, 4, 6, 0)
+            btn:SetText("")
+            btn.isActive = false
+            btn.Paint = function(s, w, h)
+                local on, hov = s.isActive, s:IsHovered()
+                if on then draw.RoundedBox(6, 0, 0, w, h, C.accent)
+                elseif hov then draw.RoundedBox(6, 0, 0, w, h, C.cardHover) end
+                draw.SimpleText(label, "GRMFac_Btn", 14, h / 2, (on or hov) and color_white or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+            btn.DoClick = function() selectTab(key, builder) end
+            tabButtons[key] = btn
+        end
 
-            local amt = amtEntry(p, 12, 66, 150)
-            local bg = btn(p, "Пополнить", CUI.green, 120, 26) bg:SetPos(170, 66)
-            bg.DoClick = function() act({ action = "state_give", amount = getAmt(amt) }) end
-            local bt = btn(p, "Изъять", CUI.red, 100, 26) bt:SetPos(296, 66)
-            bt.DoClick = function() act({ action = "state_take", amount = getAmt(amt) }) end
-            -- Находка 178: «Установить» гос.бюджет — только суперадмин
-            -- (лидер/зам/доступные могут пополнять и изымать, но не
-            -- назначать сумму произвольно).
+        local function buildOverview(pnl)
+            local sc = vgui.Create("DScrollPanel", pnl)
+            sc:Dock(FILL)
+            local row = vgui.Create("DPanel", sc)
+            row:Dock(TOP) row:SetTall(110) row:SetPaintBackground(false)
+            row.Paint = function(_, w, h)
+                local cw = math.floor((w - 16) / 3)
+                local function box(x, title, val, col)
+                    draw.RoundedBox(6, x, 0, cw, h, C.card)
+                    surface.SetDrawColor(C.border)
+                    surface.DrawOutlinedRect(x, 0, cw, h)
+                    draw.SimpleText(title, "GRMFac_Small", x + 14, 16, C.dim)
+                    draw.SimpleText(val, "GRMFac_StatVal", x + 14, 48, col)
+                end
+                box(0, "ГОСБЮДЖЕТ", moneyFmt(st.budget or 0), C.gold)
+                box(cw + 8, "НАЛИЧНЫЕ", moneyFmt(stats.cash or 0), C.green)
+                box((cw + 8) * 2, "СЧЕТА БАНКА", moneyFmt(stats.bank or 0), C.accent)
+            end
+            local info = card(sc, 120)
+            info.Paint = function(_, w, h)
+                draw.RoundedBox(6, 0, 0, w, h, C.card)
+                surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h)
+                draw.SimpleText("Единая казна GRM", "GRMFac_Sub", 16, 14, C.text)
+                draw.SimpleText(("Счетов: %d   ·   фракций: %d   ·   записей лога: %d"):format(stats.players or 0, stats.factions or 0, stats.logSize or 0), "GRMFac_Normal", 16, 44, C.dim)
+                draw.SimpleText(isSuper and "Полный доступ суперадмина. Субсидия и закупка бьют в одну казну." or "Режим ведомства: казна и зарплаты. Балансы игроков и глобальные настройки закрыты.", "GRMFac_Small", 16, 70, C.dim)
+                draw.SimpleText("Чат /feco_admin  ·  консоль grm_salary_admin  ·  вкладка «Казна» в /factions", "GRMFac_Small", 16, 90, C.dim)
+            end
+            local bar = card(sc, 56)
+            bar:SetPaintBackground(false)
+            mkBtn(bar, "Сохранить на диск", C.accent, C.accentHover, function() act({ action = "save_now" }) end):Dock(LEFT)
+            bar:GetChildren()[1]:SetWide(200)
+            bar:GetChildren()[1]:DockMargin(12, 12, 0, 12)
+        end
+
+        local function buildState(pnl)
+            local sc = vgui.Create("DScrollPanel", pnl)
+            sc:Dock(FILL)
+            local head = card(sc, 100)
+            head.Paint = function(_, w, h)
+                draw.RoundedBox(6, 0, 0, w, h, C.card)
+                surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h)
+                draw.SimpleText("ГОСУДАРСТВЕННЫЙ БЮДЖЕТ", "GRMFac_Small", 16, 16, C.dim)
+                draw.SimpleText(moneyFmt(st.budget or 0), "GRMFac_StatVal", 16, 44, C.gold)
+            end
+            local ops = card(sc, 168)
+            local amt = vgui.Create("DTextEntry", ops)
+            amt:SetPos(16, 16) amt:SetSize(160, 30) amt:SetNumeric(true) amt:SetPlaceholderText("Сумма…")
+            skinEntry(amt)
+            mkBtn(ops, "Пополнить", C.green, C.greenHover, function() act({ action = "state_give", amount = math.floor(tonumber(amt:GetValue()) or 0) }) end):SetPos(188, 16)
+            ops:GetChildren()[#ops:GetChildren()]:SetSize(120, 30)
+            mkBtn(ops, "Изъять", C.red, C.redHover, function() act({ action = "state_take", amount = math.floor(tonumber(amt:GetValue()) or 0) }) end):SetPos(316, 16)
+            ops:GetChildren()[#ops:GetChildren()]:SetSize(110, 30)
             if isSuper then
-                local bs = btn(p, "Установить", CUI.accent, 110, 26) bs:SetPos(402, 66)
-                bs.DoClick = function() act({ action = "state_set", amount = getAmt(amt) }) end
+                mkBtn(ops, "Установить", C.accent, C.accentHover, function() act({ action = "state_set", amount = math.floor(tonumber(amt:GetValue()) or 0) }) end):SetPos(434, 16)
+                ops:GetChildren()[#ops:GetChildren()]:SetSize(120, 30)
             end
-
-            lbl(p, "Перечислить фракции:", CUI.text, 12, 106, 150)
-            local cmb = vgui.Create("DComboBox", p)
-            cmb:SetPos(170, 104) cmb:SetSize(250, 26)
-            cmb:SetValue("Фракция...")
+            local cmb = vgui.Create("DComboBox", ops)
+            cmb:SetPos(16, 60) cmb:SetSize(260, 30) cmb:SetValue("Фракция…")
+            skinCombo(cmb)
             for n in pairs(d.factions or {}) do cmb:AddChoice(n, n) end
-            local bf = btn(p, "Перечислить из гос.", CUI.yellow, 180, 26) bf:SetPos(430, 104)
-            bf.DoClick = function()
+            mkBtn(ops, "Перечислить из гос.", C.gold, C.cardHover, function()
                 local _, nm = cmb:GetSelected()
-                if nm then act({ action = "state_to_faction", faction = nm, amount = getAmt(amt) }) end
-            end
-
-            lbl(p, "Выплатить игроку:", CUI.text, 12, 140, 150)
-            local cmb2 = vgui.Create("DComboBox", p)
-            cmb2:SetPos(170, 138) cmb2:SetSize(250, 26)
-            cmb2:SetValue("Игрок (все известные)...")
+                if nm then act({ action = "state_to_faction", faction = nm, amount = math.floor(tonumber(amt:GetValue()) or 0) }) end
+            end):SetPos(288, 60)
+            ops:GetChildren()[#ops:GetChildren()]:SetSize(200, 30)
+            local cmb2 = vgui.Create("DComboBox", ops)
+            cmb2:SetPos(16, 104) cmb2:SetSize(260, 30) cmb2:SetValue("Игрок…")
+            skinCombo(cmb2)
             for sid, rec in pairs(d.players or {}) do
-                cmb2:AddChoice(tostring(rec.rpName or rec.name or sid) .. " (" .. tostring(rec.characterLabel or "Персонаж") .. ")", sid)
+                cmb2:AddChoice(tostring(rec.rpName or rec.name or sid), sid)
             end
-            local bp = btn(p, "Выплатить из гос.", CUI.green, 180, 26) bp:SetPos(430, 138)
-            bp.DoClick = function()
+            mkBtn(ops, "Выплатить из гос.", C.green, C.greenHover, function()
                 local _, sid = cmb2:GetSelected()
-                if sid then act({ action = "state_pay", sid = sid, amount = getAmt(amt) }) end
+                if sid then act({ action = "state_pay", sid = sid, amount = math.floor(tonumber(amt:GetValue()) or 0) }) end
+            end):SetPos(288, 104)
+            ops:GetChildren()[#ops:GetChildren()]:SetSize(200, 30)
+            local hist = card(sc, 360)
+            hist.Paint = function(_, w, h)
+                draw.RoundedBox(6, 0, 0, w, h, C.card)
+                surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h)
+                draw.SimpleText("Операции госбюджета", "GRMFac_Sub", 16, 12, C.text)
             end
-
-            lbl(p, "Операции гос.бюджета:", CUI.text, 12, 176, 400)
-            histBox(p, st.history or {}, 12, 200, 930, 320)
+            histBox(hist, st.history or {})
         end
 
-        -- ═══ ВКЛАДКА 3: ИГРОКИ ═══
-        do
-            local p = sheetPanel("Игроки", "icon16/user.png")
-            local list = vgui.Create("DListView", p)
-            list:SetPos(4, 4) list:SetSize(940, 400)
+        local function buildPlayers(pnl)
+            local list = vgui.Create("DListView", pnl)
+            list:Dock(FILL)
             list:SetMultiSelect(false)
-            list:AddColumn("Игрок / персонаж") list:AddColumn("Наличные") list:AddColumn("Счёт в банке")
-
+            list:AddColumn("Игрок / персонаж")
+            list:AddColumn("Наличные")
+            list:AddColumn("Счёт")
+            skinListView(list)
             local sids = {}
             for sid in pairs(d.players or {}) do sids[#sids + 1] = sid end
             table.sort(sids, function(a1, b1)
-                return tostring((d.players[a1] or {}).rpName or (d.players[a1] or {}).name or a1):lower() < tostring((d.players[b1] or {}).rpName or (d.players[b1] or {}).name or b1):lower()
+                return tostring((d.players[a1] or {}).rpName or ""):lower() < tostring((d.players[b1] or {}).rpName or ""):lower()
             end)
             for _, sid in ipairs(sids) do
                 local rec = d.players[sid]
-                local display = tostring(rec.rpName or rec.name or "?") .. "  (" .. tostring(rec.characterLabel or "Персонаж") .. ")"
-                local ln = list:AddLine(display, money(rec.balance or 0), money(rec.bank or 0))
+                local ln = list:AddLine(tostring(rec.rpName or rec.name or "?") .. "  (" .. tostring(rec.characterLabel or "") .. ")", moneyFmt(rec.balance or 0), moneyFmt(rec.bank or 0))
                 ln.Sid = sid
+                skinLine(ln)
             end
-
-            local sel = lbl(p, "Выберите игрока в таблице", CUI.text, 12, 414, 920)
-            -- Находка 177b: кнопки изменения балансов игроков (выдать/изъять/
-            -- установить) — ТОЛЬКО суперадмин. Лидер/зам с доступом к экономике
-            -- видят список (просмотр), но менять балансы не могут.
+            local bar = vgui.Create("DPanel", pnl)
+            bar:Dock(BOTTOM) bar:SetTall(isSuper and 52 or 36) bar:DockMargin(0, 8, 0, 0)
+            bar:SetPaintBackground(false)
             if isSuper then
-                local amt = amtEntry(p, 12, 442, 140)
-                local function forSel(mk)
-                    return function()
-                        if not f._playerSid then return end
-                        act(mk(f._playerSid, getAmt(amt)))
-                    end
+                local amt = vgui.Create("DTextEntry", bar)
+                amt:Dock(LEFT) amt:SetWide(140) amt:SetNumeric(true) amt:SetPlaceholderText("Сумма…")
+                skinEntry(amt)
+                local function sel()
+                    local l = list:GetSelectedLine()
+                    return l and list:GetLine(l).Sid
                 end
-                local b1 = btn(p, "Выдать", CUI.green, 100, 26) b1:SetPos(160, 442)
-                b1.DoClick = forSel(function(sid, v) return { action = "player_give", sid = sid, amount = v } end)
-                local b2 = btn(p, "Изъять", CUI.red, 100, 26) b2:SetPos(266, 442)
-                b2.DoClick = forSel(function(sid, v) return { action = "player_take", sid = sid, amount = v } end)
-                local b3 = btn(p, "Установить наличные", CUI.accent, 180, 26) b3:SetPos(372, 442)
-                b3.DoClick = forSel(function(sid, v) return { action = "player_set", sid = sid, amount = v } end)
-                local b4 = btn(p, "Установить счёт", CUI.yellow, 160, 26) b4:SetPos(558, 442)
-                b4.DoClick = forSel(function(sid, v) return { action = "player_bank_set", sid = sid, amount = v } end)
+                mkBtn(bar, "Выдать", C.green, C.greenHover, function()
+                    local sid = sel()
+                    if sid then act({ action = "player_give", sid = sid, amount = math.floor(tonumber(amt:GetValue()) or 0) }) end
+                end):Dock(LEFT)
+                bar:GetChildren()[#bar:GetChildren()]:SetWide(90)
+                bar:GetChildren()[#bar:GetChildren()]:DockMargin(8, 10, 0, 10)
+                mkBtn(bar, "Изъять", C.red, C.redHover, function()
+                    local sid = sel()
+                    if sid then act({ action = "player_take", sid = sid, amount = math.floor(tonumber(amt:GetValue()) or 0) }) end
+                end):Dock(LEFT)
+                bar:GetChildren()[#bar:GetChildren()]:SetWide(90)
+                bar:GetChildren()[#bar:GetChildren()]:DockMargin(6, 10, 0, 10)
+                mkBtn(bar, "Наличные", C.accent, C.accentHover, function()
+                    local sid = sel()
+                    if sid then act({ action = "player_set", sid = sid, amount = math.floor(tonumber(amt:GetValue()) or 0) }) end
+                end):Dock(LEFT)
+                bar:GetChildren()[#bar:GetChildren()]:SetWide(120)
+                bar:GetChildren()[#bar:GetChildren()]:DockMargin(6, 10, 0, 10)
+                mkBtn(bar, "Счёт", C.gold, C.cardHover, function()
+                    local sid = sel()
+                    if sid then act({ action = "player_bank_set", sid = sid, amount = math.floor(tonumber(amt:GetValue()) or 0) }) end
+                end):Dock(LEFT)
+                bar:GetChildren()[#bar:GetChildren()]:SetWide(90)
+                bar:GetChildren()[#bar:GetChildren()]:DockMargin(6, 10, 0, 10)
             else
-                lbl(p, "Просмотр балансов. Изменение балансов игроков — только superadmin.", CUI.dim, 12, 448, 920)
+                local hint = vgui.Create("DLabel", bar)
+                hint:Dock(FILL)
+                hint:SetFont("GRMFac_Small")
+                hint:SetTextColor(C.dim)
+                hint:SetText("Просмотр. Изменение балансов — только суперадмин.")
             end
-
-            local function showSel(sid)
-                local rec = (d.players or {})[sid]
-                if not rec then return end
-                sel:SetText(("Игрок: %s | наличные %s | счёт %s | %s"):format(
-                    tostring(rec.name or sid), money(rec.balance or 0), money(rec.bank or 0), sid))
-            end
-            list.OnRowSelected = function(_, _, ln)
-                f._playerSid = ln.Sid
-                showSel(ln.Sid)
-            end
-            if f._playerSid then showSel(f._playerSid) end
         end
 
-        -- ═══ ВКЛАДКА 4: ФРАКЦИИ (ЗП, ставки/надбавки, доступ к штрафам) ═══
-        do
-            local pnl = sheetPanel("Фракции", "icon16/group.png")
-            local listW = 230
+        local function buildFactions(pnl)
             local list = vgui.Create("DListView", pnl)
-            list:SetPos(4, 4) list:SetSize(listW, 560)
+            list:Dock(LEFT)
+            list:SetWide(240)
             list:SetMultiSelect(false)
-            list:AddColumn("Фракция") list:AddColumn("Бюджет")
-
+            list:AddColumn("Организация")
+            list:AddColumn("Казна")
+            skinListView(list)
             local names = {}
             for n in pairs(d.factions or {}) do names[#names + 1] = n end
             table.sort(names)
             for _, n in ipairs(names) do
                 local fd = d.factions[n]
-                local ln = list:AddLine(n, money(fd.entry and fd.entry.budget or 0))
+                local ln = list:AddLine(n, moneyFmt(fd.entry and fd.entry.budget or 0))
                 ln.Faction = n
+                skinLine(ln)
             end
-
-            local editor = vgui.Create("DPanel", pnl)
-            editor:SetPos(listW + 12, 4) editor:SetSize(700, 560)
-            editor.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CUI.panel) end
-
-            -- GRM-FIX: DPropertySheet растягивает страницу только при её
-            -- активации, поэтому GetWide()/GetTall() в момент создания почти
-            -- всегда нулевые — список «схлопывался», фракции не отображались.
-            -- Считаем размеры по РЕАЛЬНОЙ раскладке (PerformLayout).
-            local editorSub = nil
-            pnl.PerformLayout = function(_, w, h)
-                list:SetPos(4, 4) list:SetSize(listW, h - 8)
-                if IsValid(editor) then
-                    editor:SetPos(listW + 12, 4)
-                    editor:SetSize(math.max(200, w - listW - 16), h - 8)
-                end
-            end
-            editor.PerformLayout = function(_, w, h)
-                if IsValid(editorSub) then
-                    editorSub:SetPos(8, 58)
-                    editorSub:SetSize(math.max(300, w - 16), math.max(200, h - 66))
-                end
-            end
+            local editor = vgui.Create("DScrollPanel", pnl)
+            editor:Dock(FILL)
+            editor:DockMargin(10, 0, 0, 0)
 
             local function showEditor(name)
                 editor:Clear()
                 local fd = (d.factions or {})[name]
                 if not fd then return end
+                host._restoreFaction = name
                 local e = fd.entry or {}
                 local fp = istable(e.finePerms) and e.finePerms or {}
-                -- восстановление выбранной фракции после пересборки свежими данными
-                f._restoreFaction = name
                 local rolesTbl, deptsTbl, fineChks = {}, {}, {}
-
-                local function label(par, txt, x, y, col, w)
-                    local l = vgui.Create("DLabel", par)
-                    l:SetPos(x, y) l:SetSize(w or 280, 22)
-                    l:SetText(txt) l:SetFont("GRM_Eco_Normal")
-                    l:SetTextColor(col or CUI.dim)
-                    return l
+                local head = card(editor, 86)
+                head.Paint = function(_, w, h)
+                    draw.RoundedBox(6, 0, 0, w, h, C.card)
+                    surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h)
+                    draw.SimpleText(name, "GRMFac_Sub", 16, 14, C.text)
+                    draw.SimpleText("онлайн " .. tostring(fd.online or 0) .. " / " .. tostring(fd.members or 0), "GRMFac_Small", 16, 38, C.dim)
+                    draw.SimpleText(moneyFmt(e.budget or 0), "GRMFac_StatVal", w - 16, 28, C.gold, TEXT_ALIGN_RIGHT)
                 end
-                local function wang(par, x, y, w, val, maxv)
-                    local wn = vgui.Create("DNumberWang", par)
-                    wn:SetPos(x, y) wn:SetSize(w, 24)
-                    wn:SetMin(0) wn:SetMax(maxv or 1000000) wn:SetValue(val or 0)
-                    return wn
+                local pay = card(editor, 200)
+                local function lab(txt, x, y)
+                    local l = vgui.Create("DLabel", pay)
+                    l:SetPos(x, y) l:SetSize(200, 20) l:SetFont("GRMFac_Small") l:SetTextColor(C.dim) l:SetText(txt)
                 end
+                lab("Налог, %", 16, 12)
+                local taxW = vgui.Create("DNumberWang", pay)
+                taxW:SetPos(16, 32) taxW:SetSize(90, 24)
+                taxW:SetMin(0) taxW:SetMax((d.config and math.floor((d.config.maxTax or 0.5) * 100)) or 50)
+                taxW:SetValue(math.floor((e.taxRate or 0) * 100))
+                lab("База ЗП", 120, 12)
+                local baseW = vgui.Create("DNumberWang", pay)
+                baseW:SetPos(120, 32) baseW:SetSize(110, 24)
+                baseW:SetMin(0) baseW:SetMax(10000000) baseW:SetValue(e.baseSalary or 0)
+                lab("Интервал, сек", 246, 12)
+                local intW = vgui.Create("DNumberWang", pay)
+                intW:SetPos(246, 32) intW:SetSize(90, 24)
+                intW:SetMin(30) intW:SetMax(86400) intW:SetValue(e.salaryInterval or 600)
+                local pfb = vgui.Create("DCheckBoxLabel", pay)
+                pfb:SetPos(16, 68) pfb:SetSize(360, 20)
+                pfb:SetText("ЗП из казны фракции") pfb:SetTextColor(C.text)
+                pfb:SetValue(e.payFromBudget and 1 or 0)
+                local bAmt = vgui.Create("DTextEntry", pay)
+                bAmt:SetPos(16, 98) bAmt:SetSize(100, 28) bAmt:SetNumeric(true) bAmt:SetPlaceholderText("Сумма")
+                skinEntry(bAmt)
+                mkBtn(pay, "+ Казна", C.green, C.greenHover, function()
+                    act({ action = "budget_give", faction = name, amount = math.floor(tonumber(bAmt:GetValue()) or 0) })
+                end):SetPos(124, 98)
+                pay:GetChildren()[#pay:GetChildren()]:SetSize(100, 28)
+                mkBtn(pay, "− Казна", C.red, C.redHover, function()
+                    act({ action = "budget_take", faction = name, amount = math.floor(tonumber(bAmt:GetValue()) or 0) })
+                end):SetPos(232, 98)
+                pay:GetChildren()[#pay:GetChildren()]:SetSize(100, 28)
 
-                label(editor, "Фракция: " .. name .. "  (онлайн " .. (fd.online or 0) .. "/" .. (fd.members or 0) .. ")", 12, 8, CUI.text, 420)
-                label(editor, "Бюджет: " .. money(e.budget or 0), 12, 32, CUI.yellow, 420)
-
-                local sub = vgui.Create("DPropertySheet", editor)
-                sub:SetPos(8, 58) sub:SetSize(math.max(300, editor:GetWide() - 16), math.max(200, editor:GetTall() - 66))
-                editorSub = sub
-
-                -- ── ПОДВКЛАДКА: ЗАРПЛАТЫ ──
-                local pz = vgui.Create("DPanel", sub)
-                pz:SetPaintBackground(false)
-                sub:AddSheet("Зарплаты", pz, "icon16/money.png")
-
-                label(pz, "Налог, %:", 10, 12)
-                local taxW = wang(pz, 120, 10, 80, math.floor((e.taxRate or 0) * 100), (d.config and math.floor((d.config.maxTax or 0.5) * 100)) or 50)
-                label(pz, "Базовая ЗП:", 10, 44)
-                local baseW = wang(pz, 120, 42, 110, e.baseSalary or 0)
-                label(pz, "Интервал ЗП, сек:", 10, 76)
-                local intW = wang(pz, 160, 74, 90, e.salaryInterval or 600)
-
-                local pfb = vgui.Create("DCheckBoxLabel", pz)
-                pfb:SetPos(10, 108) pfb:SetSize(280, 22)
-                pfb:SetText("Выплачивать ЗП из бюджета фракции")
-                pfb:SetTextColor(CUI.text) pfb:SetValue(e.payFromBudget and 1 or 0)
-
-                local bAmt = vgui.Create("DTextEntry", pz)
-                bAmt:SetPos(10, 138) bAmt:SetSize(90, 24)
-                bAmt:SetNumeric(true) bAmt:SetPlaceholderText("Сумма")
-                local bgive = btn(pz, "+ Бюджет", CUI.green, 86, 24)
-                bgive:SetPos(106, 138)
-                bgive.DoClick = function()
-                    act({ action = "budget_give", faction = name, amount = math.max(0, math.floor(tonumber(bAmt:GetValue()) or 0)) })
+                local rolesCard = card(editor, 200)
+                rolesCard.Paint = function(_, w, h)
+                    draw.RoundedBox(6, 0, 0, w, h, C.card)
+                    surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h)
+                    draw.SimpleText("ЗП по должностям", "GRMFac_Sub", 14, 10, C.text)
                 end
-                local btake = btn(pz, "- Бюджет", CUI.red, 86, 24)
-                btake:SetPos(198, 138)
-                btake.DoClick = function()
-                    act({ action = "budget_take", faction = name, amount = math.max(0, math.floor(tonumber(bAmt:GetValue()) or 0)) })
-                end
-
-                label(pz, "История:", 10, 174, CUI.text)
-                local histZ = histBox(pz, e.history or {}, 10, 198, 270, 300)
-
-                -- ЗП по ролям (ставки)
-                label(pz, "ЗП по ролям (ставки):", 300, 8, CUI.text)
-                local rolesBox = vgui.Create("DScrollPanel", pz)
-                rolesBox:SetPos(300, 30) rolesBox:SetSize(600, 180)
-                rolesBox.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 240)) end
+                local rolesBox = vgui.Create("DScrollPanel", rolesCard)
+                rolesBox:Dock(FILL) rolesBox:DockMargin(10, 34, 10, 8)
                 for _, rName in ipairs(fd.roles or {}) do
                     local row = vgui.Create("DPanel", rolesBox)
-                    row:Dock(TOP) row:SetTall(26) row:DockMargin(4, 2, 4, 2) row.Paint = nil
-                    local l = vgui.Create("DLabel", row) l:Dock(LEFT) l:SetWide(170)
-                    l:SetText(rName) l:SetFont("GRM_Eco_Small") l:SetTextColor(CUI.text)
+                    row:Dock(TOP) row:SetTall(26) row:DockMargin(0, 0, 0, 2) row.Paint = nil
+                    local l = vgui.Create("DLabel", row) l:Dock(LEFT) l:SetWide(200)
+                    l:SetText(rName) l:SetFont("GRMFac_Small") l:SetTextColor(C.text)
                     local wn = vgui.Create("DNumberWang", row) wn:Dock(RIGHT) wn:SetWide(90)
-                    wn:SetMin(0) wn:SetMax(1000000)
-                    wn:SetValue((e.roleSalaries or {})[rName] or 0)
+                    wn:SetMin(0) wn:SetMax(10000000) wn:SetValue((e.roleSalaries or {})[rName] or 0)
                     rolesTbl[rName] = wn
                 end
-
-                -- ЗП по отделам (надбавки)
-                local deptLbl = label(pz, "ЗП по отделам (надбавки):", 300, 230, CUI.text)
-                local deptsBox = vgui.Create("DScrollPanel", pz)
-                deptsBox:SetPos(300, 254)
-                deptsBox:SetSize(600, 120)
-                deptsBox.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 240)) end
+                local deptCard = card(editor, 160)
+                deptCard.Paint = function(_, w, h)
+                    draw.RoundedBox(6, 0, 0, w, h, C.card)
+                    surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h)
+                    draw.SimpleText("Надбавки отделов", "GRMFac_Sub", 14, 10, C.text)
+                end
+                local deptsBox = vgui.Create("DScrollPanel", deptCard)
+                deptsBox:Dock(FILL) deptsBox:DockMargin(10, 34, 10, 8)
                 for _, dName in ipairs(fd.departments or {}) do
                     local row = vgui.Create("DPanel", deptsBox)
-                    row:Dock(TOP) row:SetTall(26) row:DockMargin(4, 2, 4, 2) row.Paint = nil
-                    local l = vgui.Create("DLabel", row) l:Dock(LEFT) l:SetWide(170)
-                    l:SetText(dName) l:SetFont("GRM_Eco_Small") l:SetTextColor(CUI.text)
+                    row:Dock(TOP) row:SetTall(26) row:DockMargin(0, 0, 0, 2) row.Paint = nil
+                    local l = vgui.Create("DLabel", row) l:Dock(LEFT) l:SetWide(200)
+                    l:SetText(dName) l:SetFont("GRMFac_Small") l:SetTextColor(C.text)
                     local wn = vgui.Create("DNumberWang", row) wn:Dock(RIGHT) wn:SetWide(90)
-                    wn:SetMin(0) wn:SetMax(1000000)
-                    wn:SetValue((e.departmentSalaries or {})[dName] or 0)
+                    wn:SetMin(0) wn:SetMax(10000000) wn:SetValue((e.departmentSalaries or {})[dName] or 0)
                     deptsTbl[dName] = wn
                 end
 
-                -- ── ПОДВКЛАДКА: ШТРАФЫ (доступ фракции к /fine) ──
-                -- Находка 177b/177c/178: СИСТЕМУ штрафов (включение, категории
-                -- целей, роли) настраивает только суперадмин; лидер/зам/
-                -- доступные могут менять только ЧИСЛА: ПРОЦЕНТ со штрафа в
-                -- гос.бюджет (банковская система) и лимит (суперадмин).
-                local pf = vgui.Create("DPanel", sub)
-                pf:SetPaintBackground(false)
-                sub:AddSheet("Штрафы", pf, "icon16/accept.png")
-
-                local maxW = nil  -- лимит суммы (только суперадмин)
-                local pctW = nil  -- процент со штрафа в гос.бюджет (все с доступом)
+                local chEn, chAll, chOwn, chOther, chCiv, maxW, pctW
+                local fine = card(editor, isSuper and 280 or 120)
                 if isSuper then
-                    label(pf, "Доступ фракции [" .. name .. "] к системе штрафов", 10, 8, CUI.text, 560)
-
-                    local chEn = vgui.Create("DCheckBoxLabel", pf)
-                    chEn:SetPos(10, 36) chEn:SetSize(560, 22)
-                    chEn:SetText("Фракции РАЗРЕШЕНО штрафовать (команда /fine)")
-                    chEn:SetTextColor(CUI.text) chEn:SetValue(fp.enabled and 1 or 0)
-
-                    local chAll = vgui.Create("DCheckBoxLabel", pf)
-                    chAll:SetPos(10, 62) chAll:SetSize(560, 22)
-                    chAll:SetText("Штрафовать могут ВСЕ члены фракции (выкл — лидер + роли ниже)")
-                    chAll:SetTextColor(CUI.text) chAll:SetValue(fp.allRoles and 1 or 0)
-
-                    local chOwn = vgui.Create("DCheckBoxLabel", pf)
-                    chOwn:SetPos(10, 88) chOwn:SetSize(560, 22)
-                    chOwn:SetText("Можно штрафовать СВОИХ членов фракции")
-                    chOwn:SetTextColor(CUI.text) chOwn:SetValue(fp.ownFaction and 1 or 0)
-
-                    local chOther = vgui.Create("DCheckBoxLabel", pf)
-                    chOther:SetPos(10, 114) chOther:SetSize(560, 22)
-                    chOther:SetText("Можно штрафовать членов ДРУГИХ ФРАКЦИЙ")
-                    chOther:SetTextColor(CUI.text) chOther:SetValue(fp.otherFactions and 1 or 0)
-
-                    local chCiv = vgui.Create("DCheckBoxLabel", pf)
-                    chCiv:SetPos(10, 140) chCiv:SetSize(560, 22)
-                    chCiv:SetText("Можно штрафовать ГРАЖДАН (игроков без фракции)")
-                    chCiv:SetTextColor(CUI.text) chCiv:SetValue(fp.civilians and 1 or 0)
-
-                    label(pf, "Лимит суммы штрафа (0 = общий максимум):", 10, 174)
-                    maxW = wang(pf, 330, 172, 110, fp.maxAmount or 0, 100000000)
-
-                    label(pf, "Процент со штрафа в ГОС.БЮДЖЕТ, % (0-100):", 10, 206)
-                    pctW = wang(pf, 330, 204, 110, fp.statePercent or 0, 100)
-
-                    label(pf, "Роли с правом штрафовать:", 10, 240, CUI.text, 340)
-                    local rolesFine = vgui.Create("DScrollPanel", pf)
-                    rolesFine:SetPos(10, 264) rolesFine:SetSize(340, 200)
-                    rolesFine.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 240)) end
+                    fine.Paint = function(_, w, h)
+                        draw.RoundedBox(6, 0, 0, w, h, C.card)
+                        surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h)
+                        draw.SimpleText("Штрафы /fine", "GRMFac_Sub", 14, 10, C.text)
+                    end
+                    chEn = vgui.Create("DCheckBoxLabel", fine) chEn:SetPos(16, 36) chEn:SetText("Фракции разрешено штрафовать") chEn:SetTextColor(C.text) chEn:SetValue(fp.enabled and 1 or 0)
+                    chAll = vgui.Create("DCheckBoxLabel", fine) chAll:SetPos(16, 58) chAll:SetText("Все роли") chAll:SetTextColor(C.text) chAll:SetValue(fp.allRoles and 1 or 0)
+                    chOwn = vgui.Create("DCheckBoxLabel", fine) chOwn:SetPos(16, 80) chOwn:SetText("Свои") chOwn:SetTextColor(C.text) chOwn:SetValue(fp.ownFaction and 1 or 0)
+                    chOther = vgui.Create("DCheckBoxLabel", fine) chOther:SetPos(120, 80) chOther:SetText("Чужие фракции") chOther:SetTextColor(C.text) chOther:SetValue(fp.otherFactions and 1 or 0)
+                    chCiv = vgui.Create("DCheckBoxLabel", fine) chCiv:SetPos(280, 80) chCiv:SetText("Граждане") chCiv:SetTextColor(C.text) chCiv:SetValue(fp.civilians and 1 or 0)
+                    maxW = vgui.Create("DNumberWang", fine) maxW:SetPos(16, 110) maxW:SetSize(110, 24) maxW:SetMin(0) maxW:SetMax(1e8) maxW:SetValue(fp.maxAmount or 0)
+                    pctW = vgui.Create("DNumberWang", fine) pctW:SetPos(140, 110) pctW:SetSize(80, 24) pctW:SetMin(0) pctW:SetMax(100) pctW:SetValue(fp.statePercent or 0)
+                    local rf = vgui.Create("DScrollPanel", fine)
+                    rf:SetPos(16, 144) rf:SetSize(320, 120)
                     for _, rName in ipairs(fd.roles or {}) do
-                        local c = vgui.Create("DCheckBoxLabel", rolesFine)
-                        c:Dock(TOP) c:SetTall(20) c:DockMargin(8, 1, 4, 1)
-                        c:SetText(rName) c:SetTextColor(CUI.text)
+                        local c = vgui.Create("DCheckBoxLabel", rf)
+                        c:Dock(TOP) c:SetTall(20) c:SetText(rName) c:SetTextColor(C.text)
                         c:SetValue((fp.roles or {})[rName] and 1 or 0)
                         fineChks[rName] = c
                     end
-
-                    label(pf, "Правила: superadmin может всегда. Лидер фракции —", 370, 264, CUI.dim, 340)
-                    label(pf, "всегда, если включён сам доступ. Отмеченные роли", 370, 286, CUI.dim, 340)
-                    label(pf, "штрафуют дополнительно к лидеру. Категории целей", 370, 308, CUI.dim, 340)
-                    label(pf, "(свои / другие фракции / граждане) настраиваются", 370, 330, CUI.dim, 340)
-                    label(pf, "отдельно. Процент со штрафа идёт в гос.бюджет.", 370, 352, CUI.dim, 340)
                 else
-                    -- не-суперадмин (банковский работник): ПРОЦЕНТ со штрафа
-                    label(pf, "Фракция [" .. name .. "] — процент со штрафа", 10, 8, CUI.text, 560)
-                    label(pf, "Систему штрафов (включение /fine, категории целей, роли) настраивает только superadmin.", 10, 34, CUI.dim, 560)
-                    label(pf, "Процент со штрафа в ГОС.БЮДЖЕТ, % (0-100):", 10, 66)
-                    pctW = wang(pf, 330, 64, 110, fp.statePercent or 0, 100)
-                    label(pf, "Указанный процент каждого штрафа фракции уходит в гос.бюджет (хранилище), остальное — в бюджет фракции.", 10, 98, CUI.dim, 560)
-                    label(pf, "Пополнение/изъятие гос.бюджета дропает деньги в хранилище банка.", 10, 122, CUI.dim, 560)
+                    fine.Paint = function(_, w, h)
+                        draw.RoundedBox(6, 0, 0, w, h, C.card)
+                        surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h)
+                        draw.SimpleText("% штрафа в госбюджет", "GRMFac_Sub", 14, 10, C.text)
+                    end
+                    pctW = vgui.Create("DNumberWang", fine)
+                    pctW:SetPos(16, 44) pctW:SetSize(90, 24) pctW:SetMin(0) pctW:SetMax(100) pctW:SetValue(fp.statePercent or 0)
                 end
 
-                -- ЕДИНОЕ сохранение: зарплаты + (для суперадмина) права штрафов
-                -- Находка 177b: настройку штрафов (fine) лидер/зам/доступные НЕ
-                -- отправляют — сервер её тоже игнорирует для не-суперадминов.
                 local function doSave()
                     local roles, depts = {}, {}
                     for k, wn in pairs(rolesTbl) do roles[k] = math.floor(tonumber(wn:GetValue()) or 0) end
@@ -2800,135 +2872,109 @@ if CLIENT then
                         local froles = {}
                         for k, c in pairs(fineChks) do if c:GetChecked() then froles[k] = true end end
                         payload.fine = {
-                            enabled = chEn:GetChecked(),
-                            allRoles = chAll:GetChecked(),
-                            ownFaction = chOwn:GetChecked(),
-                            otherFactions = chOther:GetChecked(),
+                            enabled = chEn:GetChecked(), allRoles = chAll:GetChecked(),
+                            ownFaction = chOwn:GetChecked(), otherFactions = chOther:GetChecked(),
                             civilians = chCiv:GetChecked(),
                             maxAmount = math.max(0, math.floor(tonumber(maxW:GetValue()) or 0)),
                             statePercent = math.Clamp(math.floor(tonumber(pctW:GetValue()) or 0), 0, 100),
                             roles = froles,
                         }
                     elseif pctW then
-                        -- находка 178: не-суперадмин меняет ПРОЦЕНТ со штрафа (число)
-                        payload.fine = {
-                            statePercent = math.Clamp(math.floor(tonumber(pctW:GetValue()) or 0), 0, 100),
-                        }
+                        payload.fine = { statePercent = math.Clamp(math.floor(tonumber(pctW:GetValue()) or 0), 0, 100) }
                     end
                     act(payload)
-                    -- окно НЕ переоткрываем: сервер пришлёт свежие данные,
-                    -- и этот же фрейм пересоберётся через buildAdminUI.
                 end
-
-                local saveZ = btn(pz, "Сохранить", CUI.green, 150, 32)
-                saveZ:SetPos(10, 520)
-                saveZ.DoClick = doSave
-                local payNow = btn(pz, "Выплатить ЗП сейчас", CUI.yellow, 180, 32)
-                payNow:SetPos(170, 520)
-                payNow.DoClick = function()
+                local bar = card(editor, 52)
+                mkBtn(bar, "Сохранить", C.green, C.greenHover, doSave):Dock(LEFT)
+                bar:GetChildren()[1]:SetWide(150)
+                bar:GetChildren()[1]:DockMargin(12, 10, 0, 10)
+                mkBtn(bar, "Выплатить ЗП сейчас", C.gold, C.cardHover, function()
                     act({ action = "pay_now", faction = name })
-                end
-
-                if isSuper and IsValid(pf) then
-                    local saveF = btn(pf, "Сохранить", CUI.green, 150, 32)
-                    saveF:SetPos(10, 520)
-                    saveF.DoClick = doSave
-                end
-
-                -- GRM-FIX: применяем РЕАЛЬНЫЕ размеры страниц при раскладке
-                pz.PerformLayout = function(_, w, h)
-                    local half = math.max(90, (h - 140) / 2)
-                    if IsValid(histZ)    then histZ:SetSize(270, math.max(60, h - 198 - 52)) end
-                    if IsValid(rolesBox) then rolesBox:SetSize(math.max(200, w - 312), half) end
-                    if IsValid(deptLbl)  then deptLbl:SetPos(300, 34 + half + 10) end
-                    if IsValid(deptsBox) then
-                        deptsBox:SetPos(300, 34 + half + 32)
-                        deptsBox:SetSize(math.max(200, w - 312), math.max(40, half - 50))
-                    end
-                    if IsValid(saveZ)    then saveZ:SetPos(10, h - 42) end
-                    if IsValid(payNow)   then payNow:SetPos(170, h - 42) end
-                end
-                if isSuper and IsValid(pf) then
-                    pf.PerformLayout = function(_, w, h)
-                        if IsValid(rolesFine) then rolesFine:SetSize(340, math.max(80, h - 230 - 56)) end
-                        if IsValid(saveF)     then saveF:SetPos(10, h - 42) end
-                    end
-                end
+                end):Dock(LEFT)
+                bar:GetChildren()[2]:SetWide(180)
+                bar:GetChildren()[2]:DockMargin(8, 10, 0, 10)
             end
-
             list.OnRowSelected = function(_, _, ln) showEditor(ln.Faction) end
-            local restore = f._restoreFaction
-            if restore and (d.factions or {})[restore] then
-                showEditor(restore)
-            elseif #names > 0 then
-                showEditor(names[1])
+            local restore = host._restoreFaction
+            if restore and (d.factions or {})[restore] then showEditor(restore)
+            elseif #names > 0 then showEditor(names[1]) end
+        end
+
+        local function buildLog(pnl)
+            local top = vgui.Create("DPanel", pnl)
+            top:Dock(TOP) top:SetTall(36) top:SetPaintBackground(false)
+            mkBtn(top, "Обновить", C.accent, C.accentHover, function()
+                net.Start(NET_OPEN_ADMIN) net.SendToServer()
+            end):Dock(RIGHT)
+            top:GetChildren()[1]:SetWide(120)
+            local box = vgui.Create("DPanel", pnl)
+            box:Dock(FILL)
+            box.Paint = function(_, w, h)
+                draw.RoundedBox(6, 0, 0, w, h, C.card)
+                surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h)
+                draw.SimpleText("Финансовый журнал", "GRMFac_Sub", 16, 10, C.text)
             end
+            histBox(box, d.log or {})
         end
 
-        -- ═══ ВКЛАДКА 5: ФИН.ЛОГ (все операции сервера) ═══
-        do
-            local p = sheetPanel("Фин.лог", "icon16/table.png")
-            lbl(p, "Последние финансовые операции сервера — все системы двигающие деньги:", CUI.text, 12, 10, 760)
-            local rf = btn(p, "Обновить", CUI.accent, 100, 24)
-            rf:SetPos(844, 8)
-            rf.DoClick = function() net.Start(NET_OPEN_ADMIN) net.SendToServer() end
-            histBox(p, d.log or {}, 12, 40, 932, 480)
-        end
-
-        -- ═══ ВКЛАДКА 6: НАСТРОЙКИ (ТОЛЬКО СУПЕРАДМИН, находка 177b) ═══
-        -- Лидер/зам/доступные её не видят: глобальные настройки экономики —
-        -- прерогатива владельца сервера.
-        if isSuper then do
-            local p = sheetPanel("Настройки", "icon16/cog.png")
-            lbl(p, "Общие настройки экономики — применяются сразу, хранятся в grm_economy.json", CUI.text, 12, 8, 920)
-
+        local function buildCfg(pnl)
+            local sc = vgui.Create("DScrollPanel", pnl)
+            sc:Dock(FILL)
             local wns, cks = {}, {}
-            local function row(txt, key, y, pct, mx)
-                lbl(p, txt, CUI.text, 12, y + 2, 340)
-                local wn = vgui.Create("DNumberWang", p)
-                wn:SetPos(360, y) wn:SetSize(100, 24)
-                wn:SetMin(0) wn:SetMax(mx or 100000000)
+            local function row(txt, key, pct, mx)
+                local r = card(sc, 48)
+                r.Paint = function(_, w, h)
+                    draw.RoundedBox(6, 0, 0, w, h, C.card)
+                    draw.SimpleText(txt, "GRMFac_Normal", 16, h / 2, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                end
+                local wn = vgui.Create("DNumberWang", r)
+                wn:Dock(RIGHT) wn:SetWide(120) wn:DockMargin(0, 10, 12, 10)
+                wn:SetMin(0) wn:SetMax(mx or 1e8)
                 local v = tonumber(full[key]) or 0
                 if pct then v = math.floor(v * 100 + 0.5) end
                 wn:SetValue(v)
                 wns[key] = { wn = wn, pct = pct }
             end
-            local function chk(txt, key, y)
-                local c = vgui.Create("DCheckBoxLabel", p)
-                c:SetPos(12, y) c:SetSize(560, 22)
-                c:SetText(txt) c:SetTextColor(CUI.text)
-                c:SetValue(full[key] and 1 or 0)
+            local function chk(txt, key)
+                local r = card(sc, 40)
+                local c = vgui.Create("DCheckBoxLabel", r)
+                c:Dock(FILL) c:DockMargin(16, 10, 12, 8)
+                c:SetText(txt) c:SetTextColor(C.text) c:SetValue(full[key] and 1 or 0)
                 cks[key] = c
             end
-
-            row("Налог по умолчанию, %", "DefaultTaxRate", 38, true, 100)
-            row("Максимальный налог, %", "MaxTaxRate", 68, true, 100)
-            row("Интервал ЗП по умолчанию, сек", "SalaryInterval", 98, false, 86400)
-            row("Минимальный интервал ЗП, сек", "MinSalaryInterval", 128, false, 3600)
-            row("Записей истории на фракцию", "HistorySize", 158, false, 500)
-            row("Записей общего фин.лога", "LogSize", 188, false, 2000)
-            row("Максимальный штраф", "FineMaxAmount", 218, false, 100000000)
-            row("Дистанция использования банкомата", "UseDistance", 248, false, 1000)
-            row("Стартовый баланс новичка", "StartBalance", 278, false, 100000000)
-
-            lbl(p, "Название валюты:", CUI.text, 12, 312, 340)
-            local cname = vgui.Create("DTextEntry", p)
-            cname:SetPos(360, 308) cname:SetSize(160, 24)
+            row("Налог по умолчанию, %", "DefaultTaxRate", true, 100)
+            row("Максимальный налог, %", "MaxTaxRate", true, 100)
+            row("Интервал ЗП, сек", "SalaryInterval", false, 86400)
+            row("Мин. интервал ЗП, сек", "MinSalaryInterval", false, 3600)
+            row("История фракции", "HistorySize", false, 500)
+            row("Размер лога", "LogSize", false, 2000)
+            row("Макс. штраф", "FineMaxAmount", false, 1e8)
+            row("Дистанция банкомата", "UseDistance", false, 1000)
+            row("Стартовый баланс", "StartBalance", false, 1e8)
+            local nameRow = card(sc, 48)
+            local cname = vgui.Create("DTextEntry", nameRow)
+            cname:Dock(RIGHT) cname:SetWide(180) cname:DockMargin(0, 10, 12, 10)
             cname:SetText(tostring(full.CurrencyName or "GRM"))
-
-            lbl(p, "Модель банкомата:", CUI.text, 12, 342, 340)
-            local cmodel = vgui.Create("DTextEntry", p)
-            cmodel:SetPos(360, 338) cmodel:SetSize(340, 24)
+            skinEntry(cname)
+            nameRow.Paint = function(_, w, h)
+                draw.RoundedBox(6, 0, 0, w, h, C.card)
+                draw.SimpleText("Название валюты", "GRMFac_Normal", 16, h / 2, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+            local mdlRow = card(sc, 48)
+            local cmodel = vgui.Create("DTextEntry", mdlRow)
+            cmodel:Dock(RIGHT) cmodel:SetWide(320) cmodel:DockMargin(0, 10, 12, 10)
             cmodel:SetText(tostring(full.BankTerminalModel or "models/starless/atm.mdl"))
-
-            chk("По умолчанию ЗП выплачивается из бюджета фракции", "PayFromBudget", 376)
-            chk("Штрафы зачисляются в бюджет фракции штрафующего", "FineToBudget", 400)
-            chk("Налоги с зарплат поступают в ГОС.БЮДЖЕТ (выкл — обратно фракции)", "TaxToState", 424)
-            chk("Штрафы без фракции-получателя → гос.бюджет (выкл — сгорают)", "FinesToState", 448)
-
-            local sbtn = btn(p, "Сохранить настройки", CUI.green, 240, 32)
-            sbtn:SetPos(12, 486)
-            sbtn.DoClick = function()
+            skinEntry(cmodel)
+            mdlRow.Paint = function(_, w, h)
+                draw.RoundedBox(6, 0, 0, w, h, C.card)
+                draw.SimpleText("Модель банкомата", "GRMFac_Normal", 16, h / 2, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+            chk("ЗП из бюджета по умолчанию", "PayFromBudget")
+            chk("Штрафы в казну штрафующего", "FineToBudget")
+            chk("Налоги → госбюджет", "TaxToState")
+            chk("Штрафы без фракции → госбюджет", "FinesToState")
+            local save = card(sc, 52)
+            mkBtn(save, "Сохранить настройки", C.green, C.greenHover, function()
                 local out = {}
                 for key, rec in pairs(wns) do
                     local v = math.max(0, math.floor(tonumber(rec.wn:GetValue()) or 0))
@@ -2940,8 +2986,27 @@ if CLIENT then
                 local mdl = string.Trim(tostring(cmodel:GetValue() or ""))
                 if mdl ~= "" then out.BankTerminalModel = mdl end
                 act({ action = "config_save", config = out })
-            end
-        end end -- if isSuper (вкладка «Настройки»)
+            end):Dock(LEFT)
+            save:GetChildren()[1]:SetWide(240)
+            save:GetChildren()[1]:DockMargin(12, 10, 0, 10)
+        end
+
+        addTab("overview", "Обзор", buildOverview)
+        addTab("state", "Госбюджет", buildState)
+        addTab("players", "Игроки", buildPlayers)
+        addTab("factions", "Казна фракций", buildFactions)
+        addTab("log", "Журнал", buildLog)
+        if isSuper then addTab("cfg", "Настройки", buildCfg) end
+
+        local order = { "overview", "state", "players", "factions", "log", "cfg" }
+        local pick = lastTab
+        if not tabButtons[pick] then pick = "overview" end
+        if tabButtons[pick] then
+            selectTab(pick, ({
+                overview = buildOverview, state = buildState, players = buildPlayers,
+                factions = buildFactions, log = buildLog, cfg = buildCfg,
+            })[pick])
+        end
     end
 
     -- Встраивание панели экономики в другие меню (находка 172: /factions)
@@ -2949,10 +3014,8 @@ if CLIENT then
     function GRM.Economy.BuildAdminContent(parent, d)
         if not IsValid(parent) then return end
         parent:Clear()
-        local tabs = vgui.Create("DPropertySheet", parent)
-        tabs:Dock(FILL)
-        buildAdminUI(d or {}, tabs)
-        return tabs
+        buildAdminUI(d or {}, parent)
+        return parent
     end
     function GRM.Economy.EmbedAdminPanel(panel)
         if IsValid(panel) then
@@ -3014,7 +3077,7 @@ if CLIENT then
 
     net.Receive(NET_OPEN_ADMIN, function()
         if IsValid(adminFrame) then adminFrame:Remove() end
-        adminFrame = frame("GRM Economy — единая админ-панель экономики", 1000, 660)
+        adminFrame = frame("Казна GRM", math.Clamp(ScrW() * 0.88, 1100, 1680), math.Clamp(ScrH() * 0.86, 680, 980))
         -- открыли пустой каркас — сразу запрашиваем данные у сервера
         net.Start(NET_OPEN_ADMIN) net.SendToServer()
     end)
