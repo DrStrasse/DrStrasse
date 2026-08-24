@@ -806,6 +806,9 @@ local function launchCard(parent, title, desc, command, col)
         if command == "/doc_admin" or command == "/doccfg" or command == "/docadmin" then
             net.Start("GRM_Doc_AdminGet")
             net.SendToServer()
+        elseif command == "/comp_access" or command == "/pc_access" then
+            if GRM.CompAccess and GRM.CompAccess.OpenMenu then GRM.CompAccess.OpenMenu()
+            else net.Start("GRM_CompAccess_MenuReq") net.SendToServer() end
         elseif command:sub(1, 1) == "/" then
             if GRM.AdminHub and GRM.AdminHub.Launch then
                 GRM.AdminHub.Launch(command)
@@ -840,6 +843,7 @@ local function buildFactions(pnl)
     launchCard(scroll, "Вооружение фракций", "Выдача оружия по подразделениям", "/weapons_admin")
     launchCard(scroll, "Экономика фракций", "Бюджеты, налоги, зарплаты", "/salary_admin")
     launchCard(scroll, "Документы", "Бланки, удостоверения, цвета и доступы", "/doc_admin")
+    launchCard(scroll, "Доступ служебных компьютеров", "Кому можно пользоваться каждым ПК на карте", "/comp_access", C.gold)
 end
 
 local function buildCatalog(pnl)
