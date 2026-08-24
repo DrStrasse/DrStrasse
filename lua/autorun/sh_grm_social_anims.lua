@@ -25,12 +25,12 @@ S.List = {
         hold = true,
         walk = true,
         bones = {
-            ["ValveBiped.Bip01_R_UpperArm"] = Angle(-12, -28, 78),
-            ["ValveBiped.Bip01_R_Forearm"]  = Angle(8, -18, 12),
-            ["ValveBiped.Bip01_R_Hand"]     = Angle(0, 8, 18),
-            ["ValveBiped.Bip01_L_UpperArm"] = Angle(12, -28, -78),
-            ["ValveBiped.Bip01_L_Forearm"]  = Angle(-8, -18, -12),
-            ["ValveBiped.Bip01_L_Hand"]     = Angle(0, 8, -18),
+            ["ValveBiped.Bip01_R_UpperArm"] = Angle(-8, -12, -88),
+            ["ValveBiped.Bip01_R_Forearm"]  = Angle(6, -28, 8),
+            ["ValveBiped.Bip01_R_Hand"]     = Angle(0, 4, 12),
+            ["ValveBiped.Bip01_L_UpperArm"] = Angle(8, -12, 88),
+            ["ValveBiped.Bip01_L_Forearm"]  = Angle(-6, -28, -8),
+            ["ValveBiped.Bip01_L_Hand"]     = Angle(0, 4, -12),
         },
     },
     {
@@ -40,18 +40,12 @@ S.List = {
         crouch = true,
         walk = false,
         bones = {
-            ["ValveBiped.Bip01_Spine"]      = Angle(8, 6, 0),
-            ["ValveBiped.Bip01_Spine2"]     = Angle(4, 4, 0),
-            ["ValveBiped.Bip01_R_Thigh"]    = Angle(8, 18, 0),
-            ["ValveBiped.Bip01_L_Thigh"]    = Angle(-8, 18, 0),
-            ["ValveBiped.Bip01_R_Calf"]     = Angle(0, -28, 0),
-            ["ValveBiped.Bip01_L_Calf"]     = Angle(0, -28, 0),
-            ["ValveBiped.Bip01_R_UpperArm"] = Angle(-10, -22, 82),
-            ["ValveBiped.Bip01_R_Forearm"]  = Angle(6, -14, 10),
-            ["ValveBiped.Bip01_R_Hand"]     = Angle(0, 6, 16),
-            ["ValveBiped.Bip01_L_UpperArm"] = Angle(10, -22, -82),
-            ["ValveBiped.Bip01_L_Forearm"]  = Angle(-6, -14, -10),
-            ["ValveBiped.Bip01_L_Hand"]     = Angle(0, 6, -16),
+            ["ValveBiped.Bip01_R_UpperArm"] = Angle(-8, -12, -88),
+            ["ValveBiped.Bip01_R_Forearm"]  = Angle(6, -28, 8),
+            ["ValveBiped.Bip01_R_Hand"]     = Angle(0, 4, 12),
+            ["ValveBiped.Bip01_L_UpperArm"] = Angle(8, -12, 88),
+            ["ValveBiped.Bip01_L_Forearm"]  = Angle(-6, -28, -8),
+            ["ValveBiped.Bip01_L_Hand"]     = Angle(0, 4, -12),
         },
     },
     {
@@ -61,14 +55,14 @@ S.List = {
         walk = true,
         prop = "models/props_lab/clipboard.mdl",
         bones = {
-            ["ValveBiped.Bip01_R_UpperArm"] = Angle(18, -32, 18),
-            ["ValveBiped.Bip01_R_Forearm"]  = Angle(-8, -48, 12),
-            ["ValveBiped.Bip01_R_Hand"]     = Angle(-12, -8, 24),
-            ["ValveBiped.Bip01_L_UpperArm"] = Angle(-8, -18, -22),
-            ["ValveBiped.Bip01_L_Forearm"]  = Angle(6, -36, -8),
-            ["ValveBiped.Bip01_L_Hand"]     = Angle(10, 4, -12),
-            ["ValveBiped.Bip01_Head1"]      = Angle(0, -12, -8),
-            ["ValveBiped.Bip01_Neck1"]      = Angle(0, -6, 0),
+            ["ValveBiped.Bip01_R_UpperArm"] = Angle(28, -42, 18),
+            ["ValveBiped.Bip01_R_Forearm"]  = Angle(-4, -62, 16),
+            ["ValveBiped.Bip01_R_Hand"]     = Angle(-6, -18, 36),
+            ["ValveBiped.Bip01_L_UpperArm"] = Angle(-16, -28, -18),
+            ["ValveBiped.Bip01_L_Forearm"]  = Angle(8, -48, -10),
+            ["ValveBiped.Bip01_L_Hand"]     = Angle(8, 8, -16),
+            ["ValveBiped.Bip01_Head1"]      = Angle(2, -16, -8),
+            ["ValveBiped.Bip01_Neck1"]      = Angle(0, -8, 0),
         },
     },
 }
@@ -205,6 +199,7 @@ end
 
 local function applyPose(ply, def)
     if not IsValid(ply) or not def then return end
+    if applied[ply] ~= def.id then resetBones(ply) end
     for name, ang in pairs(def.bones or {}) do
         local b = ply:LookupBone(name)
         if b then ply:ManipulateBoneAngles(b, ang) end
@@ -252,7 +247,7 @@ local function wantProp(ply)
     end
 end
 
-hook.Add("PostPlayerDraw", "GRM_Soc_Clip", function(ply)
+hook.Add("PostPlayerDraw", "GRM_Soc_ClipFixed", function(ply)
     if not IsValid(ply) then return end
     local mdl, kind = wantProp(ply)
     if not mdl then
@@ -266,23 +261,25 @@ hook.Add("PostPlayerDraw", "GRM_Soc_Clip", function(ply)
         m = ClientsideModel(mdl)
         if not IsValid(m) then return end
         m:SetNoDraw(true)
-        m:SetModelScale(kind == "phone" and 1.05 or 0.95, 0)
+        m:SetModelScale(kind == "phone" and 1.0 or 0.82, 0)
         clips[ply] = { ent = m, mdl = mdl }
     end
     local bone = ply:LookupBone("ValveBiped.Bip01_R_Hand")
     if not bone then return end
-    local pos, ang = ply:GetBonePosition(bone)
-    if not pos then return end
+    local mtx = ply.GetBoneMatrix and ply:GetBoneMatrix(bone)
+    local pos, ang
+    if mtx then pos, ang = mtx:GetTranslation(), mtx:GetAngles()
+    else pos, ang = ply:GetBonePosition(bone) end
+    if not pos or not ang then return end
     if kind == "phone" then
-        ang:RotateAroundAxis(ang:Right(), 90)
-        ang:RotateAroundAxis(ang:Up(), 180)
-        ang:RotateAroundAxis(ang:Forward(), 8)
-        pos = pos + ang:Forward() * 2.4 + ang:Right() * 1.2 + ang:Up() * 0.6
-    else
-        ang:RotateAroundAxis(ang:Right(), 200)
-        ang:RotateAroundAxis(ang:Up(), 12)
         ang:RotateAroundAxis(ang:Forward(), 90)
-        pos = pos + ang:Forward() * 3 + ang:Right() * 1.5 + ang:Up() * 1
+        ang:RotateAroundAxis(ang:Right(), 90)
+        pos = pos + ang:Up() * 1.2 + ang:Forward() * 3.2 + ang:Right() * -0.4
+    else
+        ang:RotateAroundAxis(ang:Forward(), 95)
+        ang:RotateAroundAxis(ang:Right(), 8)
+        ang:RotateAroundAxis(ang:Up(), 4)
+        pos = pos + ang:Forward() * 5.8 + ang:Right() * 0.2 + ang:Up() * 0.8
     end
     m:SetPos(pos)
     m:SetAngles(ang)
@@ -444,7 +441,37 @@ hook.Add("HUDPaint", "GRM_Soc_Radial", function()
     end
 end)
 
+function S.OpenPicker()
+    if IsValid(S._picker) then S._picker:Remove() end
+    local f = vgui.Create("DFrame")
+    S._picker = f
+    f:SetTitle("")
+    f:SetSize(320, 250)
+    f:Center()
+    f:MakePopup()
+    f:ShowCloseButton(true)
+    f.Paint = function(_, w, h)
+        draw.RoundedBox(8, 0, 0, w, h, Color(16, 20, 28, 250))
+        draw.SimpleText("Соц. анимации", "GRMSoc_Head", 14, 18, Color(245, 195, 65), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    end
+    local y = 42
+    for _, def in ipairs(S.List) do
+        local b = vgui.Create("DButton", f)
+        b:SetPos(16, y) b:SetSize(288, 36) b:SetText(def.name)
+        b:SetFont("GRMSoc_Body")
+        b.DoClick = function() sendPlay(def.id) if IsValid(f) then f:Close() end end
+        y = y + 42
+    end
+    local stop = vgui.Create("DButton", f)
+    stop:SetPos(16, y) stop:SetSize(288, 32) stop:SetText("Снять позу")
+    stop.DoClick = function() sendPlay("stop") if IsValid(f) then f:Close() end end
+end
+
 function S.OpenFromContext()
+    S.OpenPicker()
+end
+
+function S._OpenFromContextLegacy()
     S._fromCtx = true
     S.OpenRadial()
     timer.Create("GRM_Soc_CtxHold", 8, 1, function()
@@ -494,11 +521,6 @@ hook.Add("GRM_F4_BuildTabs", "GRM_Soc_F4", function(sheet)
     local stop = vgui.Create("DButton", card)
     stop:SetPos(280, 108) stop:SetSize(160, 26) stop:SetText("Снять позу")
     stop.DoClick = function() sendPlay("stop") end
-    sheet:AddSheet("Анимации", p, "icon16/user_comment.png")
-end)
-
-print("[GRM Social] client v" .. S.Version)
-Play("stop") end
     sheet:AddSheet("Анимации", p, "icon16/user_comment.png")
 end)
 
