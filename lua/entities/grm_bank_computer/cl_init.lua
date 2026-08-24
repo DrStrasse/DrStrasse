@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    grm_bank_computer — клиент: 3D2D экран + меню управления банком
+    grm_bank_computer — клиент: 3D2D + меню в стиле GRM (не Derma)
 ----------------------------------------------------------------------]]
 include("shared.lua")
 
@@ -7,9 +7,15 @@ surface.CreateFont("GRMBComp_Title", { font = "Roboto", size = 18, weight = 900,
 surface.CreateFont("GRMBComp_Head",  { font = "Roboto", size = 15, weight = 700, extended = true })
 surface.CreateFont("GRMBComp_Norm",  { font = "Roboto", size = 13, weight = 500, extended = true })
 surface.CreateFont("GRMBComp_Small", { font = "Roboto", size = 11, weight = 400, extended = true })
+surface.CreateFont("GRMBComp_Stat",  { font = "Roboto", size = 20, weight = 800, extended = true })
 
 local function money(n)
     return GRM and GRM.Format and GRM.Format(tonumber(n) or 0) or (tostring(math.floor(tonumber(n) or 0)) .. " GRM")
+end
+
+local function facName(key)
+    if GRM.Factions and GRM.Factions.DisplayName then return GRM.Factions.DisplayName(key) end
+    return tostring(key or "")
 end
 
 function ENT:Draw()
@@ -24,27 +30,28 @@ function ENT:Draw()
     ang:RotateAroundAxis(ang:Right(), 90)
 
     cam.Start3D2D(pos, Angle(0, ang.y, 90), 0.07)
-        draw.RoundedBox(6, -140, -28, 280, 56, Color(16, 22, 32, 230))
-        draw.RoundedBox(4, -138, -26, 276, 24, Color(30, 42, 60, 245))
-        draw.SimpleText("КОМПЬЮТЕР УПРАВЛЕНИЯ", "GRMBComp_Head", 0, -14, Color(100, 200, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        draw.SimpleText("[E] Финансовые операции банка", "GRMBComp_Small", 0, 14, Color(220, 230, 245), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.RoundedBox(6, -150, -30, 300, 60, Color(16, 20, 28, 240))
+        draw.RoundedBoxEx(6, -150, -30, 300, 26, Color(12, 15, 22, 255), true, true, false, false)
+        draw.SimpleText("КАЗНА GRM", "GRMBComp_Head", 0, -17, Color(245, 195, 65), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("[E]  госбюджет · субсидии · хранилища", "GRMBComp_Small", 0, 12, Color(200, 210, 225), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     cam.End3D2D()
 end
 
--- ── Клиентский интерфейс управления банком ─────────────────────────
 local C = {
-    bg      = Color(19, 24, 34, 250),
-    panel   = Color(28, 36, 50, 245),
-    header  = Color(25, 32, 45, 255),
-    accent  = Color(70, 155, 255),
-    gold    = Color(245, 190, 60),
-    green   = Color(65, 190, 110),
-    red     = Color(225, 75, 75),
+    bg      = Color(16, 20, 28, 252),
+    sidebar = Color(12, 15, 22, 255),
+    panel   = Color(22, 28, 38, 245),
+    card    = Color(28, 36, 48, 245),
+    hover   = Color(36, 46, 62, 245),
+    border  = Color(38, 48, 66, 200),
+    accent  = Color(65, 145, 235),
+    gold    = Color(245, 195, 65),
+    green   = Color(55, 185, 110),
+    red     = Color(225, 70, 70),
+    teal    = Color(75, 195, 170),
     text    = Color(240, 244, 250),
-    dim     = Color(160, 172, 190),
+    dim     = Color(155, 170, 190),
 }
-
-local compFrame = nil
 
 local function sendAction(comp, action, target, amount)
     if not IsValid(comp) then return end
@@ -56,219 +63,347 @@ local function sendAction(comp, action, target, amount)
     net.SendToServer()
 end
 
+local function grmPrompt(title, hint, def, cb)
+    local m = vgui.Create("DFrame")
+    m:SetTitle("")
+    m:SetSize(420, 176)
+    m:Center()
+    m:MakePopup()
+    m:ShowCloseButton(false)
+    m.Paint = function(_, w, h)
+        draw.RoundedBox(8, 0, 0, w, h, C.bg)
+        draw.RoundedBoxEx(8, 0, 0, w, 40, C.sidebar, true, true, false, false)
+        surface.SetDrawColor(C.border)
+        surface.DrawOutlinedRect(0, 0, w, h)
+        draw.SimpleText(title, "GRMBComp_Head", 16, 20, C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    end
+    local te = vgui.Create("DTextEntry", m)
+    te:SetPos(16, 56)
+    te:SetSize(388, 34)
+    te:SetNumeric(true)
+    te:SetFont("GRMBComp_Norm")
+    te:SetTextColor(C.text)
+    te:SetPlaceholderText(hint or "Сумма GRM")
+    te:SetText(tostring(def or ""))
+    te.Paint = function(s, w, h)
+        draw.RoundedBox(5, 0, 0, w, h, Color(24, 30, 40, 245))
+        surface.SetDrawColor(C.border)
+        surface.DrawOutlinedRect(0, 0, w, h)
+        if (s:GetText() or "") == "" and not s:HasFocus() then
+            draw.SimpleText(hint or "Сумма GRM", "GRMBComp_Small", 10, h / 2, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        end
+        s:DrawTextEntryText(C.text, C.accent, C.text)
+    end
+    local function mk(x, lab, col, fn)
+        local b = vgui.Create("DButton", m)
+        b:SetPos(x, 108)
+        b:SetSize(188, 48)
+        b:SetText("")
+        b.Paint = function(s, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(math.min(255, col.r + 20), math.min(255, col.g + 20), math.min(255, col.b + 20)) or col)
+            draw.SimpleText(lab, "GRMBComp_Head", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+        b.DoClick = fn
+        return b
+    end
+    mk(16, "ОТМЕНА", C.card, function() m:Close() end)
+    mk(216, "ПОДТВЕРДИТЬ", C.accent, function()
+        local n = math.floor(tonumber(te:GetValue()) or 0)
+        m:Close()
+        if n > 0 and cb then cb(n) end
+    end)
+    te.OnEnter = function()
+        local n = math.floor(tonumber(te:GetValue()) or 0)
+        m:Close()
+        if n > 0 and cb then cb(n) end
+    end
+    te:RequestFocus()
+end
+
+local function pickFaction(d, title, cb)
+    local names = {}
+    for n in pairs(d.factions or {}) do names[#names + 1] = n end
+    table.sort(names, function(a, b) return string.lower(facName(a)) < string.lower(facName(b)) end)
+    if #names == 0 then notification.AddLegacy("Нет организаций", NOTIFY_ERROR, 3) return end
+    local m = vgui.Create("DFrame")
+    m:SetTitle("")
+    m:SetSize(460, 420)
+    m:Center()
+    m:MakePopup()
+    m:ShowCloseButton(false)
+    m.Paint = function(_, w, h)
+        draw.RoundedBox(8, 0, 0, w, h, C.bg)
+        draw.RoundedBoxEx(8, 0, 0, w, 42, C.sidebar, true, true, false, false)
+        draw.SimpleText(title, "GRMBComp_Head", 16, 21, C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    end
+    local x = vgui.Create("DButton", m)
+    x:SetPos(418, 8) x:SetSize(28, 26) x:SetText("")
+    x.Paint = function(s, w, h)
+        draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and C.red or C.card)
+        draw.SimpleText("✕", "GRMBComp_Norm", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
+    x.DoClick = function() m:Close() end
+    local sc = vgui.Create("DScrollPanel", m)
+    sc:SetPos(12, 52) sc:SetSize(436, 354)
+    for _, key in ipairs(names) do
+        local info = d.factions[key] or {}
+        local row = vgui.Create("DButton", sc)
+        row:Dock(TOP) row:SetTall(52) row:DockMargin(0, 0, 4, 6) row:SetText("")
+        row.Paint = function(s, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and C.hover or C.panel)
+            surface.SetDrawColor(C.border)
+            surface.DrawOutlinedRect(0, 0, w, h)
+            draw.SimpleText(facName(key), "GRMBComp_Head", 12, 16, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("казна  " .. money(info.budget or 0) .. "   •   налог  " .. math.floor((info.taxRate or 0.05) * 100) .. "%",
+                "GRMBComp_Small", 12, 36, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        end
+        row.DoClick = function()
+            m:Close()
+            cb(key)
+        end
+    end
+end
+
 net.Receive("GRM_BankComp_Open", function()
     local comp = net.ReadEntity()
     local d = net.ReadTable() or {}
     if not IsValid(comp) then return end
 
-    if IsValid(compFrame) then compFrame:Remove() end
+    if IsValid(GRM._bankCompFrame) then GRM._bankCompFrame:Remove() end
     local f = vgui.Create("DFrame")
-    compFrame = f
-    f:SetSize(780, 580)
+    GRM._bankCompFrame = f
+    f:SetSize(math.Clamp(ScrW() * 0.62, 860, 1100), math.Clamp(ScrH() * 0.72, 560, 720))
     f:Center()
     f:SetTitle("")
     f:MakePopup()
-
-    f.Paint = function(self, w, h)
+    f:ShowCloseButton(false)
+    f.Paint = function(_, w, h)
         draw.RoundedBox(8, 0, 0, w, h, C.bg)
-        draw.RoundedBoxEx(8, 0, 0, w, 44, C.header, true, true, false, false)
-        draw.SimpleText("КОМПЬЮТЕР УПРАВЛЕНИЯ БАНКОМ", "GRMBComp_Title", 14, 22, C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.RoundedBoxEx(8, 0, 0, w, 48, C.sidebar, true, true, false, false)
+        draw.SimpleText("КАЗНА И ГОСБЮДЖЕТ", "GRMBComp_Title", 18, 24, C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("компьютер управления банком", "GRMBComp_Small", 280, 24, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
+
+    local btnX = vgui.Create("DButton", f)
+    btnX:SetSize(34, 28)
+    btnX:SetPos(f:GetWide() - 44, 10)
+    btnX:SetText("")
+    btnX.Paint = function(s, w, h)
+        draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and C.red or C.card)
+        draw.SimpleText("✕", "GRMBComp_Head", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
+    btnX.DoClick = function() f:Remove() end
 
     local body = vgui.Create("DPanel", f)
     body:Dock(FILL)
-    body:DockMargin(12, 54, 12, 12)
+    body:DockMargin(0, 48, 0, 0)
     body:SetPaintBackground(false)
 
-    -- ── Карточки сводки вверху ──
-    local summary = vgui.Create("DPanel", body)
-    summary:Dock(TOP)
-    summary:SetTall(84)
-    summary:DockMargin(0, 0, 0, 10)
-    summary.Paint = function(self, w, h)
-        local cw = math.floor((w - 12) / 3)
-        -- Карточка 1: Госбюджет
-        draw.RoundedBox(6, 0, 0, cw, h, C.panel)
-        draw.SimpleText("ГОСУДАРСТВЕННЫЙ БЮДЖЕТ", "GRMBComp_Small", 10, 14, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        draw.SimpleText(money(d.stateBudget or 0), "GRMBComp_Head", 10, 42, C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    local side = vgui.Create("DPanel", body)
+    side:Dock(LEFT)
+    side:SetWide(210)
+    side.Paint = function(_, w, h)
+        draw.RoundedBoxEx(0, 0, 0, w, h, C.sidebar, false, false, true, false)
+        surface.SetDrawColor(C.border)
+        surface.DrawLine(w - 1, 0, w - 1, h)
+    end
 
-        -- Карточка 2: В хранилищах
-        draw.RoundedBox(6, cw + 6, 0, cw, h, C.panel)
-        draw.SimpleText("В ХРАНИЛИЩАХ (НАЛИЧНЫМИ)", "GRMBComp_Small", cw + 16, 14, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        local vtxt = money(d.nearestVaultHeld or d.totalHeld or 0) .. " / " .. money(d.nearestVaultCap or d.totalCap or 500000)
-        draw.SimpleText(vtxt, "GRMBComp_Head", cw + 16, 42, C.green, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    local content = vgui.Create("DPanel", body)
+    content:Dock(FILL)
+    content:DockMargin(12, 10, 12, 10)
+    content:SetPaintBackground(false)
 
-        -- Карточка 3: Печатный станок
-        draw.RoundedBox(6, cw * 2 + 12, 0, cw, h, C.panel)
-        draw.SimpleText("ПЕЧАТНЫЙ СТАНОК", "GRMBComp_Small", cw * 2 + 22, 14, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        if d.press and d.press.found then
-            local st = d.press.broken and "ПЕРЕГРЕВ" or (d.press.active and "РАБОТАЕТ" or "ВЫКЛЮЧЕН")
-            local scol = d.press.broken and C.red or (d.press.active and C.green or C.dim)
-            draw.SimpleText(st .. " (буфер " .. money(d.press.buffer or 0) .. ")", "GRMBComp_Norm", cw * 2 + 22, 42, scol, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        else
-            draw.SimpleText("Не подключен рядом", "GRMBComp_Norm", cw * 2 + 22, 42, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    local tabs = {}
+    local current
+
+    local function selectTab(key)
+        current = key
+        for k, b in pairs(tabs) do b.active = (k == key) end
+        content:Clear()
+        if tabs[key] and tabs[key].build then tabs[key].build(content) end
+    end
+
+    local function addNav(key, label, build)
+        local b = vgui.Create("DButton", side)
+        b:Dock(TOP)
+        b:SetTall(40)
+        b:DockMargin(8, 8, 8, 0)
+        b:SetText("")
+        b.active = false
+        b.build = build
+        b.Paint = function(s, w, h)
+            if s.active then
+                draw.RoundedBox(6, 0, 0, w, h, C.accent)
+            elseif s:IsHovered() then
+                draw.RoundedBox(6, 0, 0, w, h, C.hover)
+            end
+            draw.SimpleText(label, "GRMBComp_Norm", 14, h / 2, s.active and color_white or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        end
+        b.DoClick = function() selectTab(key) end
+        tabs[key] = b
+    end
+
+    local function summaryRow(parent)
+        local summary = vgui.Create("DPanel", parent)
+        summary:Dock(TOP)
+        summary:SetTall(92)
+        summary:DockMargin(0, 0, 0, 10)
+        summary.Paint = function(_, w, h)
+            local cw = math.floor((w - 16) / 3)
+            local function box(x, t, v, col)
+                draw.RoundedBox(6, x, 0, cw, h, C.panel)
+                surface.SetDrawColor(C.border)
+                surface.DrawOutlinedRect(x, 0, cw, h)
+                draw.SimpleText(t, "GRMBComp_Small", x + 12, 16, C.dim)
+                draw.SimpleText(v, "GRMBComp_Stat", x + 12, 46, col)
+            end
+            box(0, "ГОСБЮДЖЕТ", money(d.stateBudget or 0), C.gold)
+            local vtxt = money(d.nearestVaultHeld or d.totalHeld or 0)
+            box(cw + 8, "ХРАНИЛИЩЕ", vtxt, C.green)
+            local st = "нет рядом"
+            local scol = C.dim
+            if d.press and d.press.found then
+                st = d.press.broken and "перегрев" or (d.press.active and "печатает" or "выкл")
+                scol = d.press.broken and C.red or (d.press.active and C.green or C.dim)
+            end
+            box((cw + 8) * 2, "ПЕЧАТНЫЙ СТАНОК", st, scol)
         end
     end
 
-    -- ── Вкладки управления ──
-    local tabs = vgui.Create("DPropertySheet", body)
-    tabs:Dock(FILL)
-
-    -- ================= Вкладка 1: Распределение средств =================
-    local distPnl = vgui.Create("DPanel", tabs)
-    distPnl:DockPadding(10, 10, 10, 10)
-    distPnl:SetPaintBackground(false)
-
-    local function makeActionCard(parent, title, desc, btnText, btnColor, fn)
+    local function actionCard(parent, title, desc, lab, col, fn)
         local p = vgui.Create("DPanel", parent)
         p:Dock(TOP)
-        p:SetTall(68)
+        p:SetTall(72)
         p:DockMargin(0, 0, 0, 8)
-        p.Paint = function(self, w, h)
+        p.Paint = function(_, w, h)
             draw.RoundedBox(6, 0, 0, w, h, C.panel)
-            draw.SimpleText(title, "GRMBComp_Head", 12, 20, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            draw.SimpleText(desc, "GRMBComp_Small", 12, 44, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            surface.SetDrawColor(C.border)
+            surface.DrawOutlinedRect(0, 0, w, h)
+            draw.SimpleText(title, "GRMBComp_Head", 14, 20, C.text)
+            draw.SimpleText(desc, "GRMBComp_Small", 14, 46, C.dim)
         end
-
         local b = vgui.Create("DButton", p)
         b:Dock(RIGHT)
-        b:DockMargin(0, 14, 12, 14)
-        b:SetWide(190)
-        b:SetText(btnText)
-        b:SetFont("GRMBComp_Norm")
-        b.Paint = function(self, w, h)
-            local col = self:IsHovered() and Color(math.min(btnColor.r + 20, 255), math.min(btnColor.g + 20, 255), math.min(btnColor.b + 20, 255)) or btnColor
-            draw.RoundedBox(4, 0, 0, w, h, col)
-            draw.SimpleText(btnText, "GRMBComp_Norm", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        b:DockMargin(0, 18, 12, 18)
+        b:SetWide(200)
+        b:SetText("")
+        b.Paint = function(s, w, h)
+            local c = s:IsHovered() and Color(math.min(255, col.r + 22), math.min(255, col.g + 22), math.min(255, col.b + 22)) or col
+            draw.RoundedBox(5, 0, 0, w, h, c)
+            draw.SimpleText(lab, "GRMBComp_Norm", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
         b.DoClick = fn
-        return p
     end
 
-    -- Кнопка 1: Хранилище -> Госбюджет
-    makeActionCard(distPnl, "1. Зачислить из хранилища в госбюджет",
-        "Переносит наличные средства из банковского хранилища на счёт казны сервера",
-        "Зачислить в казну", C.gold, function()
-            Derma_StringRequest("Зачисление в госбюджет", "Сумма для зачисления из хранилища:", "50000", function(val)
-                local amt = math.floor(tonumber(val) or 0)
-                if amt > 0 then sendAction(comp, "vault_to_state", "", amt) end
+    addNav("dist", "Распределение", function(pnl)
+        summaryRow(pnl)
+        actionCard(pnl, "Хранилище → госбюджет",
+            "Наличные из вольта зачисляются в казну сервера",
+            "В КАЗНУ", C.gold, function()
+                grmPrompt("Зачисление в госбюджет", "Сумма из хранилища", "50000", function(amt)
+                    sendAction(comp, "vault_to_state", "", amt)
+                end)
             end)
-        end)
-
-    -- Кнопка 2: Госбюджет -> Хранилище
-    makeActionCard(distPnl, "2. Выделить из госбюджета в хранилище",
-        "Выделяет средства из казны в виде физического запаса хранилища (для инкассации/снятия)",
-        "Выделить в вольт", C.green, function()
-            Derma_StringRequest("Выделение в хранилище", "Сумма из госбюджета в хранилище:", "50000", function(val)
-                local amt = math.floor(tonumber(val) or 0)
-                if amt > 0 then sendAction(comp, "state_to_vault", "", amt) end
+        actionCard(pnl, "Госбюджет → хранилище",
+            "Выделение казны в физический запас (инкассация / выдача)",
+            "В ХРАНИЛИЩЕ", C.green, function()
+                grmPrompt("Выделение в хранилище", "Сумма из госбюджета", "50000", function(amt)
+                    sendAction(comp, "state_to_vault", "", amt)
+                end)
             end)
-        end)
-
-    -- Кнопка 3: Хранилище -> Бюджет фракции
-    makeActionCard(distPnl, "3. Перевести из хранилища во фракцию",
-        "Прямой перевод наличного резерва хранилища на банковский бюджет конкретной организации",
-        "Перевод фракции", Color(60, 140, 220), function()
-            local menu = DermaMenu()
-            for fName, _ in pairs(d.factions or {}) do
-                menu:AddOption(fName, function()
-                    Derma_StringRequest("Перевод фракции «" .. fName .. "»", "Сумма из хранилища:", "50000", function(val)
-                        local amt = math.floor(tonumber(val) or 0)
-                        if amt > 0 then sendAction(comp, "vault_to_faction", fName, amt) end
+        actionCard(pnl, "Хранилище → казна фракции",
+            "Прямой перевод наличного резерва в бюджет организации",
+            "ВО ФРАКЦИЮ", C.accent, function()
+                pickFaction(d, "Кому перевести из хранилища", function(key)
+                    grmPrompt("Перевод «" .. facName(key) .. "»", "Сумма из хранилища", "50000", function(amt)
+                        sendAction(comp, "vault_to_faction", key, amt)
                     end)
                 end)
-            end
-            menu:Open()
-        end)
-
-    -- Кнопка 4: Госбюджет -> Бюджет фракции
-    makeActionCard(distPnl, "4. Государственная субсидия фракции",
-        "Официальное финансирование организации напрямую из казны государства",
-        "Выдать субсидию", Color(130, 90, 210), function()
-            local menu = DermaMenu()
-            for fName, _ in pairs(d.factions or {}) do
-                menu:AddOption(fName, function()
-                    Derma_StringRequest("Субсидия фракции «" .. fName .. "»", "Сумма субсидии из госбюджета:", "100000", function(val)
-                        local amt = math.floor(tonumber(val) or 0)
-                        if amt > 0 then sendAction(comp, "state_to_faction", fName, amt) end
+            end)
+        actionCard(pnl, "Госсубсидия фракции",
+            "Официальное финансирование из казны — та же казна, что видит автопарк",
+            "СУБСИДИЯ", Color(130, 90, 210), function()
+                pickFaction(d, "Кому выдать субсидию", function(key)
+                    grmPrompt("Субсидия «" .. facName(key) .. "»", "Сумма из госбюджета", "100000", function(amt)
+                        sendAction(comp, "state_to_faction", key, amt)
                     end)
                 end)
+            end)
+    end)
+
+    addNav("press", "Печатный станок", function(pnl)
+        summaryRow(pnl)
+        if not (d.press and d.press.found) then
+            local empty = vgui.Create("DPanel", pnl)
+            empty:Dock(FILL)
+            empty.Paint = function(_, w, h)
+                draw.RoundedBox(6, 0, 0, w, 80, C.panel)
+                draw.SimpleText("Станок (grm_money_press) не найден в радиусе 1200.", "GRMBComp_Norm", 16, 28, C.dim)
+                draw.SimpleText("Поставьте печатный станок рядом с этим компьютером.", "GRMBComp_Small", 16, 50, C.dim)
             end
-            menu:Open()
-        end)
-
-    tabs:AddSheet("Распределение средств", distPnl, "icon16/money.png")
-
-    -- ================= Вкладка 2: Печатный станок =================
-    local pressPnl = vgui.Create("DPanel", tabs)
-    pressPnl:DockPadding(12, 12, 12, 12)
-    pressPnl:SetPaintBackground(false)
-
-    if d.press and d.press.found then
-        local pInfo = vgui.Create("DPanel", pressPnl)
+            return
+        end
+        local pInfo = vgui.Create("DPanel", pnl)
         pInfo:Dock(TOP)
-        pInfo:SetTall(100)
-        pInfo:DockMargin(0, 0, 0, 12)
-        pInfo.Paint = function(self, w, h)
+        pInfo:SetTall(88)
+        pInfo:DockMargin(0, 0, 0, 10)
+        pInfo.Paint = function(_, w, h)
             draw.RoundedBox(6, 0, 0, w, h, C.panel)
-            draw.SimpleText("ПАРАМЕТРЫ ПЕЧАТНОГО СТАНКА (grm_money_press)", "GRMBComp_Head", 12, 18, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            local l1 = "Статус: " .. (d.press.active and "ВКЛЮЧЕН (печатает)" or "ВЫКЛЮЧЕН") .. " | Температура: " .. (d.press.heat or 0) .. "°C"
-            draw.SimpleText(l1, "GRMBComp_Norm", 12, 44, d.press.active and C.green or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            local l2 = "Номинал партии: " .. money(d.press.printAmount or 5000) .. " | В буфере паллет: " .. money(d.press.buffer or 0)
-            draw.SimpleText(l2, "GRMBComp_Norm", 12, 68, C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("ПАРАМЕТРЫ СТАНКА", "GRMBComp_Head", 14, 18, C.text)
+            draw.SimpleText((d.press.active and "печатает" or "выключен") .. "   •   нагрев " .. tostring(d.press.heat or 0) .. "°",
+                "GRMBComp_Norm", 14, 44, d.press.active and C.green or C.dim)
+            draw.SimpleText("партия " .. money(d.press.printAmount or 5000) .. "   •   буфер " .. money(d.press.buffer or 0),
+                "GRMBComp_Norm", 14, 66, C.gold)
         end
-
-        local function mkPressBtn(title, col, fn)
-            local b = vgui.Create("DButton", pressPnl)
-            b:Dock(TOP)
-            b:DockMargin(0, 0, 0, 8)
-            b:SetTall(38)
-            b:SetText(title)
-            b:SetFont("GRMBComp_Norm")
-            b.Paint = function(self, w, h)
-                local c = self:IsHovered() and Color(math.min(col.r + 20, 255), math.min(col.g + 20, 255), math.min(col.b + 20, 255)) or col
-                draw.RoundedBox(4, 0, 0, w, h, c)
-                draw.SimpleText(title, "GRMBComp_Norm", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        local function mk(lab, col, act)
+            local b = vgui.Create("DButton", pnl)
+            b:Dock(TOP) b:SetTall(40) b:DockMargin(0, 0, 0, 8) b:SetText("")
+            b.Paint = function(s, w, h)
+                local c = s:IsHovered() and Color(math.min(255, col.r + 20), math.min(255, col.g + 20), math.min(255, col.b + 20)) or col
+                draw.RoundedBox(5, 0, 0, w, h, c)
+                draw.SimpleText(lab, "GRMBComp_Norm", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
             end
-            b.DoClick = fn
+            b.DoClick = function() sendAction(comp, act, "", 0) end
         end
+        mk(d.press.active and "ПРИОСТАНОВИТЬ ПЕЧАТЬ" or "ЗАПУСТИТЬ ПЕЧАТЬ", d.press.active and C.red or C.green, "press_toggle")
+        mk("ОХЛАДИТЬ СТАНОК", C.accent, "press_cool")
+        mk("ВЫДАТЬ ПАЛЛЕТУ ИЗ БУФЕРА", C.gold, "press_flush_buffer")
+    end)
 
-        mkPressBtn(d.press.active and "⏸ ПРИОСТАНОВИТЬ ПЕЧАТЬ" or "▶ ЗАПУСТИТЬ ПЕЧАТЬ", d.press.active and C.red or C.green, function()
-            sendAction(comp, "press_toggle", "", 0)
-        end)
+    addNav("fac", "Казны фракций", function(pnl)
+        summaryRow(pnl)
+        local sc = vgui.Create("DScrollPanel", pnl)
+        sc:Dock(FILL)
+        local names = {}
+        for n in pairs(d.factions or {}) do names[#names + 1] = n end
+        table.sort(names, function(a, b) return string.lower(facName(a)) < string.lower(facName(b)) end)
+        if #names == 0 then
+            local e = vgui.Create("DPanel", sc)
+            e:Dock(TOP) e:SetTall(60)
+            e.Paint = function(_, w, h)
+                draw.RoundedBox(6, 0, 0, w, h, C.panel)
+                draw.SimpleText("Организаций нет.", "GRMBComp_Norm", 14, h / 2, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+            return
+        end
+        for _, key in ipairs(names) do
+            local info = d.factions[key] or {}
+            local row = vgui.Create("DPanel", sc)
+            row:Dock(TOP) row:SetTall(58) row:DockMargin(0, 0, 4, 6)
+            row.Paint = function(_, w, h)
+                draw.RoundedBox(6, 0, 0, w, h, C.panel)
+                surface.SetDrawColor(C.border)
+                surface.DrawOutlinedRect(0, 0, w, h)
+                draw.SimpleText(facName(key), "GRMBComp_Head", 14, 16, C.text)
+                if facName(key) ~= key then
+                    draw.SimpleText("[" .. key .. "]", "GRMBComp_Small", 14, 38, C.dim)
+                else
+                    draw.SimpleText("налог  " .. math.floor((info.taxRate or 0.05) * 100) .. "%", "GRMBComp_Small", 14, 38, C.dim)
+                end
+                draw.SimpleText(money(info.budget or 0), "GRMBComp_Stat", w - 16, h / 2, C.gold, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            end
+        end
+    end)
 
-        mkPressBtn("❄ ОХЛАДИТЬ СТАНОК (сброс температуры)", C.accent, function()
-            sendAction(comp, "press_cool", "", 0)
-        end)
-
-        mkPressBtn("📦 ВЫДАТЬ ПАЛЛЕТУ ДЕНЕГ ИЗ БУФЕРА", C.gold, function()
-            sendAction(comp, "press_flush_buffer", "", 0)
-        end)
-    else
-        local l = vgui.Create("DLabel", pressPnl)
-        l:Dock(TOP)
-        l:SetTall(60)
-        l:SetFont("GRMBComp_Norm")
-        l:SetTextColor(C.dim)
-        l:SetText("Печатный станок (grm_money_press) не найден в радиусе 1200 юнитов.\nУстановите банковский печатный станок рядом с компьютером управления.")
-    end
-
-    tabs:AddSheet("Печатный станок", pressPnl, "icon16/cog.png")
-
-    -- ================= Вкладка 3: Реестр фракций =================
-    local facPnl = vgui.Create("DPanel", tabs)
-    facPnl:DockPadding(8, 8, 8, 8)
-    facPnl:SetPaintBackground(false)
-
-    local list = vgui.Create("DListView", facPnl)
-    list:Dock(FILL)
-    list:AddColumn("Фракция"):SetFixedWidth(240)
-    list:AddColumn("Бюджет фракции"):SetFixedWidth(200)
-    list:AddColumn("Налоговая ставка")
-
-    for fName, info in pairs(d.factions or {}) do
-        local line = list:AddLine(fName, money(info.budget or 0), math.floor((info.taxRate or 0.05) * 100) .. "%")
-    end
-
-    tabs:AddSheet("Справка по фракциям", facPnl, "icon16/group.png")
+    selectTab("dist")
 end)

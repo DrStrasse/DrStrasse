@@ -3471,14 +3471,20 @@ if CLIENT then
         lblChoose:SetTall(24)
         lblChoose:SetFont("FactionsExt_Normal")
         lblChoose:SetTextColor(THEME.text)
-        lblChoose:SetText("Выберите организацию для просмотра финансового состояния:")
+        lblChoose:SetText("Организация — казна, налог и госбюджет в одном стиле GRM:")
 
         local factionCombo = vgui.Create("DComboBox", content)
         factionCombo:Dock(TOP)
         factionCombo:DockMargin(0, 6, 0, 14)
         factionCombo:SetTall(32)
         factionCombo:SetFont("FactionsExt_Normal")
-        factionCombo:SetSortItems(true)
+        factionCombo:SetTextColor(Color(240, 244, 250))
+        factionCombo:SetSortItems(false)
+        factionCombo.Paint = function(_, w, h)
+            draw.RoundedBox(5, 0, 0, w, h, Color(24, 30, 40, 245))
+            surface.SetDrawColor(55, 68, 92, 200)
+            surface.DrawOutlinedRect(0, 0, w, h)
+        end
 
         local detailsCard = vgui.Create("DPanel", content)
         detailsCard:Dock(FILL)
@@ -3527,7 +3533,9 @@ if CLIENT then
             local first = nil
             for name, _ in pairs(list) do
                 if isstring(name) and name ~= "" and not name:StartWith("_") then
-                    factionCombo:AddChoice(name)
+                    local label = (GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(name)) or name
+                    if label ~= name then label = label .. "  [" .. name .. "]" end
+                    factionCombo:AddChoice(label, name)
                     if myFaction ~= "" and name == myFaction then
                         first = name
                     elseif not first then
@@ -3536,13 +3544,15 @@ if CLIENT then
                 end
             end
             if first then
-                factionCombo:SetValue(first)
+                local lab = (GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(first)) or first
+                if lab ~= first then lab = lab .. "  [" .. first .. "]" end
+                factionCombo:SetValue(lab)
                 updateDetails(first)
             end
         end
 
-        factionCombo.OnSelect = function(_, _, fName)
-            updateDetails(fName)
+        factionCombo.OnSelect = function(_, _, _, key)
+            updateDetails(key)
         end
 
         populateFactions()

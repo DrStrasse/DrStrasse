@@ -2322,6 +2322,9 @@ if CLIENT then
             f = adminFrame
             tabs = vgui.Create("DPropertySheet", f)
             tabs:Dock(FILL) tabs:DockMargin(8, 44, 8, 8)
+            tabs.Paint = function(_, w, h)
+                draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 245))
+            end
         end
 
         -- запоминаем активную вкладку, чтобы пересборка свежими данными
@@ -2336,6 +2339,15 @@ if CLIENT then
             sh.Tab.DoClick = function(...)
                 f._tabName = name
                 if oldClick then oldClick(...) end
+            end
+            if IsValid(sh.Tab) then
+                sh.Tab:SetFont("GRM_Eco_Normal")
+                sh.Tab:SetTextColor(CUI.dim)
+                sh.Tab.Paint = function(self, w, h)
+                    local on = self:IsActive()
+                    draw.RoundedBoxEx(5, 0, 0, w, h, on and Color(33, 42, 56) or Color(22, 28, 38), true, true, false, false)
+                    if on then draw.RoundedBox(0, 0, h - 3, w, 3, CUI.accent) end
+                end
             end
             if lastTab == name then tabs:SetActiveTab(sh.Tab) end
             return p

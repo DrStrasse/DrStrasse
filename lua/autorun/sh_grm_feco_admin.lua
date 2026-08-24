@@ -89,237 +89,101 @@ end
 -- ================================================================
 
 if CLIENT then
-    surface.CreateFont("GRMFeco_Title", {font = "Roboto", size = 18, weight = 700, extended = true})
+    surface.CreateFont("GRMFeco_Title", {font = "Roboto", size = 18, weight = 800, extended = true})
     surface.CreateFont("GRMFeco_Normal", {font = "Roboto", size = 14, weight = 500, extended = true})
     surface.CreateFont("GRMFeco_Small", {font = "Roboto", size = 12, weight = 400, extended = true})
-    
+    surface.CreateFont("GRMFeco_Stat", {font = "Roboto", size = 22, weight = 800, extended = true})
+
     local CUI = {
-        bg = Color(19, 24, 33, 248),
-        panel = Color(33, 42, 56, 245),
-        accent = Color(70, 155, 255),
+        bg = Color(16, 20, 28, 252),
+        sidebar = Color(12, 15, 22, 255),
+        panel = Color(22, 28, 38, 245),
+        accent = Color(65, 145, 235),
         green = Color(55, 185, 105),
-        red = Color(205, 70, 65),
-        yellow = Color(235, 180, 60),
+        gold = Color(245, 195, 65),
         text = Color(240, 244, 250),
-        dim = Color(166, 176, 191),
+        dim = Color(155, 170, 190),
+        border = Color(38, 48, 66, 200),
     }
-    
+
+    local function fmt(n) return GRM.Format and GRM.Format(n) or (tostring(n) .. " GRM") end
+    local function dname(n)
+        return (GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(n)) or tostring(n)
+    end
+
     local function openFecoAdmin()
         net.Start("GRM_FecoAdmin_Open")
         net.SendToServer()
     end
-    
+
     net.Receive("GRM_FecoAdmin_Data", function()
         local data = net.ReadTable() or {}
-        
         local frame = vgui.Create("DFrame")
         frame:SetTitle("")
-        frame:SetSize(900, 650)
+        frame:SetSize(920, 660)
         frame:Center()
         frame:MakePopup()
-        frame:ShowCloseButton(true)
-        
-        frame.Paint = function(self, w, h)
+        frame:ShowCloseButton(false)
+        frame.Paint = function(_, w, h)
             draw.RoundedBox(8, 0, 0, w, h, CUI.bg)
-            draw.RoundedBoxEx(8, 0, 0, w, 36, Color(27, 35, 48), true, true, false, false)
-            draw.SimpleText("Экономика (Суперадмин)", "GRMFeco_Title", 12, 18, CUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.RoundedBoxEx(8, 0, 0, w, 46, CUI.sidebar, true, true, false, false)
+            draw.SimpleText("КАЗНА GRM  ·  обзор", "GRMFeco_Title", 16, 23, CUI.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("правка — компьютер банка / /feco_admin", "GRMFeco_Small", w - 56, 23, CUI.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
         end
-        
-        local tabs = vgui.Create("DPropertySheet", frame)
-        tabs:Dock(FILL)
-        tabs:DockMargin(4, 40, 4, 4)
-        
-        -- Вкладка 1: Гос.бюджет
-        local statePanel = vgui.Create("DPanel", tabs)
-        statePanel:DockPadding(10, 10, 10, 10)
-        
-        local stateLabel = vgui.Create("DLabel", statePanel)
-        stateLabel:Dock(TOP)
-        stateLabel:SetTall(30)
-        stateLabel:SetFont("GRMFeco_Title")
-        stateLabel:SetTextColor(CUI.text)
-        stateLabel:SetText("Государственный бюджет: " .. (GRM.Format and GRM.Format(data.stateBudget or 0) or (data.stateBudget or 0) .. " GRM"))
-        stateLabel:DockMargin(0, 0, 0, 10)
-        
-        local stateAdd = vgui.Create("DButton", statePanel)
-        stateAdd:Dock(TOP)
-        stateAdd:SetTall(30)
-        stateAdd:SetText("Пополнить гос.бюджет")
-        stateAdd:SetFont("GRMFeco_Normal")
-        stateAdd:DockMargin(0, 0, 0, 5)
-        stateAdd.DoClick = function()
-            Derma_StringRequest("Пополнить гос.бюджет", "Сумма:", "", function(val)
-                local amount = math.floor(tonumber(val) or 0)
-                if amount > 0 then
-                    net.Start("GRM_FecoAdmin_Action")
-                        net.WriteString("state_add")
-                        net.WriteString("")
-                        net.WriteUInt(amount, 32)
-                        net.WriteFloat(0)
-                    net.SendToServer()
-                    frame:Close()
-                    openFecoAdmin()
-                end
-            end)
+        local bx = vgui.Create("DButton", frame)
+        bx:SetPos(878, 10) bx:SetSize(30, 26) bx:SetText("")
+        bx.Paint = function(s, w, h)
+            draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(196, 62, 62) or Color(36, 46, 62))
+            draw.SimpleText("✕", "GRMFeco_Normal", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
-        
-        local stateRemove = vgui.Create("DButton", statePanel)
-        stateRemove:Dock(TOP)
-        stateRemove:SetTall(30)
-        stateRemove:SetText("Снять с гос.бюджета")
-        stateRemove:SetFont("GRMFeco_Normal")
-        stateRemove:DockMargin(0, 0, 0, 5)
-        stateRemove.DoClick = function()
-            Derma_StringRequest("Снять с гос.бюджета", "Сумма:", "", function(val)
-                local amount = math.floor(tonumber(val) or 0)
-                if amount > 0 then
-                    net.Start("GRM_FecoAdmin_Action")
-                        net.WriteString("state_remove")
-                        net.WriteString("")
-                        net.WriteUInt(amount, 32)
-                        net.WriteFloat(0)
-                    net.SendToServer()
-                    frame:Close()
-                    openFecoAdmin()
-                end
-            end)
+        bx.DoClick = function() frame:Close() end
+
+        local sc = vgui.Create("DScrollPanel", frame)
+        sc:Dock(FILL)
+        sc:DockMargin(12, 54, 12, 12)
+
+        local head = vgui.Create("DPanel", sc)
+        head:Dock(TOP) head:SetTall(96) head:DockMargin(0, 0, 0, 10)
+        head.Paint = function(_, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, CUI.panel)
+            surface.SetDrawColor(CUI.border) surface.DrawOutlinedRect(0, 0, w, h)
+            draw.SimpleText("ГОСУДАРСТВЕННЫЙ БЮДЖЕТ", "GRMFeco_Small", 16, 18, CUI.dim)
+            draw.SimpleText(fmt(data.stateBudget or 0), "GRMFeco_Stat", 16, 50, CUI.gold)
         end
-        
-        tabs:AddSheet("Гос.бюджет", statePanel, "icon16/money_dollar.png")
-        
-        -- Вкладка 2: Фракции
-        local factionsPanel = vgui.Create("DPanel", tabs)
-        factionsPanel:DockPadding(10, 10, 10, 10)
-        
-        local factionsScroll = vgui.Create("DScrollPanel", factionsPanel)
-        factionsScroll:Dock(FILL)
-        
-        for name, eco in pairs(data.factions or {}) do
-            local row = vgui.Create("DPanel", factionsScroll)
-            row:Dock(TOP)
-            row:SetTall(80)
-            row:DockMargin(0, 0, 0, 5)
-            row.Paint = function(self, w, h)
+
+        local note = vgui.Create("DPanel", sc)
+        note:Dock(TOP) note:SetTall(52) note:DockMargin(0, 0, 0, 10)
+        note.Paint = function(_, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, CUI.panel)
+            draw.SimpleText("Прямые кнопки «пополнить / снять» здесь отключены.", "GRMFeco_Normal", 14, 14, CUI.text)
+            draw.SimpleText("Субсидии и казна фракций — компьютер управления банком. Зарплаты и налог — /feco_admin.", "GRMFeco_Small", 14, 34, CUI.dim)
+        end
+
+        local names = {}
+        for n in pairs(data.factions or {}) do names[#names + 1] = n end
+        table.sort(names, function(a, b) return string.lower(dname(a)) < string.lower(dname(b)) end)
+        for _, name in ipairs(names) do
+            local eco = data.factions[name]
+            local row = vgui.Create("DPanel", sc)
+            row:Dock(TOP) row:SetTall(64) row:DockMargin(0, 0, 0, 6)
+            row.Paint = function(_, w, h)
                 draw.RoundedBox(6, 0, 0, w, h, CUI.panel)
-            end
-            
-            local nameLabel = vgui.Create("DLabel", row)
-            nameLabel:SetPos(10, 5)
-            nameLabel:SetSize(200, 20)
-            nameLabel:SetFont("GRMFeco_Normal")
-            nameLabel:SetTextColor(CUI.text)
-            nameLabel:SetText("Фракция: " .. name)
-            
-            local budgetLabel = vgui.Create("DLabel", row)
-            budgetLabel:SetPos(10, 30)
-            budgetLabel:SetSize(200, 20)
-            budgetLabel:SetFont("GRMFeco_Small")
-            budgetLabel:SetTextColor(CUI.dim)
-            budgetLabel:SetText("Бюджет: " .. (GRM.Format and GRM.Format(eco.budget or 0) or (eco.budget or 0) .. " GRM"))
-            
-            local taxLabel = vgui.Create("DLabel", row)
-            taxLabel:SetPos(10, 55)
-            taxLabel:SetSize(200, 20)
-            taxLabel:SetFont("GRMFeco_Small")
-            taxLabel:SetTextColor(CUI.dim)
-            taxLabel:SetText("Налог: " .. math.floor((eco.taxRate or 0.05) * 100) .. "%")
-            
-            local btnBudget = vgui.Create("DButton", row)
-            btnBudget:SetPos(600, 10)
-            btnBudget:SetSize(120, 25)
-            btnBudget:SetText("Изменить бюджет")
-            btnBudget:SetFont("GRMFeco_Small")
-            btnBudget.DoClick = function()
-                Derma_StringRequest("Бюджет фракции " .. name, "Сумма:", tostring(eco.budget or 0), function(val)
-                    local amount = math.floor(tonumber(val) or 0)
-                    if amount >= 0 then
-                        net.Start("GRM_FecoAdmin_Action")
-                            net.WriteString("faction_budget")
-                            net.WriteString(name)
-                            net.WriteUInt(amount, 32)
-                            net.WriteFloat(0)
-                        net.SendToServer()
-                        frame:Close()
-                        openFecoAdmin()
-                    end
-                end)
-            end
-            
-            local btnTax = vgui.Create("DButton", row)
-            btnTax:SetPos(600, 45)
-            btnTax:SetSize(120, 25)
-            btnTax:SetText("Изменить налог")
-            btnTax:SetFont("GRMFeco_Small")
-            btnTax.DoClick = function()
-                Derma_StringRequest("Налог фракции " .. name, "Ставка (0-50):", tostring(math.floor((eco.taxRate or 0.05) * 100)), function(val)
-                    local rate = math.Clamp(tonumber(val) or 5, 0, 50) / 100
-                    net.Start("GRM_FecoAdmin_Action")
-                        net.WriteString("faction_tax")
-                        net.WriteString(name)
-                        net.WriteUInt(0, 32)
-                        net.WriteFloat(rate)
-                    net.SendToServer()
-                    frame:Close()
-                    openFecoAdmin()
-                end)
+                surface.SetDrawColor(CUI.border) surface.DrawOutlinedRect(0, 0, w, h)
+                draw.SimpleText(dname(name), "GRMFeco_Normal", 14, 16, CUI.text)
+                draw.SimpleText("налог " .. math.floor((eco.taxRate or 0.05) * 100) .. "%   •   база ЗП " .. fmt(eco.baseSalary or 0), "GRMFeco_Small", 14, 40, CUI.dim)
+                draw.SimpleText(fmt(eco.budget or 0), "GRMFeco_Title", w - 16, h / 2, CUI.gold, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
             end
         end
-        
-        tabs:AddSheet("Фракции", factionsPanel, "icon16/group.png")
-        
-        -- Вкладка 3: Игроки
-        local playersPanel = vgui.Create("DPanel", tabs)
-        playersPanel:DockPadding(10, 10, 10, 10)
-        
-        local playersScroll = vgui.Create("DScrollPanel", playersPanel)
-        playersScroll:Dock(FILL)
-        
+
         for _, p in ipairs(data.players or {}) do
-            local row = vgui.Create("DPanel", playersScroll)
-            row:Dock(TOP)
-            row:SetTall(40)
-            row:DockMargin(0, 0, 0, 2)
-            row.Paint = function(self, w, h)
-                draw.RoundedBox(4, 0, 0, w, h, CUI.panel)
-            end
-            
-            local nameLabel = vgui.Create("DLabel", row)
-            nameLabel:SetPos(10, 5)
-            nameLabel:SetSize(300, 30)
-            nameLabel:SetFont("GRMFeco_Normal")
-            nameLabel:SetTextColor(CUI.text)
-            nameLabel:SetText(p.name .. " (" .. p.sid64 .. ")")
-            
-            local balanceLabel = vgui.Create("DLabel", row)
-            balanceLabel:SetPos(320, 5)
-            balanceLabel:SetSize(200, 30)
-            balanceLabel:SetFont("GRMFeco_Normal")
-            balanceLabel:SetTextColor(CUI.green)
-            balanceLabel:SetText("Баланс: " .. (GRM.Format and GRM.Format(p.balance or 0) or (p.balance or 0) .. " GRM"))
-            
-            local btnSet = vgui.Create("DButton", row)
-            btnSet:SetPos(600, 5)
-            btnSet:SetSize(120, 30)
-            btnSet:SetText("Установить")
-            btnSet:SetFont("GRMFeco_Small")
-            btnSet.DoClick = function()
-                Derma_StringRequest("Баланс игрока " .. p.name, "Сумма:", tostring(p.balance or 0), function(val)
-                    local amount = math.floor(tonumber(val) or 0)
-                    if amount >= 0 then
-                        net.Start("GRM_FecoAdmin_Action")
-                            net.WriteString("player_balance")
-                            net.WriteString(p.sid64)
-                            net.WriteUInt(amount, 32)
-                            net.WriteFloat(0)
-                        net.SendToServer()
-                        frame:Close()
-                        openFecoAdmin()
-                    end
-                end)
+            local row = vgui.Create("DPanel", sc)
+            row:Dock(TOP) row:SetTall(36) row:DockMargin(0, 0, 0, 3)
+            row.Paint = function(_, w, h)
+                draw.RoundedBox(5, 0, 0, w, h, CUI.panel)
+                draw.SimpleText(tostring(p.name or "?"), "GRMFeco_Normal", 12, h / 2, CUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.SimpleText(fmt(p.balance or 0), "GRMFeco_Normal", w - 12, h / 2, CUI.green, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
             end
         end
-        
-        tabs:AddSheet("Игроки", playersPanel, "icon16/user.png")
     end)
 
     -- Находка 177: вкладка «Экономика» в /factions больше НЕ добавляется
