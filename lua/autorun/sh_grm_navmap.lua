@@ -203,6 +203,7 @@ if not CLIENT then return end
 
 N.Marks, N.Route, N.Visible = N.Marks or {}, N.Route or {}, true
 N.Opt = N.Opt or { gps = true, admin = true, me = true, players = true, grid = true }
+CreateClientConVar("grm_nav_key", "M", true, false)
 
 local COL = {
     bg = Color(8, 14, 23, 175), panel = Color(12, 18, 28, 250),
@@ -455,13 +456,17 @@ end
 
 local function paintGround(x, y, w, h)
     draw.RoundedBox(0, x, y, w, h, Color(18, 28, 40, 255))
-    if jpegOk and jpegMat then
+    if atlasLiveMat then
+        surface.SetMaterial(atlasLiveMat)
+        surface.SetDrawColor(255, 255, 255, 235)
+        surface.DrawTexturedRect(x, y, w, h)
+    elseif jpegOk and jpegMat then
         surface.SetMaterial(jpegMat)
         surface.SetDrawColor(255, 255, 255, 230)
         surface.DrawTexturedRect(x, y, w, h)
     end
     if N.Opt.grid then
-        surface.SetDrawColor(55, 90, 120, jpegOk and 50 or 90)
+        surface.SetDrawColor(55, 90, 120, 55)
         for i = 1, 7 do
             surface.DrawLine(x + i * w / 8, y, x + i * w / 8, y + h)
             surface.DrawLine(x, y + i * h / 8, x + w, y + i * h / 8)
@@ -593,6 +598,15 @@ function N.OpenAtlas()
     end
 
     map.Paint = function(self, w, h)
+        ensureBounds()
+        local mid = mapToWorld(w * 0.5, h * 0.5, 0, 0, w, h, zoom, ox, oy)
+        local span = math.max(math.abs(atlasE - atlasW), math.abs(atlasN - atlasS), 2000) / math.max(zoom, 0.5)
+        local lpz = IsValid(LocalPlayer()) and LocalPlayer():GetPos().z or 0
+        N._atlasCam = {
+            x = mid.x, y = mid.y,
+            z = lpz + math.Clamp(span * 0.42, 1400, 12000),
+            span = span,
+        }
         paintGround(0, 0, w, h)
         local function toS(vec)
             local px, py = worldToMap(vec, 0, 0, w, h, zoom, ox, oy)
@@ -710,8 +724,16 @@ function N.OpenAtlas()
     hook.Add("GRM_NavMarks", "GRM_NavAtlasList", refill)
 end
 
+local function navKey()
+    local cv = GetConVar("grm_nav_key")
+    local name = string.upper((cv and cv:GetString()) or "M")
+    local code = input.GetKeyCode(name)
+    if not code or code <= 0 then return KEY_M end
+    return code
+end
+
 hook.Add("PlayerButtonDown", "GRM_Nav_Key", function(ply, btn)
-    if ply ~= LocalPlayer() or btn ~= KEY_M then return end
+    if ply ~= LocalPlayer() or btn ~= navKey() then return end
     if vgui.GetKeyboardFocus() then return end
     if gui.IsGameUIVisible and gui.IsGameUIVisible() then return end
     if IsValid(N._frame) then N._frame:Close() else N.OpenAtlas() end
