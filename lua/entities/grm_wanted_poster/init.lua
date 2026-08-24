@@ -24,10 +24,6 @@ function ENT:Use(ply)
     local id = self:GetPhotoID()
     if GRM.Photo and GRM.Photo.SendSheet and id ~= "" then
         if GRM.Photo.Public then GRM.Photo.Public[id] = true end
-        GRM.Photo.SendSheet(ply, id, self:GetHeadline(), self:GetBody() ~= "" and self:GetBody() or self:GetSubjectName(), "stamp")
-        return
-    end
-    if GRM.Notify then
-        GRM.Notify(ply, self:GetHeadline() .. "  " .. self:GetSubjectName(), 230, 70, 60)
+        GRM.Photo.SendSheet(ply, id, self:GetHeadline(), self:GetBody())
     end
 end

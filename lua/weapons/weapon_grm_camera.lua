@@ -93,17 +93,17 @@ if CLIENT then
         end
         pending = false
 
-        local cw = math.min(512, ScrW())
-        local ch = math.min(384, ScrH())
+        local cw = math.min(320, ScrW())
+        local ch = math.min(240, ScrH())
         local cx = math.max(0, math.floor((ScrW() - cw) / 2))
         local cy = math.max(0, math.floor((ScrH() - ch) / 2))
         local data
-        for _, q in ipairs({ 40, 28, 18, 10, 6 }) do
+        for _, q in ipairs({ 22, 14, 8 }) do
             data = render.Capture({
                 format = "jpeg", quality = q,
                 x = cx, y = cy, w = cw, h = ch,
             })
-            if data and #data <= 40000 then break end
+            if data and #data <= 12000 then break end
         end
         if not data or data == "" then
             notification.AddLegacy("Не удалось снять кадр.", NOTIFY_ERROR, 3)
