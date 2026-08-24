@@ -8,6 +8,8 @@ H.Version = "1.0.0"
 H.File = "grm_vehicle_hp.json"
 H.Max = 100
 H.RepairPrice = 45
+H.WrenchPerSec = 12
+H.WrenchPrice = 8
 
 local function root(ent)
     if GRM.Fuel and GRM.Fuel.RootVehicle then return GRM.Fuel.RootVehicle(ent) end
@@ -119,9 +121,37 @@ if SERVER then
         local room = H.Max - rec.hp
         local add = math.min(room, math.max(0, tonumber(amount) or 0))
         rec.hp = rec.hp + add
+        if rec.hp > 0 then
+            rec.broken = false
+            ent:SetNWBool("GRM_VehBroken", false)
+            pcall(function()
+                if ent.EnableEngine then ent:EnableEngine(true) end
+            end)
+        end
         H.Apply(ent)
         H.Save()
         return add
+    end
+
+    function H.WrenchTick(ply, ent)
+        if not IsValid(ply) then return false, "нет" end
+        ent = root(ent)
+        if not isVeh(ent) then return false, "Это не транспорт" end
+        if ply:GetPos():DistToSqr(ent:GetPos()) > 180 * 180 then return false, "Ближе" end
+        local rec = H.Get(uidOf(ent))
+        if rec.hp >= H.Max then return false, "целая" end
+        local add = math.min(H.WrenchPerSec * 0.2, H.Max - rec.hp)
+        local cost = math.ceil(add * H.WrenchPrice)
+        if not ply:IsSuperAdmin() and cost > 0 then
+            if GRM.HasMoney and not GRM.HasMoney(ply, cost) then
+                return false, "Нужно " .. cost .. " GRM"
+            end
+            if GRM.TakeMoney then GRM.TakeMoney(ply, cost, "ключ ТС") end
+        else
+            cost = 0
+        end
+        H.Repair(ent, add)
+        return true, rec.hp, H.Max, cost
     end
 
     function H.TryRepair(ply, ent)
