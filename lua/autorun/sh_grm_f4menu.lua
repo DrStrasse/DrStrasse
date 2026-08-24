@@ -559,6 +559,30 @@ local function buildSettingsTab(sc)
     note:SetText("Стандарт RPDesc — 200 юнитов (~5 метров). Настройки хранятся на вашем ПК (garrysmod/cfg).")
     note:SetWrap(true) note:SetAutoStretchVertical(true)
 
+    local ba = block(sc, 170, "Социальные анимации:")
+    local hintA = vgui.Create("DLabel", ba)
+    hintA:SetPos(14, 28) hintA:SetSize(700, 20)
+    hintA:SetFont("GRMF4_Normal") hintA:SetTextColor(C.dim)
+    hintA:SetText("Также: C-меню (четыре кнопки) и вкладка «Анимации».")
+    local names = { { "hands", "Руки вверх" }, { "kneel", "На коленях" }, { "docs", "Документы" } }
+    for i, row in ipairs(names) do
+        local b = mkBtn(ba, row[2], C.acc)
+        b:SetPos(14 + (i - 1) * 180, 56) b:SetSize(170, 30)
+        b.DoClick = function() RunConsoleCommand("grm_social", row[1]) end
+    end
+    local st = mkBtn(ba, "Снять позу", C.red)
+    st:SetPos(14, 96) st:SetSize(170, 28)
+    st.DoClick = function() RunConsoleCommand("grm_social_stop") end
+    local bindL = vgui.Create("DLabel", ba)
+    bindL:SetPos(200, 100) bindL:SetSize(160, 22)
+    bindL:SetFont("GRMF4_Normal") bindL:SetTextColor(C.text)
+    bindL:SetText("Клавиша круга:")
+    local binder = vgui.Create("DBinder", ba)
+    binder:SetPos(330, 96) binder:SetSize(130, 28)
+    binder:SetValue(math.Clamp(math.floor(GetConVarNumber("grm_cl_social_key") or 18), 0, 159))
+    binder.OnChange = function(_, num)
+        RunConsoleCommand("grm_cl_social_key", tostring(math.floor(tonumber(num) or 18)))
+    end
 end
 
 -----------------------------------------------------------

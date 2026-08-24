@@ -244,28 +244,46 @@ hook.Add("EntityRemoved", "GRM_Soc_EntGone", function(ent)
     if clips[ent] then killClip(ent) end
 end)
 
+local function wantProp(ply)
+    local phoneMdl = ply:GetNWString("GRM_MobHold", "")
+    if phoneMdl ~= "" then return phoneMdl, "phone" end
+    if ply:GetNWString("GRM_SocAnim", "") == "docs" then
+        return "models/props_lab/clipboard.mdl", "docs"
+    end
+end
+
 hook.Add("PostPlayerDraw", "GRM_Soc_Clip", function(ply)
     if not IsValid(ply) then return end
-    if ply:GetNWString("GRM_SocAnim", "") ~= "docs" then
+    local mdl, kind = wantProp(ply)
+    if not mdl then
         if clips[ply] then killClip(ply) end
         return
     end
-    local m = clips[ply]
-    if not IsValid(m) then
-        m = ClientsideModel("models/props_lab/clipboard.mdl")
+    local rec = clips[ply]
+    local m = istable(rec) and rec.ent or rec
+    if not IsValid(m) or (istable(rec) and rec.mdl ~= mdl) then
+        if IsValid(m) then m:Remove() end
+        m = ClientsideModel(mdl)
         if not IsValid(m) then return end
         m:SetNoDraw(true)
-        m:SetModelScale(0.95, 0)
-        clips[ply] = m
+        m:SetModelScale(kind == "phone" and 1.05 or 0.95, 0)
+        clips[ply] = { ent = m, mdl = mdl }
     end
     local bone = ply:LookupBone("ValveBiped.Bip01_R_Hand")
     if not bone then return end
     local pos, ang = ply:GetBonePosition(bone)
     if not pos then return end
-    ang:RotateAroundAxis(ang:Right(), 200)
-    ang:RotateAroundAxis(ang:Up(), 12)
-    ang:RotateAroundAxis(ang:Forward(), 90)
-    pos = pos + ang:Forward() * 3 + ang:Right() * 1.5 + ang:Up() * 1
+    if kind == "phone" then
+        ang:RotateAroundAxis(ang:Right(), 90)
+        ang:RotateAroundAxis(ang:Up(), 180)
+        ang:RotateAroundAxis(ang:Forward(), 8)
+        pos = pos + ang:Forward() * 2.4 + ang:Right() * 1.2 + ang:Up() * 0.6
+    else
+        ang:RotateAroundAxis(ang:Right(), 200)
+        ang:RotateAroundAxis(ang:Up(), 12)
+        ang:RotateAroundAxis(ang:Forward(), 90)
+        pos = pos + ang:Forward() * 3 + ang:Right() * 1.5 + ang:Up() * 1
+    end
     m:SetPos(pos)
     m:SetAngles(ang)
     m:DrawModel()
@@ -476,6 +494,11 @@ hook.Add("GRM_F4_BuildTabs", "GRM_Soc_F4", function(sheet)
     local stop = vgui.Create("DButton", card)
     stop:SetPos(280, 108) stop:SetSize(160, 26) stop:SetText("Снять позу")
     stop.DoClick = function() sendPlay("stop") end
+    sheet:AddSheet("Анимации", p, "icon16/user_comment.png")
+end)
+
+print("[GRM Social] client v" .. S.Version)
+Play("stop") end
     sheet:AddSheet("Анимации", p, "icon16/user_comment.png")
 end)
 
