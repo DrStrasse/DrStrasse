@@ -1,25 +1,39 @@
---[[ Круиз и автопилот: /cruise 30 — потолок, /autopilot 50 — сам жмёт газ. ]]
+--[[ Круиз — потолок. Автопилот — сам крутит газ (W + тяга + simfphys-клавиши). ]]
 if SERVER then AddCSLuaFile() end
 
 GRM = GRM or {}
 GRM.Cruise = GRM.Cruise or {}
 local C = GRM.Cruise
-C.Version = "1.0.0"
+C.Version = "1.1.0"
 
 local function root(ent)
     if GRM.Fuel and GRM.Fuel.RootVehicle then return GRM.Fuel.RootVehicle(ent) end
-    if IsValid(ent) and IsValid(ent.GetParent and ent:GetParent()) then return ent:GetParent() end
+    if IsValid(ent) and ent.GetParent then
+        local p = ent:GetParent()
+        if IsValid(p) then return p end
+    end
     return ent
 end
 
-local function kmh(ent)
-    if not IsValid(ent) then return 0 end
-    local v = ent:GetVelocity()
+local function physOf(ent)
+    if not IsValid(ent) then return nil end
+    local ph = ent:GetPhysicsObject()
+    if IsValid(ph) then return ph, ent end
     if ent.GetChassis then
         local ch = ent:GetChassis()
-        if IsValid(ch) then v = ch:GetVelocity() end
+        if IsValid(ch) then
+            ph = ch:GetPhysicsObject()
+            if IsValid(ph) then return ph, ch end
+        end
     end
-    return v:Length() * 0.09144
+    return nil, ent
+end
+
+local function kmh(ent)
+    local ph, body = physOf(ent)
+    if IsValid(ph) then return ph:GetVelocity():Length() * 0.09144 end
+    if IsValid(body) then return body:GetVelocity():Length() * 0.09144 end
+    return 0
 end
 
 local function clear(ply)
@@ -27,6 +41,34 @@ local function clear(ply)
     ply:SetNWBool("GRM_AutoPilot", false)
     ply:SetNWBool("GRM_CruiseOn", false)
     ply:SetNWInt("GRM_CruiseKmh", 0)
+    local veh = IsValid(ply:GetVehicle()) and root(ply:GetVehicle())
+    if IsValid(veh) and istable(veh.PressedKeys) then
+        veh.PressedKeys["W"] = false
+        veh.PressedKeys[IN_FORWARD] = false
+    end
+end
+
+local function wakeEngine(veh)
+    if not IsValid(veh) then return end
+    pcall(function()
+        if veh.StartEngine then veh:StartEngine(true) end
+        if veh.EnableEngine then veh:EnableEngine(true) end
+        if veh.SetActive then veh:SetActive(true) end
+        if veh.TurnOn then veh:TurnOn() end
+        if veh.ForceHandbrake then veh:ForceHandbrake(false) end
+        if veh.HandBrake then veh.HandBrake = false end
+    end)
+end
+
+local function pressW(veh, on)
+    if not IsValid(veh) then return end
+    veh.PressedKeys = veh.PressedKeys or {}
+    veh.PressedKeys["W"] = on == true
+    veh.PressedKeys[IN_FORWARD] = on == true
+    pcall(function()
+        if veh.SetThrottle then veh:SetThrottle(on and 1 or 0) end
+        if veh.SetNWFloat then veh:SetNWFloat("Throttle", on and 1 or 0) end
+    end)
 end
 
 if SERVER then
@@ -42,13 +84,17 @@ if SERVER then
             return true, "Круиз и автопилот сняты."
         end
         ply:SetNWInt("GRM_CruiseKmh", speed)
+        local veh = root(ply:GetVehicle())
         if mode == "auto" then
             ply:SetNWBool("GRM_AutoPilot", true)
             ply:SetNWBool("GRM_CruiseOn", true)
+            wakeEngine(veh)
+            pressW(veh, true)
             return true, "Автопилот " .. speed .. " км/ч. S или /cruise 0 — стоп."
         end
         ply:SetNWBool("GRM_AutoPilot", false)
         ply:SetNWBool("GRM_CruiseOn", true)
+        pressW(veh, false)
         return true, "Круиз: не быстрее " .. speed .. " км/ч."
     end
 
@@ -56,18 +102,16 @@ if SERVER then
         if not IsValid(ply) then return end
         ply._grmCruise = ply._grmCruise or 0
         if CurTime() < ply._grmCruise then return end
-        ply._grmCruise = CurTime() + 0.2
-        local mode = string.sub(net.ReadString() or "", 1, 8)
-        local speed = net.ReadUInt(8)
-        local ok, msg = setMode(ply, mode, speed)
+        ply._grmCruise = CurTime() + 0.15
+        local ok, msg = setMode(ply, string.sub(net.ReadString() or "", 1, 8), net.ReadUInt(8))
         if GRM.Notify then GRM.Notify(ply, msg, ok and 120 or 255, ok and 210 or 140, 90) end
     end)
 
     hook.Add("PlayerLeaveVehicle", "GRM_Cruise_Leave", function(ply) clear(ply) end)
     hook.Add("PlayerDeath", "GRM_Cruise_Die", function(ply) clear(ply) end)
 
-    hook.Add("Think", "GRM_Cruise_Cap", function()
-        if GRM.Perf and GRM.Perf.Throttle and not GRM.Perf.Throttle("cruise.cap", 0.05) then return end
+    hook.Add("Think", "GRM_Cruise_Drive", function()
+        if GRM.Perf and GRM.Perf.Throttle and not GRM.Perf.Throttle("cruise.drv", 0.03) then return end
         for _, ply in ipairs(player.GetAll()) do
             if not (IsValid(ply) and ply:InVehicle() and ply:GetNWBool("GRM_CruiseOn")) then continue end
             local cap = ply:GetNWInt("GRM_CruiseKmh", 0)
@@ -75,65 +119,79 @@ if SERVER then
             local veh = root(ply:GetVehicle())
             if not IsValid(veh) then continue end
             local speed = kmh(veh)
-            if speed > cap + 1 then
-                local phys = veh:GetPhysicsObject()
-                if IsValid(phys) then
-                    local v = phys:GetVelocity()
-                    local want = cap / math.max(0.1, speed)
-                    phys:SetVelocity(v * want)
-                else
-                    local v = veh:GetVelocity()
-                    veh:SetVelocity(v * (cap / math.max(0.1, speed)) - v)
+            local ph = physOf(veh)
+            if ply:GetNWBool("GRM_AutoPilot") then
+                if ply:KeyDown(IN_BACK) then
+                    clear(ply)
+                    if GRM.Notify then GRM.Notify(ply, "Автопилот снят.", 180, 210, 140) end
+                    continue
                 end
+                wakeEngine(veh)
+                local need = speed < cap - 0.6
+                pressW(veh, need or (speed < cap + 0.4))
+                if need and IsValid(ph) then
+                    local mass = math.max(80, ph:GetMass())
+                    local boost = math.Clamp((cap - speed) / 18, 0.2, 1.1)
+                    ph:ApplyForceCenter(veh:GetForward() * mass * 520 * boost)
+                    ph:Wake()
+                elseif speed > cap + 1 and IsValid(ph) then
+                    ph:SetVelocity(ph:GetVelocity() * (cap / math.max(0.2, speed)))
+                    pressW(veh, false)
+                end
+            elseif speed > cap + 0.8 and IsValid(ph) then
+                ph:SetVelocity(ph:GetVelocity() * (cap / math.max(0.2, speed)))
             end
         end
     end)
 
-    hook.Add("PlayerSayTransform", "GRM_Cruise_Chat", function(ply, pack)
-        if not istable(pack) then return end
-        local t = string.lower(string.Trim(pack[1] or ""))
+    local function chatCmd(ply, text)
+        local t = string.lower(string.Trim(tostring(text or "")))
         local mode, num
-        local a, b = t:match("^/(autopilot)%s*(%d*)$")
-        if not a then a, b = t:match("^/(автопилот)%s*(%d*)$") end
-        if a then mode = (b == "" or b == "0") and "off" or "auto" num = tonumber(b) or 0 end
-        if not mode then
-            local c, d = t:match("^/(cruise)%s*(%d*)$")
-            if not c then c, d = t:match("^/(круиз)%s*(%d*)$") end
-            if c then mode = (d == "" or d == "0") and "off" or "cruise" num = tonumber(d) or 0 end
+        local n = t:match("(%d+)") or ""
+        if string.sub(t, 1, 11) == "/autopilot" or string.find(t, "^/автопилот", 1, false) then
+            mode = (n == "" or n == "0") and "off" or "auto"
+            num = tonumber(n) or 0
+        elseif string.sub(t, 1, 7) == "/cruise" or string.find(t, "^/круиз", 1, false) then
+            mode = (n == "" or n == "0") and "off" or "cruise"
+            num = tonumber(n) or 0
         end
         if not mode then return end
         local ok, msg = setMode(ply, mode, num)
         if GRM.Notify then GRM.Notify(ply, msg, ok and 120 or 255, ok and 210 or 140, 90) end
-        pack[1] = ""
-        pack.SkipPlayerSay = true
+        return true
+    end
+
+    hook.Add("PlayerSayTransform", "GRM_Cruise_Chat", function(ply, pack)
+        if not istable(pack) then return end
+        if chatCmd(ply, pack[1]) then pack[1] = "" pack.SkipPlayerSay = true end
+    end)
+    hook.Add("PlayerSay", "GRM_Cruise_ChatRaw", function(ply, text)
+        if chatCmd(ply, text) then return "" end
+    end)
+    concommand.Add("grm_autopilot", function(ply, _, a)
+        if IsValid(ply) then setMode(ply, "auto", tonumber(a and a[1]) or 0) end
+    end)
+    concommand.Add("grm_cruise", function(ply, _, a)
+        if IsValid(ply) then setMode(ply, "cruise", tonumber(a and a[1]) or 0) end
     end)
 
     print("[GRM Cruise] server v" .. C.Version)
 end
 
 if CLIENT then
-    hook.Add("CreateMove", "GRM_Cruise_Drive", function(cmd)
-        local lp = LocalPlayer()
-        if not IsValid(lp) or not lp.InVehicle or not lp:InVehicle() then return end
-        local cap = lp:GetNWInt("GRM_CruiseKmh", 0)
+    hook.Add("StartCommand", "GRM_Cruise_Keys", function(ply, cmd)
+        if ply ~= LocalPlayer() then return end
+        if not IsValid(ply) or not ply.InVehicle or not ply:InVehicle() then return end
+        if not ply:GetNWBool("GRM_AutoPilot") then return end
+        if bit.band(cmd:GetButtons(), IN_BACK) ~= 0 then return end
+        local cap = ply:GetNWInt("GRM_CruiseKmh", 0)
         if cap <= 0 then return end
-        if bit.band(cmd:GetButtons(), IN_BACK) ~= 0 then
-            if lp:GetNWBool("GRM_AutoPilot") then
-                net.Start("GRM_Cruise") net.WriteString("off") net.WriteUInt(0, 8) net.SendToServer()
-            end
-            return
-        end
-        local veh = root(lp:GetVehicle())
-        local speed = kmh(veh)
-        if lp:GetNWBool("GRM_AutoPilot") then
-            if speed < cap - 1 then
-                cmd:SetButtons(bit.bor(cmd:GetButtons(), IN_FORWARD))
-            elseif speed > cap + 0.8 then
-                cmd:SetButtons(bit.band(cmd:GetButtons(), bit.bnot(IN_FORWARD)))
-            else
-                cmd:SetButtons(bit.bor(cmd:GetButtons(), IN_FORWARD))
-            end
-        elseif lp:GetNWBool("GRM_CruiseOn") and speed >= cap then
+        local speed = kmh(root(ply:GetVehicle()))
+        if speed < cap + 0.5 then
+            cmd:SetButtons(bit.bor(cmd:GetButtons(), IN_FORWARD))
+            cmd:SetForwardMove(10000)
+        else
+            cmd:SetForwardMove(0)
             cmd:SetButtons(bit.band(cmd:GetButtons(), bit.bnot(IN_FORWARD)))
         end
     end)
