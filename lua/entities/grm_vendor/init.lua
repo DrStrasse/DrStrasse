@@ -28,7 +28,7 @@ end
 
 function ENT:Initialize()
     local V = GRM.Vendor
-    self.VendorType = V and V.Catalogs[self.VendorType] and self.VendorType or "weapon"
+    self.VendorType = (V and V.ResolveType and V.ResolveType(self.VendorType, self.VendorType)) or self.VendorType or "weapon"
     self.VendorModel=tostring(self.VendorModel or "")
     self:SetModel(util.IsValidModel(self.VendorModel) and self.VendorModel or ((V and V.Models and V.Models[self.VendorType]) or "models/kleiner.mdl"))
     self:SetSolid(SOLID_BBOX)

@@ -21,7 +21,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Vendor = GRM.Vendor or {}
 local V = GRM.Vendor
-V.Version = "2.2.0"
+V.Version = "2.2.1"
 
 -- ============================================================
 -- КОНФИГ
@@ -46,13 +46,23 @@ V.Models = {
 -- v2.2.0: типы торговцев — общий реестр. Раньше список был захардкожен
 -- и в этом файле, и в тулгане: новый торговец приходилось вписывать в двух
 -- местах. Теперь модуль регистрирует свой тип сам (V.RegisterType).
-V.TypeNames = V.TypeNames or {
-    weapon    = "Арсенал",
-    ore       = "Скупщик руды",
-    food      = "Продукты",
-    rare      = "Редкости",
-    accessory = "Аксессуары",
-}
+V.TypeNames = V.TypeNames or {}
+V.TypeNames.weapon    = V.TypeNames.weapon or "Арсенал"
+V.TypeNames.ore       = V.TypeNames.ore or "Скупщик руды"
+V.TypeNames.food      = V.TypeNames.food or "Продукты"
+V.TypeNames.rare      = V.TypeNames.rare or "Редкости"
+V.TypeNames.accessory = V.TypeNames.accessory or "Аксессуары"
+V.TypeNames.phone     = V.TypeNames.phone or "Салон связи"
+V.Models.phone        = V.Models.phone or "models/humans/group01/male_07.mdl"
+
+function V.ResolveType(kind, fallback)
+    kind = tostring(kind or "")
+    if kind ~= "" and (V.TypeNames[kind] or V.Catalogs[kind]) then return kind end
+    if kind ~= "" and kind ~= "weapon" then return kind end
+    fallback = tostring(fallback or "")
+    if fallback ~= "" then return fallback end
+    return "weapon"
+end
 
 function V.RegisterType(key, label, model, catalog)
     key = tostring(key or "")
@@ -78,6 +88,7 @@ end
 -- ============================================================
 V.Catalogs = V.Catalogs or {}
 V.Catalogs.accessory = V.Catalogs.accessory or {}
+V.Catalogs.phone = V.Catalogs.phone or {}
 
 -- 1) ОРУЖИЕ — ArcCW (базовый набор; расширяется через V.RegisterItem)
 V.Catalogs.weapon = V.Catalogs.weapon or {
@@ -340,7 +351,7 @@ if SERVER then
         if not IsValid(ent) then return false end
         ent.GRMVendorID = tostring(rec.id)
         ent.GRMVendorPersistent = true
-        ent.VendorType = V.Catalogs[rec.vendorType] and rec.vendorType or "weapon"
+        ent.VendorType = V.ResolveType(rec.vendorType, rec.vendorType)
         ent.CustomPrices = table.Copy(rec.customPrices or {})
         ent.CustomLimits = table.Copy(rec.customLimits or {})
         ent.EnabledItems = table.Copy(rec.enabledItems or {})
@@ -360,7 +371,7 @@ if SERVER then
         if IsValid(existing) then applyRecord(existing, rec); return existing, false end
         local ent = ents.Create("grm_vendor")
         if not IsValid(ent) then return nil, false end
-        ent.VendorType = V.Catalogs[rec.vendorType] and rec.vendorType or "weapon"
+        ent.VendorType = V.ResolveType(rec.vendorType, rec.vendorType)
         ent.GRMVendorID = tostring(rec.id)
         ent.CustomPrices = table.Copy(rec.customPrices or {})
         ent.CustomLimits = table.Copy(rec.customLimits or {})

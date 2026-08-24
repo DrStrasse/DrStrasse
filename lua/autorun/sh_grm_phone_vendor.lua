@@ -90,12 +90,25 @@ function PV.Register()
     local V = GRM.Vendor
     if not (istable(V) and isfunction(V.RegisterType)) then return false, "GRM.Vendor не загружен" end
 
-    local catalog = PV.BuildCatalog()
-    if not catalog then return false, "Реестр телефонов (GRM.Mobile.Tiers) ещё не готов" end
+    -- Тип регистрируем сразу: иначе LoadMapVendors видит пустой Catalogs.phone
+    -- и тихо превращает салон связи в оружейника.
+    V.RegisterType("phone", "Салон связи", PV.NPCModel)
 
-    V.RegisterType("phone", "Салон связи", PV.NPCModel, catalog)
-    PV.Registered = true
-    return true, table.Count(catalog)
+    local catalog = PV.BuildCatalog()
+    if catalog then V.RegisterType("phone", "Салон связи", PV.NPCModel, catalog) end
+    PV.Registered = catalog ~= nil
+    if catalog and SERVER then
+        for _, ent in ipairs(ents.FindByClass("grm_vendor")) do
+            if IsValid(ent) and tostring(ent.VendorType or "") == "phone" then
+                ent:SetNWString("VendorType", "phone")
+                ent:SetNWString("GRMVendorName", V.GetDisplayName(ent))
+                if tostring(ent:GetModel() or "") == (V.Models.weapon or "") then
+                    ent:SetModel(PV.NPCModel)
+                end
+            end
+        end
+    end
+    return catalog ~= nil, catalog and table.Count(catalog) or "каталог позже"
 end
 
 -- Регистрируем через Boot: телефоны и вендор — разные файлы, порядок
@@ -105,6 +118,10 @@ local function registerWhenReady()
     local ok = PV.Register()
     if ok then return true end
     return false
+end
+
+if SERVER or CLIENT then
+    timer.Simple(0, function() PV.Register() end)
 end
 
 if GRM.Boot and GRM.Boot.Task then
