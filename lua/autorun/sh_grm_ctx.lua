@@ -693,7 +693,7 @@ local BTNS = {
     -- ── транспорт (Код 82): только когда смотрим на машину ──
     { id = "veh_lock",   l = function() return (istable(data.veh) and data.veh.locked) and "Открыть замок Т/С" or "Закрыть Т/С на замок" end,
       fn = vehAct("lock"),   c = Color(90, 140, 200), ch = Color(110, 160, 220), ok = vehOk("canManage") },
-    { id = "veh_trunk",  l = "Багажник (открыть/закрыть)", fn = vehAct("trunk"),
+    { id = "veh_trunk",  l = "Багажник (окно)", fn = vehAct("trunk"),
       c = Color(200, 160, 80), ch = Color(220, 180, 100), ok = vehOk("canUse") },
     { id = "veh_remove", l = function()
           if istable(data.veh) and (data.veh.refund or 0) > 0 then

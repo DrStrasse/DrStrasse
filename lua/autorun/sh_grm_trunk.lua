@@ -33,7 +33,7 @@ GRM = GRM or {}
 GRM.Trunk = GRM.Trunk or {}
 local TK = GRM.Trunk
 
-TK.Version       = "1.1.0"
+TK.Version       = "1.2.0"
 TK.DataFile      = "grm_trunks.json"
 TK.MaxSlots      = 24
 TK.MaxWeight     = 120
@@ -273,6 +273,33 @@ if SERVER then
     function TK.CloseViewer(ply, veh)
         if IsValid(veh) and istable(TK.Viewers[veh]) then TK.Viewers[veh][ply] = nil end
     end
+
+    function TK.Slam(ply, veh)
+        if not (IsValid(ply) and IsValid(veh)) then return end
+        if not veh:GetNW2Bool("VK_TrunkOpen", false) then return end
+        local ok = TK.CanAccess(ply, veh)
+        if not ok and not ply:IsSuperAdmin() then return end
+        closeForAll(veh)
+    end
+
+    net.Receive(NET_CLOSE, function(_, ply)
+        if not IsValid(ply) then return end
+        local veh = net.ReadEntity()
+        local slam = false
+        if net.BytesLeft and net.BytesLeft() >= 1 then slam = net.ReadBool() == true end
+        if slam then TK.Slam(ply, veh) else TK.CloseViewer(ply, veh) end
+    end)
+
+    hook.Add("PlayerUse", "GRM_Trunk_UseReopen", function(ply, ent)
+        if not (IsValid(ply) and IsValid(ent)) then return end
+        if not (VK and VK.IsVehicle and VK.IsVehicle(ent)) then return end
+        if not ent:GetNW2Bool("VK_TrunkOpen", false) then return end
+        if ply:GetPos():DistToSqr(ent:GetPos()) > TK.UseRange * TK.UseRange then return end
+        if (tonumber(ply._tkUseAt) or 0) > CurTime() then return false end
+        ply._tkUseAt = CurTime() + 0.45
+        TK.Open(ply, ent)
+        return false
+    end)
 
     -- сторож автозакрытия: бежим только по открытым крышкам (TK.Viewers) ---
     timer.Create("GRM_Trunk_Watch", 0.5, 0, function()
@@ -524,10 +551,11 @@ if CLIENT then
         TK._frame = nil
     end
 
-    local function sendClose()
+    local function sendClose(slam)
         if IsValid(TK._veh) then
             net.Start(NET_CLOSE)
                 net.WriteEntity(TK._veh)
+                net.WriteBool(slam == true)
             net.SendToServer()
         end
     end
@@ -622,6 +650,14 @@ if CLIENT then
         x.DoClick = function() f:Close() end
         x.Paint = function(self, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and C.red or Color(45, 52, 68)) end
         x.Think = function(s) s:SetPos(f:GetWide() - 42, 10) end
+        local slam = vgui.Create("DButton", f)
+        slam:SetText("ЗАКРЫТЬ КРЫШКУ")
+        slam:SetFont("GRMTrunk_Small")
+        slam:SetTextColor(color_white)
+        slam:SetSize(148, 26)
+        slam.Paint = function(self, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and C.red or Color(90, 48, 52)) end
+        slam.DoClick = function() sendClose(true); f:Close() end
+        slam.Think = function(s) s:SetPos(f:GetWide() - 198, 12) end
 
         local lp = vgui.Create("DPanel", f)
         lp:Dock(LEFT) lp:SetWide(470) lp:DockMargin(12, 58, 6, 14) lp:SetPaintBackground(false)
@@ -680,6 +716,17 @@ if CLIENT then
             local mins,maxs=veh:OBBMins(),veh:OBBMaxs();local back=(mins and mins.y)and mins.y or-60;local pos=veh:LocalToWorld(Vector(0,back-8,(maxs and maxs.z or 60)*.5+30+math.sin(CurTime()*3)*3));local ang=Angle(0,EyeAngles().y-90,90)
             cam.Start3D2D(pos,ang,.1);draw.RoundedBox(6,-110,-20,220,40,Color(14,18,26,215));surface.SetDrawColor(C.yellow.r,C.yellow.g,C.yellow.b,220);surface.DrawOutlinedRect(-110,-20,220,40,2);draw.SimpleText("БАГАЖНИК ОТКРЫТ","GRMTrunk_3D",0,0,C.yellow,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER);cam.End3D2D();return
         end end
+    end)
+
+    print("[GRM Trunk] Клиент багажника v" .. TK.Version .. " загружен")
+end
+18, 216, 36, Color(14, 18, 26, 220))
+                surface.SetDrawColor(C.yellow.r, C.yellow.g, C.yellow.b, 230)
+                surface.DrawOutlinedRect(-108, -18, 216, 36, 2)
+                draw.SimpleText("БАГАЖНИК ОТКРЫТ", "GRMTrunk_3D", 0, 0, C.yellow, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                cam.End3D2D()
+            end
+        end
     end)
 
     print("[GRM Trunk] Клиент багажника v" .. TK.Version .. " загружен")

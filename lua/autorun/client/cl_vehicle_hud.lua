@@ -207,7 +207,7 @@ hook.Add("HUDPaint", "VK_PassiveVehicleOwnerHUD", function()
     -- Подсказки управления — у ЛЮБОЙ машины при взгляде вблизи (220 юн).
     if trunkOpen then
         draw.SimpleText("● БАГАЖНИК ОТКРЫТ", "VK_HUD_Normal", x, y + 20, Color(255, 205, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-        draw.SimpleText("кладите/забирайте в окне • /trunk — захлопнуть", "VK_HUD_Small", x, y + 40, Color(210, 200, 170), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+        draw.SimpleText("E или /trunk — окно   ·   крышку закройте в окне", "VK_HUD_Small", x, y + 40, Color(210, 200, 170), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
     else
         draw.SimpleText("Ключи: ЛКМ/ПКМ — замок  •  /trunk — багажник", "VK_HUD_Small", x, y + 20, Color(200, 205, 215, 230), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
     end

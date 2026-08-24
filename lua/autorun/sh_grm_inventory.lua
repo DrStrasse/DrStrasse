@@ -227,6 +227,14 @@ GRM.Inventory.ItemDefs = {
     },
 
     -- === ЧИПЫ АУГМЕНТАЦИЙ ===
+    ["mobile_crappy"] = { type = "item", name = "Телефон: Badger Crappy", desc = "Дешёвая трубка. Только звонки.", icon = "icon16/phone.png", maxStack = 1, weight = 0.35, model = "models/ivancorn/gtaiv/electrical/phones/cellphone_badger_crappy.mdl", useFunc = "mobile_open" },
+    ["mobile_badger"] = { type = "item", name = "Телефон: Badger Classic", desc = "Звонки, SMS, контакты.", icon = "icon16/phone.png", maxStack = 1, weight = 0.35, model = "models/ivancorn/gtaiv/electrical/phones/cellphone_badger.mdl", useFunc = "mobile_open" },
+    ["mobile_badger_touch"] = { type = "item", name = "Телефон: Badger Touch", desc = "Сенсорный Badger.", icon = "icon16/phone.png", maxStack = 1, weight = 0.35, model = "models/ivancorn/gtaiv/electrical/phones/phone_mobile_badger_touchscreen.mdl", useFunc = "mobile_open" },
+    ["mobile_lost"] = { type = "item", name = "Телефон: The Lost Flip", desc = "Раскладушка.", icon = "icon16/phone.png", maxStack = 1, weight = 0.35, model = "models/ivancorn/gtaiv/electrical/phones/cellphone_thelostdamned.mdl", useFunc = "mobile_open" },
+    ["mobile_tinkle"] = { type = "item", name = "Телефон: Panoramic Tinkle", desc = "Смартфон.", icon = "icon16/phone.png", maxStack = 1, weight = 0.35, model = "models/ivancorn/gtaiv/electrical/phones/cellphone_panoramic_tinkle.mdl", useFunc = "mobile_open" },
+    ["mobile_whiz_high"] = { type = "item", name = "Телефон: Whiz Highspeed", desc = "Флагман Whiz.", icon = "icon16/phone.png", maxStack = 1, weight = 0.35, model = "models/ivancorn/gtaiv/electrical/phones/cellphone_whiz_highspeed.mdl", useFunc = "mobile_open" },
+    ["mobile_whiz_gold"] = { type = "item", name = "Телефон: Whiz Gold", desc = "Золотой Whiz.", icon = "icon16/phone.png", maxStack = 1, weight = 0.35, model = "models/ivancorn/gtaiv/electrical/phones/cellphone_whiz_gold.mdl", useFunc = "mobile_open" },
+
     ["augmentation_chip"] = {
         type = "item",
         name = "Чип аугментации",

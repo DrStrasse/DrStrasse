@@ -937,6 +937,8 @@ if SERVER then
     timer.Simple(1, registerPhones)
     timer.Simple(3, registerPhones)
     timer.Simple(6, registerPhones)
+    hook.Add("InitPostEntity", "GRM_Mob_RegisterPhones", registerPhones)
+    hook.Add("Initialize", "GRM_Mob_RegisterPhones", registerPhones)
     timer.Create("GRM_Mob_Think", 1, 0, function()
         MB.Think()
     end)
