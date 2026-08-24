@@ -48,7 +48,7 @@ function F.GuessType(ent)
 end
 
 function F.TankSize()
-    return 55
+    return 100
 end
 
 function F.TankWorld(ent)
@@ -143,7 +143,7 @@ if SERVER then
     function F.Get(uid)
         uid = tostring(uid or "")
         if uid == "" then return nil end
-        F.Data[uid] = F.Data[uid] or { liters = 40, typ = "petrol" }
+        F.Data[uid] = F.Data[uid] or { liters = 70, typ = "petrol" }
         return F.Data[uid]
     end
 
@@ -267,7 +267,7 @@ if SERVER then
         pump:SetSessionL(0)
         pump:SetSessionPay(0)
         pump:SetTankNow(veh:GetNWFloat("GRM_Fuel", 0))
-        pump:SetTankMax(veh:GetNWFloat("GRM_FuelMax", 55))
+        pump:SetTankMax(veh:GetNWFloat("GRM_FuelMax", F.TankSize()))
         F.ClearHose(pump)
         pump:EmitSound("ambient/water/leak_1.wav", 50, 95)
         local key = "GRM_Nozzle_" .. wep:EntIndex()
@@ -304,7 +304,7 @@ if SERVER then
             pump:SetSessionL((pump:GetSessionL() or 0) + added)
             pump:SetSessionPay((pump:GetSessionPay() or 0) + cost)
             pump:SetTankNow(veh:GetNWFloat("GRM_Fuel", 0))
-            pump:SetTankMax(veh:GetNWFloat("GRM_FuelMax", 55))
+            pump:SetTankMax(veh:GetNWFloat("GRM_FuelMax", F.TankSize()))
             wep:SetNWFloat("SessL", pump:GetSessionL())
             wep:SetNWFloat("SessPay", pump:GetSessionPay())
             wep:SetNWFloat("TankNow", pump:GetTankNow())
@@ -415,19 +415,57 @@ if SERVER then
             if not (F.IsOwner(ply, ent) or ply:IsSuperAdmin()) then
                 ok, msg = false, "Нельзя снять чужую колонку"
             else
-                if GRM.Perm and GRM.Perm.Remove then
-                    local rok, rmsg = GRM.Perm.Remove(ply, ent, true)
-                    if rok then ok, msg = true, "Колонка снята с карты и из перма"
-                    elseif IsValid(ent) then ent:Remove() ok, msg = true, "Колонка удалена"
-                    else ok, msg = false, tostring(rmsg) end
-                else
-                    if IsValid(ent) then ent:Remove() end
-                    ok, msg = true, "Колонка удалена"
-                end
-                F.SavePumps()
+                ok, msg = F.DeletePump(ply, ent)
             end
         else return end
         if GRM.Notify then GRM.Notify(ply, tostring(msg), ok and 120 or 255, ok and 220 or 140, 100) end
+    end)
+
+    function F.SetEngine(veh, on)
+        if not IsValid(veh) then return end
+        veh = F.RootVehicle(veh) or veh
+        if on then
+            if veh:GetNWBool("GRM_VehBroken") then return false, "поломана" end
+            if (veh:GetNWFloat("GRM_Fuel", 0) or 0) <= 0.05 then
+                killEngine(veh)
+                return false, "нет топлива"
+            end
+            veh:SetNWBool("GRM_EngineOn", true)
+            veh:SetNWBool("GRM_OutOfFuel", false)
+            pcall(function()
+                if veh.EnableEngine then veh:EnableEngine(true) end
+                if veh.StartEngine then veh:StartEngine(true) end
+                if veh.SetActive then veh:SetActive(true) end
+            end)
+            return true
+        end
+        veh:SetNWBool("GRM_EngineOn", false)
+        killEngine(veh)
+        veh:SetNWBool("GRM_OutOfFuel", false)
+        return true
+    end
+
+    hook.Add("PlayerEnteredVehicle", "GRM_Fuel_IgnOff", function(ply, seat)
+        local veh = F.RootVehicle(seat)
+        if IsValid(veh) then
+            F.ApplyNW(veh)
+            F.SetEngine(veh, false)
+        end
+    end)
+
+    hook.Add("StartCommand", "GRM_Fuel_Ignition", function(ply, cmd)
+        if not (IsValid(ply) and ply:InVehicle()) then return end
+        if not cmd:KeyDown(IN_RELOAD) then ply._grmIgnWas = false return end
+        if ply._grmIgnWas then return end
+        ply._grmIgnWas = true
+        local veh = F.RootVehicle(ply:GetVehicle())
+        if not IsValid(veh) then return end
+        local on = not veh:GetNWBool("GRM_EngineOn", false)
+        local ok, why = F.SetEngine(veh, on)
+        if GRM.Notify then
+            if ok then GRM.Notify(ply, on and "Зажигание ВКЛ" or "Зажигание ВЫКЛ", 140, 210, 130)
+            else GRM.Notify(ply, "Не заводится: " .. tostring(why), 255, 160, 80) end
+        end
     end)
 
     hook.Add("Think", "GRM_Fuel_Consume", function()
@@ -450,10 +488,14 @@ if SERVER then
                 if not veh:GetNWBool("GRM_OutOfFuel", false) then killEngine(veh) end
                 continue
             end
-            local burn = 0.026
-            if ply:KeyDown(IN_FORWARD) then burn = burn + 0.055 end
-            if ply:KeyDown(IN_SPEED) then burn = burn + 0.04 end
+            if not veh:GetNWBool("GRM_EngineOn", false) then
+                if not veh:GetNWBool("GRM_OutOfFuel", false) then killEngine(veh) end
+                continue
+            end
             if veh:GetNWBool("GRM_VehBroken") then continue end
+            local burn = 0.007
+            if ply:KeyDown(IN_FORWARD) then burn = burn + 0.016 end
+            if ply:KeyDown(IN_SPEED) then burn = burn + 0.01 end
             rec.liters = math.max(0, rec.liters - burn)
             if GRM.Perf and GRM.Perf.NWFloat then
                 GRM.Perf.NWFloat(veh, "GRM_Fuel", rec.liters, 0.05)

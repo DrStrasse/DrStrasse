@@ -253,17 +253,88 @@ local AX = {
     z = { c = Color(70, 140, 240), v = function(a) return a:Up() end },
 }
 
+local function gizmoLen(o)
+    return math.Clamp(EyePos():Distance(o) * 0.055, 12, 32)
+end
+
+local function rotBasis(axis, ang)
+    if axis == "x" then return ang:Right(), ang:Up() end
+    if axis == "y" then return ang:Forward(), ang:Up() end
+    return ang:Forward(), ang:Right()
+end
+
+local function ringPt(o, ang, axis, rad, r)
+    local a, b = rotBasis(axis, ang)
+    return o + a * math.cos(rad) * r + b * math.sin(rad) * r
+end
+
+local function pickGizmo(mx, my)
+    local o, ang = boneWorld()
+    if not o then return end
+    local os = o:ToScreen()
+    if not os or os.visible == false then return end
+    local best, bd, bdx, bdy
+    local len = gizmoLen(o)
+    if ST.mode == "rotate" then
+        for axis in pairs(AX) do
+            local prev = ringPt(o, ang, axis, 0, len):ToScreen()
+            for i = 1, 48 do
+                local cur = ringPt(o, ang, axis, math.pi * 2 * i / 48, len):ToScreen()
+                local dx, dy = cur.x - prev.x, cur.y - prev.y
+                local l2 = dx * dx + dy * dy
+                if l2 > 1 then
+                    local t = math.Clamp(((mx - prev.x) * dx + (my - prev.y) * dy) / l2, 0, 1)
+                    local px, py = prev.x + dx * t, prev.y + dy * t
+                    local d = math.sqrt((mx - px) ^ 2 + (my - py) ^ 2)
+                    if d <= 12 and (not bd or d < bd) then
+                        local l = math.sqrt(l2)
+                        best, bd, bdx, bdy = axis, d, dx / l, dy / l
+                    end
+                end
+                prev = cur
+            end
+        end
+    else
+        for axis, data in pairs(AX) do
+            local es = (o + data.v(ang) * len):ToScreen()
+            local dx, dy = es.x - os.x, es.y - os.y
+            local l2 = dx * dx + dy * dy
+            if l2 > 4 then
+                local t = math.Clamp(((mx - os.x) * dx + (my - os.y) * dy) / l2, 0, 1)
+                local px, py = os.x + dx * t, os.y + dy * t
+                local d = math.sqrt((mx - px) ^ 2 + (my - py) ^ 2)
+                if d <= 14 and (not bd or d < bd) then
+                    local l = math.sqrt(l2)
+                    best, bd, bdx, bdy = axis, d, dx / l, dy / l
+                end
+            end
+        end
+    end
+    return best, bdx, bdy
+end
+
 hook.Add("PostDrawTranslucentRenderables", "GRM_SocStudio_Gizmo", function(depth, sky)
     if not ST.on or depth or sky then return end
     local o, a = boneWorld()
     if not o then return end
     render.SetColorMaterial()
-    render.DrawWireframeSphere(o, 1.4, 8, 8, Color(255, 240, 180), false)
-    local len = math.Clamp(EyePos():Distance(o) * 0.05, 10, 28)
-    for _, d in pairs(AX) do
-        local e = o + d.v(a) * len
-        render.DrawLine(o, e, d.c, false)
-        render.DrawWireframeSphere(e, 1.1, 6, 6, d.c, false)
+    render.DrawWireframeSphere(o, 1.6, 8, 8, Color(255, 240, 180), false)
+    local len = gizmoLen(o)
+    if ST.mode == "rotate" then
+        for axis, d in pairs(AX) do
+            local prev = ringPt(o, a, axis, 0, len)
+            for i = 1, 48 do
+                local cur = ringPt(o, a, axis, math.pi * 2 * i / 48, len)
+                render.DrawLine(prev, cur, d.c, false)
+                prev = cur
+            end
+        end
+    else
+        for _, d in pairs(AX) do
+            local e = o + d.v(a) * len
+            render.DrawLine(o, e, d.c, false)
+            render.DrawWireframeSphere(e, 1.2, 6, 6, d.c, false)
+        end
     end
 end)
 

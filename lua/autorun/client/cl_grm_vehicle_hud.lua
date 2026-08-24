@@ -251,7 +251,7 @@ hook.Add("HUDPaint", "GRM_Vehicle_Cluster", function()
     end
     local kmh = math.floor(vel * 0.09144)
     local fuel = veh:GetNWFloat("GRM_Fuel", -1)
-    local fmax = math.max(1, veh:GetNWFloat("GRM_FuelMax", 55))
+    local fmax = math.max(1, veh:GetNWFloat("GRM_FuelMax", 100))
     local typ = veh:GetNWString("GRM_FuelType", "petrol")
     local typN = (GRM.Fuel.Types and GRM.Fuel.Types[typ]) or typ
     local empty = veh:GetNWBool("GRM_OutOfFuel", false) or (fuel >= 0 and fuel <= 0.05)
@@ -266,6 +266,8 @@ hook.Add("HUDPaint", "GRM_Vehicle_Cluster", function()
     surface.DrawOutlinedRect(x, y, w, h, 1)
     draw.SimpleText(string.format("%d", kmh), "GRMVeh_Big", x + 22, y + 14, Color(235, 242, 250))
     draw.SimpleText("км/ч", "GRMVeh_Sm", x + 22, y + 44, Color(140, 160, 180))
+    local eng = veh:GetNWBool("GRM_EngineOn", false)
+    draw.SimpleText(eng and "двиг. ВКЛ  ·  R" or "двиг. ВЫКЛ  ·  R", "GRMVeh_Sm", x + 118, y + 48, eng and Color(90, 200, 120) or Color(200, 140, 90))
 
     if fuel >= 0 then
         local pct = math.Clamp(fuel / fmax, 0, 1)

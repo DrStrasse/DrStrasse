@@ -56,7 +56,7 @@ function ENT:Draw()
         draw.SimpleText(string.format("%.0f GRM / л", price), "DermaDefault", 0, -28, Color(210, 220, 230), TEXT_ALIGN_CENTER)
         local sess = self:GetSessionL() or 0
         local pay = self:GetSessionPay() or 0
-        local now, mx = self:GetTankNow() or 0, math.max(1, self:GetTankMax() or 55)
+        local now, mx = self:GetTankNow() or 0, math.max(1, self:GetTankMax() or 100)
         if self:GetBusy() or sess > 0 then
             draw.SimpleText(string.format("залито сейчас  %.1f л", sess), "DermaDefault", 0, -6, Color(120, 220, 140), TEXT_ALIGN_CENTER)
             draw.SimpleText(string.format("к оплате  %.0f GRM", pay), "DermaDefault", 0, 12, Color(250, 185, 63), TEXT_ALIGN_CENTER)
