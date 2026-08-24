@@ -21,7 +21,8 @@ hook.Add("InitPostEntity", "GRM_VehHUD_HideStock", hideStock)
 timer.Create("GRM_VehHUD_HideStock", 8, 0, hideStock)
 
 hook.Add("HUDShouldDraw", "GRM_VehHUD_HideNames", function(name)
-    if not LocalPlayer():InVehicle() then return end
+    local lp = LocalPlayer()
+    if not IsValid(lp) or not lp.InVehicle or not lp:InVehicle() then return end
     if name == "CHudHealth" or name == "CHudBattery" or name == "CHudDamageIndicator" then
         return false
     end
@@ -41,7 +42,7 @@ hook.Remove("HUDPaint", "GRM_Fuel_HUD")
 
 hook.Add("HUDPaint", "GRM_Vehicle_Cluster", function()
     local lp = LocalPlayer()
-    if not IsValid(lp) or not lp:InVehicle() then return end
+    if not IsValid(lp) or not lp.InVehicle or not lp:InVehicle() then return end
     if GRM.AugHUD and GRM.AugHUD.IsActive and GRM.AugHUD.IsActive() then return end
     local veh = rootVeh(lp:GetVehicle())
     if not IsValid(veh) then return end

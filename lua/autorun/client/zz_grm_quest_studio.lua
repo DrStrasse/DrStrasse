@@ -406,7 +406,7 @@ function Q.OpenGraphStudio(data)
     ph.OnSelect = function(_, _, _, v) phase = v or "offer" selected = 0 rebuildCards() rebuildProps() end
 
     local addN = mkBtn(bar, "+ Узел", COL.green)
-    addN:SetPos(690, 4) addN:SetSize(90, 28
+    addN:SetPos(690, 4) addN:SetSize(90, 28)
     addN.DoClick = function()
         if not work then return end
         showTab("graph")
