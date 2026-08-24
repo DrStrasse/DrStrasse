@@ -199,11 +199,16 @@ if SERVER then
             local radius = math.Clamp(net.ReadUInt(16), 100, 10000)
             MM.Data.districts[#MM.Data.districts + 1] = { id = nextID("district"), name = name ~= "" and name or "Район", center = pos(ply:GetPos()), radius = radius, color = { r = 70, g = 150, b = 240 } }
             save(); send()
-        elseif action == "add_point" then
+        elseif action == "add_point" or action == "add_point_at" then
             local name = string.sub(string.Trim(net.ReadString() or "GPS-точка"), 1, 48)
             local radius = math.Clamp(net.ReadUInt(16), 100, 2000)
-            local tr = ply:GetEyeTrace()
-            local hit = (tr and tr.HitPos) or ply:GetPos()
+            local hit
+            if action == "add_point_at" then
+                hit = Vector(net.ReadFloat(), net.ReadFloat(), net.ReadFloat())
+            else
+                local tr = ply:GetEyeTrace()
+                hit = (tr and tr.HitPos) or ply:GetPos()
+            end
             MM.Data.points[#MM.Data.points + 1] = { id = nextID("point"), name = name ~= "" and name or "GPS-точка", pos = pos(hit), radius = radius, capture = 0, capturing = "", owner = "", allowedFactions = {} }
             save(); send()
         elseif action == "rename_point" then

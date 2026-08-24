@@ -1,13 +1,12 @@
 --[[--------------------------------------------------------------------
-    GRM Nav Atlas v1.2 — мини справа сверху, большой атлас, маршрут.
-    Местность: один JPEG-снимок, не RenderView из HUD.
+    GRM Nav Atlas v1.3 — зум атласа, граф маршрута, редактор меток.
 ----------------------------------------------------------------------]]
 if SERVER then AddCSLuaFile() end
 
 GRM = GRM or {}
 GRM.Nav = GRM.Nav or {}
 local N = GRM.Nav
-N.Version = "1.2.0"
+N.Version = "1.3.0"
 N.File = "grm_navatlas_" .. string.lower(game.GetMap() or "unknown") .. ".json"
 
 N.Kinds = {
@@ -21,13 +20,15 @@ N.Kinds = {
 }
 
 local function jsonLoad(path)
-    if not file.Exists(path, "DATA") then return { marks = {} } end
+    if not file.Exists(path, "DATA") then return { marks = {}, nodes = {}, edges = {} } end
     local ok, t = pcall(util.JSONToTable, file.Read(path, "DATA") or "", false, true)
     if ok and istable(t) then
         t.marks = istable(t.marks) and t.marks or {}
+        t.nodes = istable(t.nodes) and t.nodes or {}
+        t.edges = istable(t.edges) and t.edges or {}
         return t
     end
-    return { marks = {} }
+    return { marks = {}, nodes = {}, edges = {} }
 end
 
 if SERVER then
@@ -40,13 +41,21 @@ if SERVER then
 
     local function save()
         local fn = function()
-            file.Write(N.File, util.TableToJSON({ marks = N.Data.marks }, false) or "{}")
+            file.Write(N.File, util.TableToJSON({
+                marks = N.Data.marks or {},
+                nodes = N.Data.nodes or {},
+                edges = N.Data.edges or {},
+            }, false) or "{}")
         end
         if GRM.Perf and GRM.Perf.Coalesce then GRM.Perf.Coalesce("grm_nav_save", 0.5, fn) else fn() end
     end
 
     local function send(ply)
-        local payload = { marks = N.Data.marks or {} }
+        local payload = {
+            marks = N.Data.marks or {},
+            nodes = N.Data.nodes or {},
+            edges = N.Data.edges or {},
+        }
         if GRM.Net and GRM.Net.Stream then
             GRM.Net.Stream("GRM_Nav_Sync", payload, IsValid(ply) and ply or nil, { chunk = 4096, interval = 0.05 })
         else
@@ -111,26 +120,106 @@ if SERVER then
         return "nav_" .. os.time() .. "_" .. math.random(100, 999)
     end
 
+    local function nodePos(n)
+        return Vector(n.x or 0, n.y or 0, n.z or 0)
+    end
+
+    local function nearestNode(pos)
+        local best, bd
+        for _, n in ipairs(N.Data.nodes or {}) do
+            local d = nodePos(n):DistToSqr(pos)
+            if not bd or d < bd then best, bd = n, d end
+        end
+        return best, bd
+    end
+
+    local function graphNeighbors(id)
+        local out = {}
+        for _, e in ipairs(N.Data.edges or {}) do
+            if e.a == id then out[#out + 1] = e.b
+            elseif e.b == id then out[#out + 1] = e.a end
+        end
+        return out
+    end
+
+    local function findNode(id)
+        for _, n in ipairs(N.Data.nodes or {}) do
+            if n.id == id then return n end
+        end
+    end
+
+    local function graphPath(fromId, toId)
+        if not fromId or not toId then return end
+        if fromId == toId then return { fromId } end
+        local dist, prev, q = { [fromId] = 0 }, {}, { fromId }
+        local seen = { [fromId] = true }
+        local qi = 1
+        while qi <= #q do
+            local cur = q[qi]
+            qi = qi + 1
+            if cur == toId then break end
+            local cn = findNode(cur)
+            if cn then
+                local cp = nodePos(cn)
+                for _, nid in ipairs(graphNeighbors(cur)) do
+                    local nn = findNode(nid)
+                    if nn then
+                        local nd = (dist[cur] or 0) + cp:Distance(nodePos(nn))
+                        if not dist[nid] or nd < dist[nid] then
+                            dist[nid] = nd
+                            prev[nid] = cur
+                            if not seen[nid] then
+                                seen[nid] = true
+                                q[#q + 1] = nid
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        if not prev[toId] and fromId ~= toId then return end
+        local chain, c = {}, toId
+        while c do
+            table.insert(chain, 1, c)
+            c = prev[c]
+        end
+        return chain
+    end
+
     local function buildRoute(from, to)
         local path = { { x = from.x, y = from.y, z = from.z } }
+        local a, ad = nearestNode(from)
+        local b, bd = nearestNode(to)
+        local snap = 1800 * 1800
+        if a and b and ad and bd and ad < snap and bd < snap then
+            local ids = graphPath(a.id, b.id)
+            if ids and #ids > 0 then
+                for _, id in ipairs(ids) do
+                    local n = findNode(id)
+                    if n then path[#path + 1] = { x = n.x, y = n.y, z = n.z } end
+                end
+                path[#path + 1] = { x = to.x, y = to.y, z = to.z }
+                return path
+            end
+        end
         if not (navmesh and navmesh.GetNearestNavArea) then
             path[2] = { x = to.x, y = to.y, z = to.z }
             return path
         end
-        local a, g = navmesh.GetNearestNavArea(from), navmesh.GetNearestNavArea(to)
-        if not (IsValid(a) and IsValid(g)) then
+        local sa, sg = navmesh.GetNearestNavArea(from), navmesh.GetNearestNavArea(to)
+        if not (IsValid(sa) and IsValid(sg)) then
             path[2] = { x = to.x, y = to.y, z = to.z }
             return path
         end
-        local seen, cur = {}, a
-        for _ = 1, 70 do
-            if cur == g then break end
+        local seen, cur = {}, sa
+        for _ = 1, 90 do
+            if cur == sg then break end
             seen[cur:GetID()] = true
-            local best, bd
+            local best, bdist
             for _, nb in ipairs(cur.GetAdjacentAreas and cur:GetAdjacentAreas() or {}) do
                 if IsValid(nb) and not seen[nb:GetID()] then
                     local d = nb:GetCenter():DistToSqr(to)
-                    if not bd or d < bd then best, bd = nb, d end
+                    if not bdist or d < bdist then best, bdist = nb, d end
                 end
             end
             if not best then break end
@@ -145,15 +234,25 @@ if SERVER then
     net.Receive("GRM_Nav_Act", function(_, ply)
         if not IsValid(ply) then return end
         ply._grmNavNext = ply._grmNavNext or 0
+        local actPeek = string.sub(net.ReadString() or "", 1, 24)
+        local cool = (actPeek == "gadd" or actPeek == "glink") and 0.05 or 0.2
         if CurTime() < ply._grmNavNext then return end
-        ply._grmNavNext = CurTime() + 0.2
-        local act = string.sub(net.ReadString() or "", 1, 24)
+        ply._grmNavNext = CurTime() + cool
+        local act = actPeek
 
         if act == "route" then
             local path = buildRoute(ply:GetPos(), Vector(net.ReadFloat(), net.ReadFloat(), net.ReadFloat()))
+            if #path > 250 then
+                local slim = { path[1] }
+                local step = math.max(1, math.floor(#path / 240))
+                for i = 2, #path - 1, step do slim[#slim + 1] = path[i] end
+                slim[#slim + 1] = path[#path]
+                path = slim
+            end
             net.Start("GRM_Nav_Route")
-                net.WriteUInt(#path, 8)
-                for _, p in ipairs(path) do
+                net.WriteUInt(math.min(#path, 250), 8)
+                for i = 1, math.min(#path, 250) do
+                    local p = path[i]
                     net.WriteFloat(p.x) net.WriteFloat(p.y) net.WriteFloat(p.z)
                 end
             net.Send(ply)
@@ -186,6 +285,43 @@ if SERVER then
                 if tostring(m.id) == id then m.pin = not m.pin end
             end
             save(); send()
+        elseif act == "gadd" then
+            N.Data.nodes = N.Data.nodes or {}
+            N.Data.edges = N.Data.edges or {}
+            local x, y, z = net.ReadFloat(), net.ReadFloat(), net.ReadFloat()
+            local link = net.ReadString()
+            local id = nid()
+            N.Data.nodes[#N.Data.nodes + 1] = { id = id, x = x, y = y, z = z }
+            if link ~= "" then
+                N.Data.edges[#N.Data.edges + 1] = { a = link, b = id }
+            end
+            save(); send()
+        elseif act == "glink" then
+            local a, b = net.ReadString(), net.ReadString()
+            if a ~= "" and b ~= "" and a ~= b then
+                N.Data.edges = N.Data.edges or {}
+                local dup
+                for _, e in ipairs(N.Data.edges) do
+                    if (e.a == a and e.b == b) or (e.a == b and e.b == a) then dup = true break end
+                end
+                if not dup then
+                    N.Data.edges[#N.Data.edges + 1] = { a = a, b = b }
+                    save(); send()
+                end
+            end
+        elseif act == "gdel" then
+            local id = net.ReadString()
+            for i = #(N.Data.nodes or {}), 1, -1 do
+                if N.Data.nodes[i].id == id then table.remove(N.Data.nodes, i) end
+            end
+            for i = #(N.Data.edges or {}), 1, -1 do
+                local e = N.Data.edges[i]
+                if e.a == id or e.b == id then table.remove(N.Data.edges, i) end
+            end
+            save(); send()
+        elseif act == "gclear" then
+            N.Data.nodes, N.Data.edges = {}, {}
+            save(); send()
         end
     end)
 
@@ -202,7 +338,8 @@ end
 if not CLIENT then return end
 
 N.Marks, N.Route, N.Visible = N.Marks or {}, N.Route or {}, true
-N.Opt = N.Opt or { gps = true, admin = true, me = true, players = true, grid = true }
+N.Nodes, N.Edges = N.Nodes or {}, N.Edges or {}
+N.Opt = N.Opt or { gps = true, admin = true, me = true, players = true, grid = true, graph = true }
 CreateClientConVar("grm_nav_key", "M", true, false)
 
 local COL = {
@@ -216,7 +353,20 @@ surface.CreateFont("GRMNav_Mid", { font = "Roboto", size = 14, weight = 700, ext
 surface.CreateFont("GRMNav_Big", { font = "Roboto", size = 22, weight = 800, extended = true })
 
 local function apply(t)
-    if istable(t) then N.Marks = t.marks or {} hook.Run("GRM_NavMarks") end
+    if not istable(t) then return end
+    N.Marks = t.marks or {}
+    N.Nodes = t.nodes or {}
+    N.Edges = t.edges or {}
+    if N._graphWait then
+        local best, bd
+        for _, n in ipairs(N.Nodes) do
+            local d = Vector(n.x, n.y, n.z or 0):DistToSqr(N._graphWait)
+            if not bd or d < bd then best, bd = n, d end
+        end
+        if best then N._lastNode = best.id end
+        N._graphWait = nil
+    end
+    hook.Run("GRM_NavMarks")
 end
 net.Receive("GRM_Nav_Sync", function() apply(net.ReadTable() or {}) end)
 if GRM.Net and GRM.Net.Receive then GRM.Net.Receive("GRM_Nav_Sync", apply) end
@@ -288,7 +438,7 @@ hook.Add("PostRender", "GRM_Nav_Peek", function()
             origin = Vector(cam.x, cam.y, lpz + (cam.z or 2200)),
             angles = Angle(90, 90, 0),
             x = 0, y = 0, w = 512, h = 512,
-            fov = 62, znear = 16, zfar = 14000,
+            fov = 62, znear = 16, zfar = math.max(14000, (cam.z or 4000) + 8000),
             drawhud = false, drawviewmodel = false, drawskybox = false,
         })
         render.PopRenderTarget()
@@ -573,16 +723,47 @@ end
 function N.CloseAtlas()
     N._open = false
     gui.EnableScreenClicker(false)
+    if IsValid(N._catch) then N._catch:Remove() end
     if IsValid(N._frame) then N._frame:Remove() end
+end
+
+local function atlasZoom(delta, mx, my)
+    local cam = N._atlasCam
+    local oldZ = cam.z or 4200
+    local newZ = math.Clamp(oldZ * (delta > 0 and 0.82 or 1.22), 380, 16000)
+    if mx and my then
+        local x, y, w, h = 12, 12, ScrW() - 276 - 28, ScrH() - 24
+        local before = screenToCam(mx, my, x, y, w, h)
+        cam.z = newZ
+        local after = screenToCam(mx, my, x, y, w, h)
+        cam.x = cam.x + (before.x - after.x)
+        cam.y = cam.y + (before.y - after.y)
+    else
+        cam.z = newZ
+    end
 end
 
 function N.OpenAtlas()
     net.Start("GRM_Nav_Act") net.WriteString("sync") net.SendToServer()
     local lp = LocalPlayer()
     local pos = IsValid(lp) and lp:GetPos() or Vector(0, 0, 0)
-    N._atlasCam = { x = pos.x, y = pos.y, z = 2000 }
+    N._atlasCam = { x = pos.x, y = pos.y, z = 4800 }
+    N._mode = N._mode or "nav"
     N._open = true
     if IsValid(N._frame) then N._frame:Remove() end
+    if IsValid(N._catch) then N._catch:Remove() end
+    local catch = vgui.Create("DPanel")
+    N._catch = catch
+    catch:SetPos(12, 12)
+    catch:SetSize(ScrW() - 276 - 28, ScrH() - 24)
+    catch:SetPaintBackground(false)
+    catch:SetMouseInputEnabled(true)
+    catch:SetKeyboardInputEnabled(false)
+    catch.OnMouseWheeled = function(_, d)
+        atlasZoom(d, gui.MouseX(), gui.MouseY())
+        return true
+    end
+    catch.OnMousePressed = function() end
 
     local sideW = 276
     local fr = vgui.Create("DFrame")
@@ -600,7 +781,11 @@ function N.OpenAtlas()
         draw.SimpleText("АТЛАС", "GRMNav_Big", 14, 18, COL.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         draw.SimpleText("живой вид, как мини", "GRMNav_Tiny", 14, 38, COL.dim)
     end
-    fr.OnRemove = function() N._open = false gui.EnableScreenClicker(false) end
+    fr.OnRemove = function()
+        N._open = false
+        gui.EnableScreenClicker(false)
+        if IsValid(N._catch) then N._catch:Remove() end
+    end
 
     local close = grmBtn(fr, "✕", Color(120, 40, 44))
     close:SetPos(sideW - 40, 10) close:SetSize(28, 26)
@@ -621,6 +806,31 @@ function N.OpenAtlas()
     chk("Знаки админа", "admin")
     chk("Личные точки", "me")
     chk("Игроки", "players")
+    chk("Сетка узлов", "graph")
+
+    local labM = vgui.Create("DLabel", fr)
+    labM:SetPos(14, yy + 6) labM:SetSize(240, 20) labM:SetFont("GRMNav_Mid") labM:SetTextColor(COL.gold) labM:SetText("РЕЖИМ")
+    yy = yy + 30
+    local modeBox = vgui.Create("DComboBox", fr)
+    modeBox:SetPos(14, yy) modeBox:SetSize(248, 24)
+    modeBox:AddChoice("Навигация / пан", "nav")
+    if IsValid(lp) and lp:IsSuperAdmin() then
+        modeBox:AddChoice("Знак на карте", "sign")
+        modeBox:AddChoice("GPS-точка всем", "gps")
+        modeBox:AddChoice("Узлы маршрута", "graph")
+    end
+    modeBox:ChooseOptionID(1)
+    modeBox.OnSelect = function(_, _, _, k) N._mode = k or "nav" end
+    yy = yy + 28
+    if IsValid(lp) and lp:IsSuperAdmin() then
+        local g1 = grmBtn(fr, "СБРОСИТЬ УЗЛЫ", Color(90, 40, 40))
+        g1:SetPos(14, yy) g1:SetSize(248, 24)
+        g1.DoClick = function()
+            net.Start("GRM_Nav_Act") net.WriteString("gclear") net.SendToServer()
+            N._lastNode = nil
+        end
+        yy = yy + 28
+    end
 
     local lab2 = vgui.Create("DLabel", fr)
     lab2:SetPos(14, yy + 6) lab2:SetSize(240, 20) lab2:SetFont("GRMNav_Mid") lab2:SetTextColor(COL.gold) lab2:SetText("ЗНАК АДМИНА")
@@ -718,6 +928,24 @@ hook.Add("HUDPaint", "GRM_Nav_AtlasHUD", function()
         return { x = px, y = py }
     end
     drawRoute(toS)
+    if N.Opt.graph ~= false and (N.Nodes or N._mode == "graph") then
+        local idPos = {}
+        for _, n in ipairs(N.Nodes or {}) do
+            idPos[n.id] = toS(Vector(n.x, n.y, n.z or 0))
+        end
+        surface.SetDrawColor(90, 200, 255, 160)
+        for _, e in ipairs(N.Edges or {}) do
+            local a, b = idPos[e.a], idPos[e.b]
+            if a and b then surface.DrawLine(a.x, a.y, b.x, b.y) end
+        end
+        for _, n in ipairs(N.Nodes or {}) do
+            local p = idPos[n.id]
+            if p then
+                surface.SetDrawColor(30, 160, 220, 230)
+                surface.DrawRect(p.x - 3, p.y - 3, 6, 6)
+            end
+        end
+    end
     for _, b in ipairs(collectBlips()) do
         local pt = toS(b.pos)
         drawBlip(pt.x, pt.y, kindCol(b.kind), b.name, true)
@@ -729,7 +957,8 @@ hook.Add("HUDPaint", "GRM_Nav_AtlasHUD", function()
         end)
     end
     render.SetScissorRect(0, 0, 0, 0, false)
-    draw.SimpleText("ЛКМ маршрут  ·  колёсико высота  ·  тяни карту  ·  ПКМ знак", "GRMNav_Tiny", x + 12, y + h - 18, COL.dim)
+    local zoomTxt = string.format("зум %d м", math.floor(N._atlasCam.z or 0))
+    draw.SimpleText("колёсико зум  ·  ЛКМ тяни / точка  ·  режим справа  ·  " .. zoomTxt, "GRMNav_Tiny", x + 12, y + h - 18, COL.dim)
 end)
 
 local drag
@@ -741,6 +970,45 @@ hook.Add("GUIMousePressed", "GRM_Nav_AtlasClick", function(code)
     if code == MOUSE_LEFT then
         drag = { x = mx, y = my, cx = N._atlasCam.x, cy = N._atlasCam.y }
         local world = screenToCam(mx, my, x, y, w, h)
+        if N._mode == "graph" and LocalPlayer():IsSuperAdmin() then
+            local hitN
+            for _, n in ipairs(N.Nodes or {}) do
+                local px, py = camToScreen(Vector(n.x, n.y, n.z or 0), x, y, w, h)
+                if math.abs(px - mx) < 12 and math.abs(py - my) < 12 then hitN = n break end
+            end
+            if hitN and N._lastNode and N._lastNode ~= hitN.id then
+                net.Start("GRM_Nav_Act") net.WriteString("glink") net.WriteString(N._lastNode) net.WriteString(hitN.id) net.SendToServer()
+                N._lastNode = hitN.id
+            elseif hitN then
+                N._lastNode = hitN.id
+            else
+                net.Start("GRM_Nav_Act")
+                    net.WriteString("gadd")
+                    net.WriteFloat(world.x) net.WriteFloat(world.y) net.WriteFloat(world.z)
+                    net.WriteString(N._lastNode or "")
+                net.SendToServer()
+            end
+            return true
+        end
+        if N._mode == "sign" and LocalPlayer():IsSuperAdmin() then
+            net.Start("GRM_Nav_Act")
+                net.WriteString("add")
+                net.WriteString(N._signName or "")
+                net.WriteString(N._signKind or "pin")
+                net.WriteBool(N._signPin ~= false)
+                net.WriteFloat(world.x) net.WriteFloat(world.y) net.WriteFloat(world.z)
+            net.SendToServer()
+            return true
+        end
+        if N._mode == "gps" and LocalPlayer():IsSuperAdmin() then
+            net.Start("GRM_Minimap_Action")
+                net.WriteString("add_point_at")
+                net.WriteString(N._signName ~= "" and N._signName or "GPS")
+                net.WriteUInt(180, 16)
+                net.WriteFloat(world.x) net.WriteFloat(world.y) net.WriteFloat(world.z)
+            net.SendToServer()
+            return true
+        end
         local hit
         for _, b in ipairs(collectBlips()) do
             local px, py = camToScreen(b.pos, x, y, w, h)
@@ -750,6 +1018,20 @@ hook.Add("GUIMousePressed", "GRM_Nav_AtlasClick", function(code)
         else N._clickAt = { t = CurTime(), w = world } end
         return true
     elseif code == MOUSE_RIGHT then
+        if N._mode == "graph" and LocalPlayer():IsSuperAdmin() then
+            local hitN
+            for _, n in ipairs(N.Nodes or {}) do
+                local px, py = camToScreen(Vector(n.x, n.y, n.z or 0), x, y, w, h)
+                if math.abs(px - mx) < 12 and math.abs(py - my) < 12 then hitN = n break end
+            end
+            if hitN then
+                net.Start("GRM_Nav_Act") net.WriteString("gdel") net.WriteString(hitN.id) net.SendToServer()
+                if N._lastNode == hitN.id then N._lastNode = nil end
+            else
+                N._lastNode = nil
+            end
+            return true
+        end
         if not LocalPlayer():IsSuperAdmin() then return end
         local world = screenToCam(mx, my, x, y, w, h)
         net.Start("GRM_Nav_Act")
