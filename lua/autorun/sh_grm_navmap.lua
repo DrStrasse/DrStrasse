@@ -405,6 +405,43 @@ local function drawRoute(toS)
     end
 end
 
+local function plyNick(pl)
+    if not IsValid(pl) then return "?" end
+    local n = pl:GetNWString("GRM_RPName", "")
+    if n == "" then n = pl:Nick() end
+    if #n > 18 then n = string.sub(n, 1, 16) .. "…" end
+    return n
+end
+
+local function drawPlayerDot(x, y, nick, mine, showName)
+    local r = mine and 6 or 5
+    draw.NoTexture()
+    local poly = {}
+    for i = 0, 10 do
+        local a = (i / 10) * math.pi * 2
+        poly[#poly + 1] = { x = x + math.cos(a) * r, y = y + math.sin(a) * r }
+    end
+    surface.SetDrawColor(0, 0, 0, 255)
+    local ring = {}
+    for i = 0, 10 do
+        local a = (i / 10) * math.pi * 2
+        ring[#ring + 1] = { x = x + math.cos(a) * (r + 1.6), y = y + math.sin(a) * (r + 1.6) }
+    end
+    surface.DrawPoly(ring)
+    surface.SetDrawColor(255, 255, 255, 255)
+    surface.DrawPoly(poly)
+    if showName ~= false and nick and nick ~= "" then
+        draw.SimpleTextOutlined(nick, "GRMNav_Tiny", x, y - r - 8, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 230))
+    end
+end
+
+local function eachPlayer(fn)
+    local list = (GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()
+    for _, pl in ipairs(list) do
+        if IsValid(pl) and pl:Alive() then fn(pl) end
+    end
+end
+
 local function drawBlip(x, y, col, name, big)
     local s = big and 5 or 3
     surface.SetDrawColor(0, 0, 0, 200)
@@ -461,9 +498,14 @@ hook.Add("HUDPaint", "GRM_Nav_Mini", function()
             drawBlip(px, py, kindCol(b.kind), nil, false)
         end
     end
-    local cx, cy = x + size / 2, y + size / 2
-    surface.SetDrawColor(COL.you)
-    surface.DrawPoly({ { x = cx, y = cy - 7 }, { x = cx - 5, y = cy + 6 }, { x = cx + 5, y = cy + 6 } })
+    if N.Opt.players ~= false then
+        eachPlayer(function(pl)
+            local px, py = miniXY(pl:GetPos())
+            if px > x + 4 and px < x + size - 4 and py > y + 4 and py < y + size - 4 then
+                drawPlayerDot(px, py, plyNick(pl), pl == lp, true)
+            end
+        end)
+    end
     render.SetScissorRect(0, 0, 0, 0, false)
     draw.SimpleText("N", "GRMNav_Tiny", x + size / 2, y + 6, Color(230, 80, 70), TEXT_ALIGN_CENTER)
     draw.SimpleText("M — атлас", "GRMNav_Tiny", x + 8, y + size - 14, COL.dim)
