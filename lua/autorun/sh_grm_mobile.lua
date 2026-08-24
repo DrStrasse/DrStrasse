@@ -351,6 +351,7 @@ function MB.Think()
             local line = MB.EnsureLine(ply)
             if ply._grmMobUI and CurTime() - ply._grmMobUI > 3 then
                 ply._grmMobUI = nil
+                ply:SetNWString("GRM_MobHold", "")
             end
             if ply._grmMobUI then
                 local lastPush = tonumber(ply._grmMobDataTs) or -999
@@ -561,11 +562,14 @@ function MB.HandleAction(ply, act)
 
     if op == "open" or op == "ping" then
         ply._grmMobUI = CurTime()
+        local mdl = (tier and tier.model) or ""
+        ply:SetNWString("GRM_MobHold", mdl)
         MB.PushState(ply)
         if op == "open" then MB.PushAllData(ply) end
         return
     elseif op == "close" then
         ply._grmMobUI = nil
+        ply:SetNWString("GRM_MobHold", "")
         return
     elseif op == "sms_read" then
         for _, msg in ipairs(d.sms) do msg.read = true end
@@ -874,6 +878,9 @@ if SERVER then
         -- have startup has=false and will locally say "buy a phone" even though the item
         -- is already in inventory.
         MB.PushState(ply)
+        ply._grmMobUI = CurTime()
+        local tdef = MB.Tiers[tostring(MB.CarriedTier(ply) or "")]
+        ply:SetNWString("GRM_MobHold", (tdef and tdef.model) or "")
         net.Start("GRM_Mobile_Open")
         net.Send(ply)
     end
@@ -888,6 +895,9 @@ if SERVER then
 
     hook.Add("PlayerDisconnected", "GRM_Mobile_RemoveLine", function(ply)
         MB.RemoveLine(ply)
+    end)
+    hook.Add("PlayerDeath", "GRM_Mobile_DropHold", function(ply)
+        if IsValid(ply) then ply:SetNWString("GRM_MobHold", "") ply._grmMobUI = nil end
     end)
 
     hook.Add("StartCommand", "GRM_Mobile_FreezeOpenUI", function(ply, cmd)

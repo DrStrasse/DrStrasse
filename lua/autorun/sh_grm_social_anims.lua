@@ -6,6 +6,18 @@ GRM.Social = GRM.Social or {}
 local S = GRM.Social
 S.Version = "1.0.0"
 
+-- Поза трубки: не в радиальном меню, ставит модуль телефона.
+S.PhonePose = {
+    id = "phone",
+    bones = {
+        ["ValveBiped.Bip01_R_UpperArm"] = Angle(22, -38, 22),
+        ["ValveBiped.Bip01_R_Forearm"]  = Angle(-6, -52, 18),
+        ["ValveBiped.Bip01_R_Hand"]     = Angle(-18, -6, 28),
+        ["ValveBiped.Bip01_Head1"]      = Angle(4, -18, -10),
+        ["ValveBiped.Bip01_Neck1"]      = Angle(0, -8, 0),
+    },
+}
+
 S.List = {
     {
         id = "hands",
@@ -69,11 +81,11 @@ function S.ByID(id)
 end
 
 local ALL_BONES = {}
-for i = 1, #S.List do
-    for name in pairs(S.List[i].bones or {}) do
-        ALL_BONES[name] = true
-    end
+local function markBones(t)
+    for name in pairs(t or {}) do ALL_BONES[name] = true end
 end
+for i = 1, #S.List do markBones(S.List[i].bones) end
+markBones(S.PhonePose.bones)
 
 if SERVER then
     util.AddNetworkString("GRM_Soc_Set")
@@ -201,7 +213,8 @@ local function applyPose(ply, def)
 end
 
 local function killClip(ply)
-    local m = clips[ply]
+    local rec = clips[ply]
+    local m = istable(rec) and rec.ent or rec
     if IsValid(m) then m:Remove() end
     clips[ply] = nil
 end
@@ -213,9 +226,12 @@ hook.Add("Think", "GRM_Soc_Apply", function()
         local ply = list[i]
         if not IsValid(ply) then continue end
         local id = ply:GetNWString("GRM_SocAnim", "")
-        if id == "" then
+        local phoneMdl = ply:GetNWString("GRM_MobHold", "")
+        if id == "" and phoneMdl == "" then
             if applied[ply] then resetBones(ply) end
             if clips[ply] then killClip(ply) end
+        elseif phoneMdl ~= "" then
+            applyPose(ply, S.PhonePose)
         else
             local def = S.ByID(id)
             if def then applyPose(ply, def) end
