@@ -8,6 +8,12 @@ S.Version = "1.1.0"
 S.CatList = S.CatList or { { id = "general", name = "Общее" } }
 
 -- Поза трубки: не в радиальном меню, ставит модуль телефона.
+-- Локальное крепление к ValveBiped.Bip01_R_Hand (не мир, FollowBone).
+S.PhoneHold = {
+    pos = Vector(2.85, 1.15, 0.22),
+    ang = Angle(12, 98, 88),
+    scale = 1,
+}
 S.PhonePose = {
     id = "phone",
     bones = {
@@ -314,7 +320,10 @@ end
 local function killClip(ply)
     local rec = clips[ply]
     local m = istable(rec) and rec.ent or rec
-    if IsValid(m) then m:Remove() end
+    if IsValid(m) then
+        if m.SetParent then pcall(m.SetParent, m, NULL) end
+        m:Remove()
+    end
     clips[ply] = nil
 end
 
@@ -364,27 +373,35 @@ hook.Add("PostPlayerDraw", "GRM_Soc_ClipFixed", function(ply)
         if IsValid(m) then m:Remove() end
         m = ClientsideModel(mdl)
         if not IsValid(m) then return end
-        m:SetNoDraw(true)
-        m:SetModelScale(kind == "phone" and 1.0 or 0.82, 0)
-        clips[ply] = { ent = m, mdl = mdl }
+        m:SetModelScale(kind == "phone" and ((S.PhoneHold and S.PhoneHold.scale) or 1) or 0.82, 0)
+        clips[ply] = { ent = m, mdl = mdl, bone = nil }
     end
     local bone = ply:LookupBone("ValveBiped.Bip01_R_Hand")
     if not bone then return end
+    rec = clips[ply]
+    if kind == "phone" then
+        m:SetNoDraw(false)
+        if rec.bone ~= bone or m:GetParent() ~= ply then
+            m:FollowBone(ply, bone)
+            rec.bone = bone
+        end
+        local hold = S.PhoneHold or { pos = Vector(2.85, 1.15, 0.22), ang = Angle(12, 98, 88) }
+        m:SetLocalPos(hold.pos)
+        m:SetLocalAngles(hold.ang)
+        return
+    end
+    m:SetNoDraw(true)
+    if m.SetParent then m:SetParent(NULL) end
+    rec.bone = nil
     local mtx = ply.GetBoneMatrix and ply:GetBoneMatrix(bone)
     local pos, ang
     if mtx then pos, ang = mtx:GetTranslation(), mtx:GetAngles()
     else pos, ang = ply:GetBonePosition(bone) end
     if not pos or not ang then return end
-    if kind == "phone" then
-        ang:RotateAroundAxis(ang:Forward(), 90)
-        ang:RotateAroundAxis(ang:Right(), 90)
-        pos = pos + ang:Up() * 1.2 + ang:Forward() * 3.2 + ang:Right() * -0.4
-    else
-        ang:RotateAroundAxis(ang:Forward(), 95)
-        ang:RotateAroundAxis(ang:Right(), 8)
-        ang:RotateAroundAxis(ang:Up(), 4)
-        pos = pos + ang:Forward() * 5.8 + ang:Right() * 0.2 + ang:Up() * 0.8
-    end
+    ang:RotateAroundAxis(ang:Forward(), 95)
+    ang:RotateAroundAxis(ang:Right(), 8)
+    ang:RotateAroundAxis(ang:Up(), 4)
+    pos = pos + ang:Forward() * 5.8 + ang:Right() * 0.2 + ang:Up() * 0.8
     m:SetPos(pos)
     m:SetAngles(ang)
     m:DrawModel()

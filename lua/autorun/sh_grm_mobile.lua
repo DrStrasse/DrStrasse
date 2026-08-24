@@ -414,6 +414,9 @@ function MB.Hangup(ply)
     return true
 end
 
+function MB.FindLineByNuturn true
+end
+
 function MB.FindLineByNumber(num)
     num = tostring(num or "")
     for _, line in pairs(MB.Lines or {}) do
@@ -646,6 +649,7 @@ function MB.HandleAction(ply, act)
             replyAuthor = parent and tostring(parent.author or "") or "",
         })
         while #MB.Forum.posts > MB.ForumCap do table.remove(MB.Forum.posts) end
+        if MB.SaveForum then MB.SaveForum() end
         MB.PushData(ply, "forum")
         return
     elseif op == "forum_like" then
@@ -884,6 +888,11 @@ if SERVER then
         net.Start("GRM_Mobile_Open")
         net.Send(ply)
     end
+
+    MB.LoadForum()
+    hook.Add("ShutDown", "GRM_Mob_ForumSave", function()
+        if MB.SaveForum then MB.SaveForum() end
+    end)
 
     registerPhones()
     timer.Simple(1, registerPhones)
@@ -1896,6 +1905,35 @@ if CLIENT then
         end
 
         -- Block weapon selector, weapon slots and all gameplay actions while phone UI is open.
+        if bind:match("^slot%d") or bind == "lastinv" or bind == "phys_swap" then return true end
+        if bind == "+attack" or bind == "+attack2" or bind == "+reload" or bind == "+use" then return true end
+        if bind == "+jump" or bind == "+duck" or bind == "+speed" or bind == "+walk" then return true end
+        if bind == "gmod_undo" or bind == "undo" or bind == "gm_showhelp" or bind == "gm_showteam" or bind == "gm_showspare1" or bind == "gm_showspare2" then return true end
+
+        -- Conservative default: if the phone is open, do not let unknown press-binds leak
+        -- into gameplay/addons. DOWN arrow or close button handles closing.
+        return true
+    end)
+    timer.Create("GRM_Mob_Tick", 1, 0, function()
+        if not M.open then return end
+        local p=lp(); if p and p.Alive and not p:Alive() then closePhone(true); return end
+        sendAct({op="ping"})
+    end)
+end
+
+
+--[[ Модуль представляется общему реестру GRM.Modules: соседи знают, что он
+     есть, а шина обновлений сама позовёт его при смене прав, состава,
+     должности или персонажа. ]]
+if GRM.Modules and GRM.Modules.Register then
+    GRM.Modules.Register("mobile", {
+        label = "Мобильная связь",
+        version = (GRM.Mobile and GRM.Mobile.Version) or "1.0.0",
+        Depends = { "access" },
+        Status = function() local n = 0 for _ in pairs(GRM.Mobile.Numbers or {}) do n = n + 1 end return ("номеров выдано: %d"):format(n) end,
+    })
+end
+ actions while phone UI is open.
         if bind:match("^slot%d") or bind == "lastinv" or bind == "phys_swap" then return true end
         if bind == "+attack" or bind == "+attack2" or bind == "+reload" or bind == "+use" then return true end
         if bind == "+jump" or bind == "+duck" or bind == "+speed" or bind == "+walk" then return true end
