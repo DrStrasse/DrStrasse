@@ -1345,8 +1345,14 @@ if SERVER then
             if ply:GetNWBool("IsMasked", false) and ply.FactionsExt_MaskEntry then
                 ApplyModelSettings(ply, ply.FactionsExt_MaskEntry)
             else
+                local desired = ply.FactionsExt_DesiredModelData
                 local models = GetModelsForPlayer(ply)
-                if models and models[1] then ApplyModelSettings(ply, models[1]) end
+                if istable(desired) and desired.path and desired.path ~= ""
+                    and IsModelAllowedForPlayer(ply, desired.path) then
+                    ApplyModelSettings(ply, desired)
+                elseif models and models[1] then
+                    ApplyModelSettings(ply, models[1])
+                end
             end
             ApplyWeaponsToPlayer(ply)
         end)

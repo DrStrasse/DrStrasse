@@ -85,6 +85,36 @@ function CH.ModelLooksValid(path)
     return true
 end
 
+-- JSON/net превращают индексы в строки, ключ 0 в массиве теряется.
+-- Храним только строковые ключи: {"0"=1,"2"=3}.
+function CH.NormalizeBodygroups(bg)
+    local out = {}
+    if not istable(bg) then return out end
+    for g, v in pairs(bg) do
+        local gi, vi = tonumber(g), tonumber(v)
+        if gi and vi then
+            gi, vi = math.floor(gi), math.floor(vi)
+            if gi >= 0 and vi > 0 then out[tostring(gi)] = vi end
+        end
+    end
+    return out
+end
+
+function CH.BodygroupGet(bg, i)
+    if not istable(bg) then return 0 end
+    i = math.floor(tonumber(i) or 0)
+    return math.floor(tonumber(bg[tostring(i)] or bg[i]) or 0)
+end
+
+function CH.BodygroupSet(bg, i, v)
+    bg = istable(bg) and bg or {}
+    i = math.floor(tonumber(i) or 0)
+    v = math.floor(tonumber(v) or 0)
+    bg[i] = nil
+    if v > 0 then bg[tostring(i)] = v else bg[tostring(i)] = nil end
+    return bg
+end
+
 function CH.CitizenOutfits(gender)
     gender = CH.NormalizeGender(gender)
     local out = {}
@@ -569,6 +599,7 @@ if SERVER then
         else
             c.gender = CH.NormalizeGender(c.gender)
         end
+        c.bodygroups = CH.NormalizeBodygroups(c.bodygroups)
         ply:SetNWString("GRM_CharacterID", c.id)
         ply:SetNWString("GRM_CharacterKey", c.key)
         ply:SetNWString("GRM_Gender", c.gender == "female" and "Женский" or "Мужской")
@@ -739,24 +770,25 @@ if SERVER then
         if not IsValid(ply) or not istable(entry) or not isstring(entry.path) then return false end
         if not isAllowedModel(ply, entry.path) then return false, "Модель не разрешена вашей фракцией/ролью" end
 
+        local bg = CH.NormalizeBodygroups(entry.bodygroups)
         if _G.ApplyModelSettings then
-            _G.ApplyModelSettings(ply, { path = entry.path, skin = tonumber(entry.skin) or 0, bodygroups = entry.bodygroups or {} })
+            _G.ApplyModelSettings(ply, { path = entry.path, skin = tonumber(entry.skin) or 0, bodygroups = bg })
         else
             ply:SetModel(entry.path)
             ply:SetSkin(tonumber(entry.skin) or 0)
             local count = ply:GetNumBodyGroups() or 0
             for i = 0, count - 1 do ply:SetBodygroup(i, 0) end
-            for g, v in pairs(entry.bodygroups or {}) do
+            for g, v in pairs(bg) do
                 ply:SetBodygroup(tonumber(g) or 0, tonumber(v) or 0)
             end
         end
         -- синхронизация со строгим удержанием FactionsExt: эта запись побеждает в ModelCheck
-        ply.FactionsExt_DesiredModelData = { path = entry.path, skin = tonumber(entry.skin) or 0, bodygroups = table.Copy(entry.bodygroups or {}) }
+        ply.FactionsExt_DesiredModelData = { path = entry.path, skin = tonumber(entry.skin) or 0, bodygroups = table.Copy(bg) }
 
         local c = ensureChar(ply)
         c.model = entry.path
         c.skin = tonumber(entry.skin) or 0
-        c.bodygroups = table.Copy(entry.bodygroups or {})
+        c.bodygroups = table.Copy(bg)
         c.updated = os.time()
         saveChars("appearance")
         return true
@@ -907,7 +939,7 @@ if SERVER then
             slots[#slots + 1] = { id = id, index = i, exists = istable(c), name = istable(c) and tostring(c.name or "") or "",
                 gender = istable(c) and CH.NormalizeGender(c.gender or CH.GenderFromModel(c.model)) or "",
                 model = istable(c) and tostring(c.model or "") or "", skin = istable(c) and tonumber(c.skin) or 0,
-                bodygroups = istable(c) and table.Copy(c.bodygroups or {}) or {}, factionName = slotFaction or "",
+                bodygroups = istable(c) and CH.NormalizeBodygroups(c.bodygroups) or {}, factionName = slotFaction or "",
                 factionRole = slotMember and tostring(slotMember.Role or "") or "",
                 factionDepartment = slotMember and tostring(slotMember.Department or "") or "",
                 serverBanned = serverBanned == true,
@@ -1487,7 +1519,7 @@ if CLIENT then
             gender = CH.NormalizeGender(char and (char.gender or payload.gender) or payload.gender or CH.GenderFromModel(char and char.model)),
             model = char and tostring(char.model or "") or "",
             skin = char and tonumber(char.skin) or 0,
-            bodygroups = char and table.Copy(char.bodygroups or {}) or {},
+            bodygroups = CH.NormalizeBodygroups(char and char.bodygroups),
             wardrobeRule = {},
         }
         local matched
@@ -1497,7 +1529,7 @@ if CLIENT then
         if (draft.model == "" or not matched) and defaultOutfit then
             draft.model = defaultOutfit.path
             draft.skin = tonumber(defaultOutfit.skin) or 0
-            draft.bodygroups = table.Copy(defaultOutfit.bodygroups or {})
+            draft.bodygroups = CH.NormalizeBodygroups(defaultOutfit.bodygroups)
             matched = defaultOutfit
         end
         if matched then draft.wardrobeRule = table.Copy(matched.wardrobeRule or {}) end
@@ -1606,7 +1638,7 @@ if CLIENT then
             ent:SetSkin(math.max(0, math.floor(tonumber(draft.skin) or 0)))
             local count = ent:GetNumBodyGroups() or 0
             for i = 0, count - 1 do ent:SetBodygroup(i, 0) end
-            for g, v in pairs(draft.bodygroups or {}) do
+            for g, v in pairs(CH.NormalizeBodygroups(draft.bodygroups)) do
                 ent:SetBodygroup(tonumber(g) or 0, tonumber(v) or 0)
             end
             --[[ Камера по габаритам модели с запасом: персонаж должен
@@ -1825,11 +1857,14 @@ if CLIENT then
                             TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                     end
                     cell.DoClick = function()
+                        local same = string.lower(tostring(draft.model or "")) == string.lower(path)
                         draft.model = path
                         draft.gender = outfitGender(outfit)
-                        draft.skin = tonumber(outfit.skin) or 0
-                        draft.bodygroups = table.Copy(outfit.bodygroups or {})
                         draft.wardrobeRule = table.Copy(outfit.wardrobeRule or {})
+                        if not same then
+                            draft.skin = tonumber(outfit.skin) or 0
+                            draft.bodygroups = CH.NormalizeBodygroups(outfit.bodygroups)
+                        end
                         refreshOutfitButtons()
                         applyPreview(true)
                         rebuildBodygroups()
@@ -1853,7 +1888,7 @@ if CLIENT then
             if fo then
                 draft.model = fo.path
                 draft.skin = tonumber(fo.skin) or 0
-                draft.bodygroups = table.Copy(fo.bodygroups or {})
+                draft.bodygroups = CH.NormalizeBodygroups(fo.bodygroups)
             end
             rebuildLook()
             applyPreview(true)
@@ -1926,7 +1961,7 @@ if CLIENT then
             local added = 0
             for i = 0, (ent:GetNumBodyGroups() or 0) - 1 do
                 local total = ent:GetBodygroupCount(i) or 1
-                local groupRule = rule.bodygroups and rule.bodygroups[i]
+                local groupRule = rule.bodygroups and (rule.bodygroups[i] or rule.bodygroups[tostring(i)])
                 local allowed = (payload.allowBodygroups ~= false)
                     and (not isWardrobe or groupRule == nil or groupRule == true or istable(groupRule))
                 if total > 1 and allowed then
@@ -1934,8 +1969,11 @@ if CLIENT then
                     local name = ent:GetBodygroupName(i)
                     if name == "" then name = "Группа " .. i end
                     stepperRow(bodyScroll, name,
-                        function() return math.floor(tonumber(draft.bodygroups[i]) or 0) end,
-                        function(v) draft.bodygroups[i] = v end,
+                        function() return CH.BodygroupGet(draft.bodygroups, i) end,
+                        function(v)
+                            draft.bodygroups = draft.bodygroups or {}
+                            CH.BodygroupSet(draft.bodygroups, i, v)
+                        end,
                         function() return total end)
                 end
             end
@@ -2012,7 +2050,7 @@ if CLIENT then
                 net.WriteTable({
                     slot = activeSlot or "char1", name = draft.name, desc = draft.desc,
                     gender = draft.gender,
-                    model = draft.model, skin = draft.skin, bodygroups = draft.bodygroups,
+                    model = draft.model, skin = draft.skin, bodygroups = CH.NormalizeBodygroups(draft.bodygroups),
                     wardrobe = isWardrobe, wardrobeEnt = payload.wardrobeEnt, wardrobeRule = draft.wardrobeRule,
                 })
             net.SendToServer()
@@ -2039,13 +2077,21 @@ if CLIENT then
         applyPreview(true)
         rebuildBodygroups()
         -- модель приходит в панель не мгновенно: перепроверяем раскладку
-        timer.Simple(0.12, function()
-            if IsValid(f) and IsValid(preview) then applyPreview(false) rebuildBodygroups() end
-        end)
+        local function retryBody()
+            if not (IsValid(f) and IsValid(preview)) then return end
+            applyPreview(false)
+            rebuildBodygroups()
+            local ent = preview:GetEntity()
+            if IsValid(ent) and (ent:GetNumBodyGroups() or 0) == 0 then
+                timer.Simple(0.25, retryBody)
+            end
+        end
+        timer.Simple(0.12, retryBody)
+        timer.Simple(0.45, retryBody)
     end
 
     local function payloadSignature(p)
-        local parts={tostring(p.wardrobe),tostring(p.wardrobeEnt),tostring(p.activeSlot),tostring(p.previewSlot),tostring(p.characterKey),tostring(p.factionName),tostring(p.factionRole),tostring(p.factionDepartment),tostring(p.onDuty),tostring(p.char and p.char.name),tostring(p.char and p.char.model)}
+        local parts={tostring(p.wardrobe),tostring(p.wardrobeEnt),tostring(p.activeSlot),tostring(p.previewSlot),tostring(p.characterKey),tostring(p.factionName),tostring(p.factionRole),tostring(p.factionDepartment),tostring(p.onDuty),tostring(p.char and p.char.name),tostring(p.char and p.char.model),tostring(p.char and p.char.skin),util.TableToJSON(CH.NormalizeBodygroups(p.char and p.char.bodygroups) or {})}
         for _,sl in ipairs(p.slots or{})do parts[#parts+1]=tostring(sl.id)..":"..tostring(sl.name)..":"..tostring(sl.model)..":"..tostring(sl.factionName)..":"..tostring(sl.factionRole)..":"..tostring(sl.factionDepartment)end
         for _,o in ipairs(p.outfits or {}) do parts[#parts+1]=tostring(o.path)..":"..tostring(o.skin) end
         return table.concat(parts,"|")
@@ -2179,6 +2225,12 @@ if CLIENT then
         if GRM.Mobile and GRM.Mobile.ClientIsOpen and GRM.Mobile.ClientIsOpen()
             and GRM.Mobile.ClientClose then
             GRM.Mobile.ClientClose()
+        end
+    end)
+
+    print("[GRM Char] Ядро персонажей v" .. CH.Version .. " загружено (клиент)")
+end
+bile.ClientClose()
         end
     end)
 
