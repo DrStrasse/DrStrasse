@@ -259,64 +259,57 @@ end
 if not file.IsDir("grm_navatlas", "DATA") then file.CreateDir("grm_navatlas") end
 loadJpeg()
 
--- Мини: редкий кадр, только PostRender, только если сдвинулись.
-local peekRT = GetRenderTarget("GRM_NavPeek2", 160, 160, false)
-local peekMat = CreateMaterial("GRM_NavPeek2Mat", "UnlitGeneric", {
+-- Мини + живой атлас: один PostRender, без JPEG-слайдов.
+local peekRT = GetRenderTarget("GRM_NavPeek3", 128, 128, false)
+local peekMat = CreateMaterial("GRM_NavPeek3Mat", "UnlitGeneric", {
     ["$basetexture"] = peekRT:GetName(), ["$vertexalpha"] = 1, ["$vertexcolor"] = 1,
 })
 local peekAt, peekPos, peekYaw, peekBusy = 0, Vector(0, 0, 0), 0, false
+local atlasRT = GetRenderTarget("GRM_NavLiveRT", 512, 512, false)
+local atlasLiveMat = CreateMaterial("GRM_NavLiveMat", "UnlitGeneric", {
+    ["$basetexture"] = atlasRT:GetName(), ["$vertexalpha"] = 1, ["$vertexcolor"] = 1,
+})
+local atlasShotAt, atlasBusy = 0, false
+N._atlasCam = N._atlasCam or { x = 0, y = 0, z = 4000, span = 8000 }
 
 hook.Add("PostRender", "GRM_Nav_Peek", function()
-    if not N.Visible or peekBusy then return end
-    if IsValid(N._frame) then return end
+    if peekBusy or atlasBusy then return end
     local lp = LocalPlayer()
     if not IsValid(lp) or not lp:Alive() then return end
-    local now, pos, yaw = CurTime(), lp:GetPos(), lp:EyeAngles().y
-    if now - peekAt < 0.85 and pos:DistToSqr(peekPos) < 90 * 90 and math.abs(math.AngleDifference(yaw, peekYaw)) < 18 then
+    if IsValid(N._frame) then
+        local now = CurTime()
+        if now - atlasShotAt < 0.18 then return end
+        atlasBusy, atlasShotAt = true, now
+        local cam = N._atlasCam
+        render.PushRenderTarget(atlasRT)
+        render.Clear(8, 14, 23, 255, true, true)
+        render.RenderView({
+            origin = Vector(cam.x, cam.y, cam.z),
+            angles = Angle(90, 90, 0),
+            x = 0, y = 0, w = 512, h = 512,
+            fov = 70, znear = 24, zfar = 40000,
+            drawhud = false, drawviewmodel = false, drawskybox = false,
+        })
+        render.PopRenderTarget()
+        atlasBusy = false
         return
     end
+    if not N.Visible then return end
+    local now, pos, yaw = CurTime(), lp:GetPos(), lp:EyeAngles().y
+    local moved = pos:DistToSqr(peekPos) > 36 * 36 or math.abs(math.AngleDifference(yaw, peekYaw)) > 6
+    if now - peekAt < (moved and 0.16 or 0.5) then return end
     peekBusy, peekAt, peekPos, peekYaw = true, now, pos, yaw
     render.PushRenderTarget(peekRT)
     render.Clear(8, 14, 23, 255, true, true)
     render.RenderView({
-        origin = pos + Vector(0, 0, 1800),
+        origin = pos + Vector(0, 0, 1600),
         angles = Angle(90, yaw, 0),
-        x = 0, y = 0, w = 160, h = 160,
-        fov = 62, znear = 32, zfar = 12000,
+        x = 0, y = 0, w = 128, h = 128,
+        fov = 62, znear = 24, zfar = 10000,
         drawhud = false, drawviewmodel = false, drawskybox = false,
     })
     render.PopRenderTarget()
     peekBusy = false
-end)
-
--- Снимок большой карты: только когда окно закрыто и нет готового jpeg.
-N._needShot = not file.Exists(JPEG, "DATA")
-hook.Add("PostRender", "GRM_Nav_Shot", function()
-    if not N._needShot or IsValid(N._frame) or peekBusy then return end
-    local lp = LocalPlayer()
-    if not IsValid(lp) then return end
-    ensureBounds()
-    local cx = (atlasW + atlasE) * 0.5
-    local cy = (atlasS + atlasN) * 0.5
-    local span = math.max(math.abs(atlasE - atlasW), math.abs(atlasN - atlasS), 3000)
-    local camZ = lp:GetPos().z + math.Clamp(span * 0.55, 2500, 14000)
-    local rt = GetRenderTarget("GRM_NavShotRT", 512, 512, false)
-    render.PushRenderTarget(rt)
-    render.Clear(8, 14, 23, 255, true, true)
-    render.RenderView({
-        origin = Vector(cx, cy, camZ),
-        angles = Angle(90, 90, 0),
-        x = 0, y = 0, w = 512, h = 512,
-        fov = 90, znear = 64, zfar = 50000,
-        drawhud = false, drawviewmodel = false, drawskybox = true,
-    })
-    local data = render.Capture({ format = "jpeg", quality = 70, x = 0, y = 0, w = 512, h = 512 })
-    render.PopRenderTarget()
-    N._needShot = false
-    if data and #data > 200 then
-        file.Write(JPEG, data)
-        loadJpeg()
-    end
 end)
 
 local function worldToMap(pos, x, y, w, h, zoom, ox, oy)
@@ -346,7 +339,7 @@ local function collectBlips()
     if N.Opt.admin then
         for _, m in ipairs(N.Marks or {}) do
             if istable(m.pos) then
-                out[#out + 1] = { id = m.id, name = m.name, kind = m.kind, pin = m.pin, pos = Vector(m.pos.x, m.pos.y, m.pos.z or 0) }
+                out[#out + 1] = { id = m.id, name = m.name, kind = m.kind, pin = m.pin, src = "admin", pos = Vector(m.pos.x, m.pos.y, m.pos.z or 0) }
             end
         end
     end
@@ -354,7 +347,7 @@ local function collectBlips()
     if N.Opt.gps and MM and MM.OfficialPoints then
         for _, p in ipairs(MM.OfficialPoints() or {}) do
             if istable(p.pos) then
-                out[#out + 1] = { id = p.id, name = p.name, kind = "gps", pos = Vector(p.pos.x, p.pos.y, p.pos.z or 0) }
+                out[#out + 1] = { id = p.id, name = p.name, kind = "gps", src = "gps", pos = Vector(p.pos.x, p.pos.y, p.pos.z or 0) }
             end
         end
     end
@@ -374,6 +367,31 @@ local function kindCol(kind)
     if kind == "me" then return Color(120, 210, 255) end
     local k = N.Kinds[kind]
     return k and k.col or COL.gold
+end
+
+function N.DeleteMark(id, src)
+    id = tostring(id or "")
+    if id == "" then return end
+    if src == "me" then
+        if GRM.Minimap and GRM.Minimap.RemovePersonal then GRM.Minimap.RemovePersonal(id) end
+        if N.Waypoint and tostring(N.Waypoint.id) == id then N.ClearWaypoint() end
+        blipAt = 0
+        hook.Run("GRM_NavMarks")
+        return
+    end
+    if src == "gps" then
+        net.Start("GRM_Minimap_Action")
+            net.WriteString("delete_point")
+            net.WriteString(id)
+        net.SendToServer()
+        blipAt = 0
+        return
+    end
+    net.Start("GRM_Nav_Act")
+        net.WriteString("del")
+        net.WriteString(id)
+    net.SendToServer()
+    blipAt = 0
 end
 
 function N.SetWaypoint(pos, name, gpsId)
@@ -519,6 +537,21 @@ hook.Add("HUDPaint", "GRM_Nav_Mini", function()
     end
 end)
 
+local function grmBtn(parent, txt, col)
+    local b = vgui.Create("DButton", parent)
+    b:SetText(txt)
+    b:SetFont("GRMNav_Mid")
+    b:SetTextColor(COL.text)
+    b.Paint = function(s, w, h)
+        local c = col or Color(32, 48, 68)
+        if s:IsHovered() then c = Color(math.min(255, c.r + 28), math.min(255, c.g + 28), math.min(255, c.b + 28)) end
+        draw.RoundedBox(6, 0, 0, w, h, c)
+        surface.SetDrawColor(COL.line)
+        surface.DrawOutlinedRect(0, 0, w, h, 1)
+    end
+    return b
+end
+
 function N.OpenAtlas()
     net.Start("GRM_Nav_Act") net.WriteString("sync") net.SendToServer()
     ensureBounds()
@@ -617,22 +650,11 @@ function N.OpenAtlas()
             local p = toS(b.pos)
             drawBlip(p.x, p.y, kindCol(b.kind), b.name, true)
         end
-        if N.Opt.players then
-            for _, pl in ipairs(player.GetAll()) do
-                if IsValid(pl) and pl ~= LocalPlayer() then
-                    local p = toS(pl:GetPos())
-                    drawBlip(p.x, p.y, Color(180, 200, 220), pl:GetNWString("GRM_RPName", pl:Nick()), true)
-                end
-            end
-        end
-        if IsValid(LocalPlayer()) then
-            local p = toS(LocalPlayer():GetPos())
-            surface.SetDrawColor(COL.you)
-            surface.DrawRect(p.x - 5, p.y - 5, 10, 10)
-            draw.SimpleTextOutlined("ВЫ", "GRMNav_Tiny", p.x, p.y - 14, COL.you, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 220))
-        end
-        if not jpegOk then
-            draw.SimpleText("Схема карты. Снимок местности достроится, когда закроешь окно.", "GRMNav_Tiny", 12, h - 16, COL.dim)
+        if N.Opt.players ~= false then
+            eachPlayer(function(pl)
+                local p = toS(pl:GetPos())
+                drawPlayerDot(p.x, p.y, plyNick(pl), pl == LocalPlayer(), true)
+            end)
         end
     end
 
