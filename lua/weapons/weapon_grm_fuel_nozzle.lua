@@ -3,8 +3,8 @@ SWEP.PrintName = "Пистолет заправки"
 SWEP.Author = "GRM"
 SWEP.Spawnable = false
 SWEP.AdminOnly = true
-SWEP.ViewModel = "models/weapons/c_pistol.mdl"
-SWEP.WorldModel = "models/props_junk/gascan001a.mdl"
+SWEP.ViewModel = "models/weapons/c_arms.mdl"
+SWEP.WorldModel = "models/props_wasteland/prison_pipefaucet001a.mdl"
 SWEP.UseHands = true
 SWEP.HoldType = "slam"
 SWEP.Primary.ClipSize = -1
@@ -111,8 +111,11 @@ if CLIENT then
             if att and att > 0 then
                 local a = ply:GetAttachment(att)
                 if a then
-                    self:SetRenderOrigin(a.Pos)
-                    self:SetRenderAngles(a.Ang)
+                    self:SetRenderOrigin(a.Pos + a.Ang:Forward() * 4 + a.Ang:Right() * 1)
+                    local ang = a.Ang
+                    ang:RotateAroundAxis(ang:Right(), 90)
+                    ang:RotateAroundAxis(ang:Up(), 180)
+                    self:SetRenderAngles(ang)
                     self:DrawModel()
                     self:SetRenderOrigin()
                     self:SetRenderAngles()
@@ -121,6 +124,24 @@ if CLIENT then
             end
         end
         self:DrawModel()
+    end
+    function SWEP:GetViewModelPosition(pos, ang)
+        pos = pos + ang:Forward() * 18 + ang:Right() * 8 - ang:Up() * 6
+        ang:RotateAroundAxis(ang:Right(), 20)
+        ang:RotateAroundAxis(ang:Up(), 90)
+        return pos, ang
+    end
+    function SWEP:PreDrawViewModel()
+        return true
+    end
+    function SWEP:PostDrawViewModel(_, _, vm)
+        local ply = self:GetOwner()
+        if not IsValid(ply) then return end
+        local pos, ang = ply:EyePos(), ply:EyeAngles()
+        pos = pos + ang:Forward() * 22 + ang:Right() * 9 - ang:Up() * 8
+        ang:RotateAroundAxis(ang:Right(), 15)
+        ang:RotateAroundAxis(ang:Up(), 95)
+        render.Model({ model = self.WorldModel, pos = pos, angle = ang })
     end
     function SWEP:DrawHUD()
         local ins = self:GetNWBool("Inserted")
