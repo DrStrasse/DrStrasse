@@ -401,6 +401,19 @@ else
         for _,point in ipairs(personal)do if tostring(point.id)==tostring(id)then return point end end
     end
     function MM.ClearGPS()gpsTarget=nil;arrivalSince=nil end
+    function MM.SetGPSTarget(id) gpsTarget=id;arrivalSince=nil;if id then reachedTemp[tostring(id)]=nil end end
+    function MM.GetGPSTarget() return gpsTarget end
+    function MM.OfficialPoints() return data.points or {} end
+    function MM.PersonalPoints() return personal end
+    function MM.AddPersonal(name, pos)
+        name=string.sub(string.Trim(tostring(name or "Моя метка")),1,48)
+        local p={id="me_"..os.time().."_"..math.random(100,999),name=name,pos={x=pos.x,y=pos.y,z=pos.z or 0},personal=true}
+        personal[#personal+1]=p
+        return p
+    end
+    function MM.RemovePersonal(id)
+        for i=#personal,1,-1 do if tostring(personal[i].id)==tostring(id) then table.remove(personal,i) end end
+    end
     hook.Add("Think","GRM_GPS_AutoArrival",function()
         if not gpsTarget then arrivalSince=nil return end;local now=CurTime();if now<nextArrivalCheck then return end;nextArrivalCheck=now+.15
         local lp=LocalPlayer();if not IsValid(lp)then return end;local point=gpsPoint(gpsTarget);if not point then MM.ClearGPS()return end
