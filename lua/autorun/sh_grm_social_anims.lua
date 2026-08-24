@@ -86,6 +86,9 @@ function S.ByID(id)
     for i = 1, #S.List do
         if S.List[i].id == id then return S.List[i] end
     end
+    for i = 1, #(S.Catalog or {}) do
+        if S.Catalog[i].id == id then return S.Catalog[i] end
+    end
 end
 
 local ALL_BONES = {}
@@ -167,7 +170,7 @@ if SERVER then
     net.Receive("GRM_Soc_Set", function(_, ply)
         if not IsValid(ply) then return end
         if GRM.Perf and GRM.Perf.Throttle and not GRM.Perf.Throttle("soc." .. ply:EntIndex(), 0.15) then return end
-        local id = string.sub(tostring(net.ReadString() or ""), 1, 24)
+        local id = string.sub(tostring(net.ReadString() or ""), 1, 32)
         S.Play(ply, id)
     end)
 
@@ -243,9 +246,13 @@ end
 local function applyPose(ply, def)
     if not IsValid(ply) or not def then return end
     if applied[ply] ~= def.id then resetBones(ply) end
-    for name, ang in pairs(def.bones or {}) do
+    for name, rec in pairs(def.bones or {}) do
         local b = ply:LookupBone(name)
-        if b then ply:ManipulateBoneAngles(b, ang) end
+        if b then
+            ply:ManipulateBoneAngles(b, S.BoneToAngle(rec))
+            local pos = S.BoneToPos(rec)
+            if pos:LengthSqr() > 0.0001 then ply:ManipulateBonePosition(b, pos) end
+        end
     end
     applied[ply] = def.id
 end

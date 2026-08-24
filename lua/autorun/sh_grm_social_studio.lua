@@ -30,6 +30,7 @@ if SERVER then
         if not file.Exists(S.StudioFile, "DATA") then S.Catalog = {} return end
         local t = jsonT(file.Read(S.StudioFile, "DATA") or "")
         S.Catalog = (istable(t) and istable(t.poses)) and t.poses or (istable(t) and t or {})
+        if S.ApplyCatalog then S.ApplyCatalog(S.Catalog) end
     end
 
     function S.SaveCatalog()
@@ -113,6 +114,7 @@ if SERVER then
                 S.Catalog[#S.Catalog + 1] = rec
             end
             S.SaveCatalog()
+            if S.ApplyCatalog then S.ApplyCatalog(S.Catalog) end
             S.SyncCatalog()
             if GRM.Notify then GRM.Notify(ply, "Поза сохранена: " .. rec.name, 120, 210, 140) end
             return
@@ -334,17 +336,50 @@ local function openStudio()
     view:SetPaintBackground(false)
     view.OnMousePressed = function(s, key)
         if key ~= MOUSE_LEFT then return end
-        s.drag = true
-        s.lx, s.ly = gui.MousePos()
+        local mx, my = gui.MousePos()
+        local axis, dx, dy = pickGizmo(mx, my)
+        if axis then
+            local rec = recOf(ST.bone)
+            ST.gzAxis, ST.gzDX, ST.gzDY = axis, dx, dy
+            ST.gzX, ST.gzY = mx, my
+            if ST.mode == "rotate" then
+                ST.gzVal = (axis == "x" and rec.p) or (axis == "y" and rec.yaw) or rec.r
+            else
+                ST.gzVal = (axis == "x" and rec.px) or (axis == "y" and rec.py) or rec.pz
+            end
+        else
+            s.drag = true
+            s.lx, s.ly = mx, my
+        end
         s:MouseCapture(true)
     end
     view.OnMouseReleased = function(s)
         s.drag = false
+        ST.gzAxis = nil
         s:MouseCapture(false)
+        if ST.refreshSliders then ST.refreshSliders() end
     end
     view.OnCursorMoved = function(s)
-        if not s.drag then return end
         local mx, my = gui.MousePos()
+        if ST.gzAxis then
+            local rec = recOf(ST.bone)
+            local proj = (mx - (ST.gzX or mx)) * (ST.gzDX or 0) + (my - (ST.gzY or my)) * (ST.gzDY or 0)
+            if ST.mode == "rotate" then
+                local v = math.NormalizeAngle((ST.gzVal or 0) + proj * 0.45)
+                if ST.gzAxis == "x" then rec.p = v
+                elseif ST.gzAxis == "y" then rec.yaw = v
+                else rec.r = v end
+            else
+                local v = math.Clamp((ST.gzVal or 0) + proj * 0.04, -20, 20)
+                if ST.gzAxis == "x" then rec.px = v
+                elseif ST.gzAxis == "y" then rec.py = v
+                else rec.pz = v end
+            end
+            applyLocal()
+            if ST.refreshSliders then ST.refreshSliders() end
+            return
+        end
+        if not s.drag then return end
         ST.yaw = ST.yaw - (mx - (s.lx or mx)) * 0.35
         ST.pitch = math.Clamp(ST.pitch + (my - (s.ly or my)) * 0.25, -30, 50)
         s.lx, s.ly = mx, my
@@ -450,6 +485,7 @@ local function openStudio()
         local b = vgui.Create("DButton", bonesc)
         b:Dock(TOP) b:SetTall(20) b:DockMargin(0, 0, 0, 1)
         b:SetText(string.gsub(n, "ValveBiped.Bip01_", ""))
+        b:SetTextColor(Color(235, 240, 248))
         b.DoClick = function()
             ST.bone = n
             if ST.refreshSliders then ST.refreshSliders() end
@@ -459,11 +495,33 @@ local function openStudio()
         end
     end
 
+    local moveB = vgui.Create("DButton", right)
+    moveB:SetPos(10, 8) moveB:SetSize(145, 26) moveB:SetText("ПЕРЕМЕЩЕНИЕ")
+    moveB:SetTextColor(Color(240, 244, 250))
+    local rotB = vgui.Create("DButton", right)
+    rotB:SetPos(163, 8) rotB:SetSize(145, 26) rotB:SetText("ВРАЩЕНИЕ")
+    rotB:SetTextColor(Color(240, 244, 250))
+    local function paintMode(s, w, h, on, col)
+        draw.RoundedBox(5, 0, 0, w, h, on and col or Color(40, 48, 62))
+    end
+    moveB.Paint = function(s, w, h) paintMode(s, w, h, ST.mode == "move", Color(65, 145, 235)) end
+    rotB.Paint = function(s, w, h) paintMode(s, w, h, ST.mode == "rotate", Color(230, 150, 60)) end
+    moveB.DoClick = function() ST.mode = "move" end
+    rotB.DoClick = function() ST.mode = "rotate" end
+
     local sliders = {}
     local function addSl(y, label, key, mn, mx)
         local s = vgui.Create("DNumSlider", right)
         s:SetPos(8, y) s:SetSize(300, 28)
         s:SetText(label) s:SetMin(mn) s:SetMax(mx) s:SetDecimals(1)
+        s:SetDark(false)
+        if IsValid(s.Label) then
+            s.Label:SetTextColor(Color(230, 236, 245))
+            s.Label:SetFont("GRMSocEd_B")
+        end
+        if IsValid(s.TextArea) then
+            s.TextArea:SetTextColor(Color(240, 244, 250))
+        end
         s.OnValueChanged = function(_, v)
             local rec = recOf(ST.bone)
             rec[key] = tonumber(v) or 0
@@ -472,7 +530,7 @@ local function openStudio()
         sliders[key] = s
         return y + 30
     end
-    local yy = 12
+    local yy = 42
     yy = addSl(yy, "Pitch", "p", -180, 180)
     yy = addSl(yy, "Yaw", "yaw", -180, 180)
     yy = addSl(yy, "Roll", "r", -180, 180)
@@ -491,6 +549,7 @@ local function openStudio()
     local function mk(txt, col, y, fn)
         local b = vgui.Create("DButton", right)
         b:SetPos(12, y) b:SetSize(296, 30) b:SetText(txt)
+        b:SetTextColor(Color(245, 248, 252))
         b.Paint = function(s, w, h)
             draw.RoundedBox(5, 0, 0, w, h, s:IsHovered() and Color(col.r + 20, col.g + 20, col.b + 20) or col)
         end
