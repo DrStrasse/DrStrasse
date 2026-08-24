@@ -905,8 +905,27 @@ if SERVER then
         return registerPhones()
     end
 
+    function MB.AutoActivateBest(ply)
+        if not (IsValid(ply) and GRM.Inventory and GRM.Inventory.GetPlayerInv) then return false end
+        local inv = GRM.Inventory.GetPlayerInv(ply)
+        if not (istable(inv) and istable(inv.slots)) then return false end
+        local bestIdx, bestRank, bestSlot = nil, -1, nil
+        for i, slot in pairs(inv.slots) do
+            local key = istable(slot) and (MB.ItemTier or {})[tostring(slot.id or "")] or nil
+            if key then
+                local r = tierRank(key)
+                if r > bestRank then bestIdx, bestRank, bestSlot = i, r, slot end
+            end
+        end
+        if not bestIdx then return false end
+        return MB.ActivateInventoryPhone(ply, bestIdx, bestSlot) == true
+    end
+
     function MB.Open(ply)
         if not IsValid(ply) then return end
+        if not MB.HasPhone(ply) and MB.HasAnyPhone and MB.HasAnyPhone(ply) then
+            MB.AutoActivateBest(ply)
+        end
         local hasPhone = MB.HasPhone(ply)
         if not hasPhone then
             MB.PushState(ply) -- sends has=false explicitly; client may show throttled hint
@@ -1028,12 +1047,17 @@ if CLIENT then
     local function formFactor() return tostring(tierDef().ui or "feature") end
     local function smartForm() local f=formFactor();return f=="smartphone" or f=="touch" end
     local function now() return CurTime and CurTime() or 0 end
-    local function textInputActive()
+    local function chatBusy()
         if M.chatOpen == true then return true end
         if chat and chat.IsChatOpen and chat.IsChatOpen() then return true end
-        local focus = vgui and vgui.GetKeyboardFocus and vgui.GetKeyboardFocus() or nil
-        if IsValid(focus) and focus ~= M.frame then return true end
         return false
+    end
+    local function textInputActive()
+        if chatBusy() then return true end
+        local focus = vgui and vgui.GetKeyboardFocus and vgui.GetKeyboardFocus() or nil
+        if not IsValid(focus) or focus == M.frame then return false end
+        local cls = focus.GetClassName and tostring(focus:GetClassName() or "") or ""
+        return cls == "DTextEntry" or cls == "RichText" or focus.IsEditing == true
     end
     local function clamp(v, lo, hi)
         v = tonumber(v) or lo or 0
@@ -1076,6 +1100,10 @@ if CLIENT then
     local function sendAct(t)
         net.Start("GRM_Mob_Act")
         net.WriteTable(t or {})
+        net.SendToServer()
+    end
+    local function requestServerOpen()
+        net.Start("GRM_Mobile_Open")
         net.SendToServer()
     end
 
@@ -1535,6 +1563,23 @@ if CLIENT then
         end
     end
 
+    local function drawGpsRoster(w, startY, maxY, items)
+        M.listSel = clamp(M.listSel, 1, math.max(1, #items))
+        M.hitboxes = {}
+        local y = startY
+        for i, it in ipairs(items or {}) do
+            local h = 46
+            if y + h > maxY then break end
+            local active = M.listSel == i
+            draw.RoundedBox(10, 18, y, w - 36, h, active and C.yellow or C.card)
+            drawPointerFeedback(10, 18, y, w - 36, h, i)
+            draw.SimpleText(fitText(it.label, "GRMMob_B", w - 76), "GRMMob_B", 34, y + (it.hint and 18 or h/2), C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            if it.hint then draw.SimpleText(fitText(it.hint, "GRMMob_XS", w - 76), "GRMMob_XS", 34, y + h - 14, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
+            M.hitboxes[#M.hitboxes + 1] = { x=18, y=y, w=w-36, h=h, index=i }
+            y = y + h + 8
+        end
+    end
+
     local function drawButtonList(w, startY, maxY)
         local items = screenItems()
         if #items == 0 then return end
@@ -1671,9 +1716,10 @@ if CLIENT then
 
     local function openPhone(force)
         if not hasPhone() then
-            if now() - (M.noPhoneAt or -999) >= 15 then
+            requestServerOpen()
+            if now() - (M.noPhoneAt or -999) >= 2 then
                 M.noPhoneAt = now()
-                if M.stateKnown then notify("Активируйте телефон в инвентаре или купите его в /phoneshop") end
+                notify("Нет активного телефона. Купите в /phoneshop или нажмите «Использовать» в инвентаре.")
             end
             return
         end
@@ -1852,18 +1898,13 @@ if CLIENT then
             or key == 109 -- MOUSE_MIDDLE in GMod's BUTTON_CODE enum
     end
 
-    local function requestServerOpen()
-        net.Start("GRM_Mobile_Open")
-        net.SendToServer()
-    end
-
     local function keyDown(key)
         if key==KEY_UP and not M.open and textInputActive() then return end
         if M.down[key] then return end
         if now()-(M.lastTap[key] or -999)<0.07 then return end
         M.down[key]=true;M.lastTap[key]=now();M.hold[key]=now();M.nextRepeat[key]=now()+0.45
         if not M.open then
-            if key==KEY_UP then if hasPhone()then openPhone(false)elseif not M.stateKnown then requestServerOpen()else openPhone(false)end end
+            if key==KEY_UP then requestServerOpen(); if hasPhone() then openPhone(false) end end
             return
         end
         if key==KEY_UP then move(-1);return end
@@ -1965,11 +2006,10 @@ if CLIENT then
         end
 
         local upNow = input.IsKeyDown(KEY_UP) == true
-        if upNow and not M.poll.up and not M.down[KEY_UP] then
-            if not M.open and not textInputActive() then
-                if hasPhone() then openPhone(false)
-                elseif not M.stateKnown then requestServerOpen()
-                else openPhone(false) end
+        if upNow and not M.poll.up then
+            if not M.open and not chatBusy() then
+                requestServerOpen()
+                if hasPhone() then openPhone(false) end
             elseif M.open then move(-1) end
         end
         M.poll.up = upNow
@@ -2057,103 +2097,7 @@ if GRM.Modules and GRM.Modules.Register then
         Status = function() local n = 0 for _ in pairs(GRM.Mobile.Numbers or {}) do n = n + 1 end return ("номеров выдано: %d"):format(n) end,
     })
 end
-   if bind == "+attack3" or bind == "attack3" or bind == "mouse3" or bind == "+mouse3" then
-            selectCurrent()
-            return true
-        end
-
-        -- Block weapon selector, weapon slots and all gameplay actions while phone UI is open.
-        if bind:match("^slot%d") or bind == "lastinv" or bind == "phys_swap" then return true end
-        if bind == "+attack" or bind == "+attack2" or bind == "+reload" or bind == "+use" then return true end
-        if bind == "+jump" or bind == "+duck" or bind == "+speed" or bind == "+walk" then return true end
-        if bind == "gmod_undo" or bind == "undo" or bind == "gm_showhelp" or bind == "gm_showteam" or bind == "gm_showspare1" or bind == "gm_showspare2" then return true end
-
-        -- Conservative default: if the phone is open, do not let unknown press-binds leak
-        -- into gameplay/addons. DOWN arrow or close button handles closing.
-        return true
-    end)
-    timer.Create("GRM_Mob_Tick", 1, 0, function()
-        if not M.open then return end
-        local p=lp(); if p and p.Alive and not p:Alive() then closePhone(true); return end
-        sendAct({op="ping"})
-    end)
-end
-
-
---[[ Модуль представляется общему реестру GRM.Modules: соседи знают, что он
-     есть, а шина обновлений сама позовёт его при смене прав, состава,
-     должности или персонажа. ]]
-if GRM.Modules and GRM.Modules.Register then
-    GRM.Modules.Register("mobile", {
-        label = "Мобильная связь",
-        version = (GRM.Mobile and GRM.Mobile.Version) or "1.0.0",
-        Depends = { "access" },
-        Status = function() local n = 0 for _ in pairs(GRM.Mobile.Numbers or {}) do n = n + 1 end return ("номеров выдано: %d"):format(n) end,
-    })
-end
-"))
-
-        if not pressed then
-            return false
-        end
-
-        -- Mouse wheel is the only navigation channel while the phone is open.
-        if bind == "invnext" then move(1); return true end
-        if bind == "invprev" then move(-1); return true end
-
-        -- Middle mouse confirms/selects. Different configs expose it as +attack3/mouse3.
-        if bind == "+attack3" or bind == "attack3" or bind == "mouse3" or bind == "+mouse3" then
-            selectCurrent()
-            return true
-        end
-
-        -- Block weapon selector, weapon slots and all gameplay actions while phone UI is open.
-        if bind:match("^slot%d") or bind == "lastinv" or bind == "phys_swap" then return true end
-        if bind == "+attack" or bind == "+attack2" or bind == "+reload" or bind == "+use" then return true end
-        if bind == "+jump" or bind == "+duck" or bind == "+speed" or bind == "+walk" then return true end
-        if bind == "gmod_undo" or bind == "undo" or bind == "gm_showhelp" or bind == "gm_showteam" or bind == "gm_showspare1" or bind == "gm_showspare2" then return true end
-
-        -- Conservative default: if the phone is open, do not let unknown press-binds leak
-        -- into gameplay/addons. DOWN arrow or close button handles closing.
-        return true
-    end)
-    timer.Create("GRM_Mob_Tick", 1, 0, function()
-        if not M.open then return end
-        local p=lp(); if p and p.Alive and not p:Alive() then closePhone(true); return end
-        sendAct({op="ping"})
-    end)
-end
-
-
---[[ Модуль представляется общему реестру GRM.Modules: соседи знают, что он
-     есть, а шина обновлений сама позовёт его при смене прав, состава,
-     должности или персонажа. ]]
-if GRM.Modules and GRM.Modules.Register then
-    GRM.Modules.Register("mobile", {
-        label = "Мобильная связь",
-        version = (GRM.Mobile and GRM.Mobile.Version) or "1.0.0",
-        Depends = { "access" },
-        Status = function() local n = 0 for _ in pairs(GRM.Mobile.Numbers or {}) do n = n + 1 end return ("номеров выдано: %d"):format(n) end,
-    })
-end
-   if bind == "+attack3" or bind == "attack3" or bind == "mouse3" or bind == "+mouse3" then
-            selectCurrent()
-            return true
-        end
-
-        -- Block weapon selector, weapon slots and all gameplay actions while phone UI is open.
-        if bind:match("^slot%d") or bind == "lastinv" or bind == "phys_swap" then return true end
-        if bind == "+attack" or bind == "+attack2" or bind == "+reload" or bind == "+use" then return true end
-        if bind == "+jump" or bind == "+duck" or bind == "+speed" or bind == "+walk" then return true end
-        if bind == "gmod_undo" or bind == "undo" or bind == "gm_showhelp" or bind == "gm_showteam" or bind == "gm_showspare1" or bind == "gm_showspare2" then return true end
-
-        -- Conservative default: if the phone is open, do not let unknown press-binds leak
-        -- into gameplay/addons. DOWN arrow or close button handles closing.
-        return true
-    end)
-    timer.Create("GRM_Mob_Tick", 1, 0, function()
-        if not M.open then return end
-        local p=lp(); if p and p.Alive and not p:Alive() then closePhone(true); return end
+e); return end
         sendAct({op="ping"})
     end)
 end
