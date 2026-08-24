@@ -110,7 +110,10 @@ function ENT:SendMenu(ply)
     if Factions then
         for fName, f in pairs(Factions) do
             if istable(f) then
-                local b = (GRM.FactionBudgetGet and GRM.FactionBudgetGet(fName)) or (f.Budget or 0)
+                local b = math.max(
+                    math.floor(tonumber(GRM.FactionBudgetGet and GRM.FactionBudgetGet(fName)) or 0),
+                    math.floor(tonumber(f.Budget) or 0)
+                )
                 local tax = (GRM.FactionTaxGet and GRM.FactionTaxGet(fName))
                     or (GRM.Economy and GRM.Economy.TaxRateGet and GRM.Economy.TaxRateGet(fName))
                     or 0.05

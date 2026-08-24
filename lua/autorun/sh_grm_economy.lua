@@ -1180,16 +1180,16 @@ if SERVER then
     -- ========================================================
     -- ПУБЛИЧНОЕ API (совместимость с Кодом 13 и др.)
     -- ========================================================
+    -- 0 в Lua ложный: «Get() or f.Budget» показывало миллионы из карточки
+    -- фракции, а автопарк читал казну и видел ноль. Get ВСЕГДА поднимает
+    -- зеркало Factions.Budget в казну и возвращает живую сумму.
     function GRM.FactionBudgetGet(name)
-        local key = resolveFactionKey(name)
-        if not key then return 0 end
-        local e = E.Data.factions[key]
-        if not e then return 0 end
-        return math.max(0, math.floor(tonumber(e.budget) or 0))
+        local amount = foldFactionBudget(name)
+        return math.max(0, math.floor(tonumber(amount) or 0))
     end
 
     function GRM.FactionBudgetAdd(name, delta, silentReason)
-        local key = resolveFactionKey(name)
+        local _, key = foldFactionBudget(name)
         if not key then return 0 end
         delta = math.floor(tonumber(delta) or 0)
         if delta == 0 then return GRM.FactionBudgetGet(key) end
@@ -1198,17 +1198,19 @@ if SERVER then
         dirty = true
         if silentReason then addHistory(key, silentReason) end
         mirrorFactionBudget(key, e.budget)
+        if FactionsAPI and isfunction(FactionsAPI.Save) then pcall(FactionsAPI.Save) end
         hook.Run("GRM_FactionBudgetChanged", key, e.budget, delta)
         return e.budget
     end
 
     function GRM.FactionBudgetSet(name, value)
-        local key = resolveFactionKey(name)
+        local _, key = foldFactionBudget(name)
         if not key then return end
         local e = entry(key)
         e.budget = math.max(0, math.floor(tonumber(value) or 0))
         dirty = true
         mirrorFactionBudget(key, e.budget)
+        if FactionsAPI and isfunction(FactionsAPI.Save) then pcall(FactionsAPI.Save) end
         hook.Run("GRM_FactionBudgetChanged", key, e.budget, 0)
         return e.budget
     end
@@ -2236,14 +2238,19 @@ if SERVER then
     if SetGlobalDouble and E.Data and E.Data.state then
         SetGlobalDouble("GRM_StateBudget", tonumber(E.Data.state.budget) or 0)
     end
+    local function foldAllFactionBudgets()
+        if not istable(Factions) then return end
+        for name, f in pairs(Factions) do
+            if istable(f) then foldFactionBudget(name) end
+        end
+    end
     hook.Add("InitPostEntity", "GRM_Economy_MirrorFactionBudgets", function()
-        timer.Simple(1, function()
-            if not istable(Factions) then return end
-            for name, f in pairs(Factions) do
-                if istable(f) then foldFactionBudget(name) end
-            end
-        end)
+        timer.Simple(1, foldAllFactionBudgets)
+        timer.Simple(5, foldAllFactionBudgets)
     end)
+    hook.Add("GRM_FactionUIRefreshed", "GRM_Economy_FoldOnFactionSync", function() end)
+    -- После загрузки/рассылки организаций казна могла появиться только в f.Budget.
+    timer.Create("GRM_Economy_FoldFactionBudgets", 8, 0, foldAllFactionBudgets)
     hook.Add("GRM_FactionRenamed", "GRM_Economy_RenameKey", function(oldName, newName)
         oldName, newName = tostring(oldName or ""), tostring(newName or "")
         if oldName == "" or newName == "" or oldName == newName then return end

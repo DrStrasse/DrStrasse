@@ -3505,7 +3505,11 @@ if CLIENT then
 
             local fd = FactionsData and FactionsData[fName]
             local f = Factions and Factions[fName]
-            local b = (fd and fd.Budget) or (GRM.FactionBudgetGet and GRM.FactionBudgetGet(fName)) or (f and f.Budget or 0)
+            local b = math.max(
+                math.floor(tonumber(fd and fd.Budget) or 0),
+                math.floor(tonumber(GRM.FactionBudgetGet and GRM.FactionBudgetGet(fName)) or 0),
+                math.floor(tonumber(f and f.Budget) or 0)
+            )
             local tax = (fd and fd.TaxRate) or (GRM.Economy and GRM.Economy.TaxRateGet and GRM.Economy.TaxRateGet(fName)) or 0.05
             local bTxt = GRM.Format and GRM.Format(b) or (tostring(b) .. " GRM")
             local taxPct = math.floor(tax * 100)

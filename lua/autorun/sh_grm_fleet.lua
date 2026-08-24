@@ -1319,7 +1319,7 @@ if SERVER then
 
         return {
             faction = faction,
-            budget = math.max(0, math.floor(GRM.FactionBudgetGet and GRM.FactionBudgetGet(faction) or 0)),
+            budget = math.max(0, math.floor(tonumber(GRM.FactionBudgetGet and GRM.FactionBudgetGet(faction)) or 0)),
             canBuy = select(1, FL.CanBuy(ply, faction)) == true,
             canManage = FL.CanManage(ply, faction) == true,
             isAdmin = isAdmin,

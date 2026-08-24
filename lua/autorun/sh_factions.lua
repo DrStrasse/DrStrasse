@@ -528,7 +528,9 @@ if SERVER then
         for name, f in pairs(Factions) do
             if type(f) == "table" then
                 ensureDefaults(f,name)
-                local b = (GRM.FactionBudgetGet and GRM.FactionBudgetGet(name)) or f.Budget or 0
+                local eco = GRM.FactionBudgetGet and tonumber(GRM.FactionBudgetGet(name)) or 0
+                local card = tonumber(f.Budget) or 0
+                local b = math.max(0, math.floor(math.max(eco, card)))
                 local tax = (GRM.FactionTaxGet and GRM.FactionTaxGet(name))
                     or (GRM.Economy and GRM.Economy.TaxRateGet and GRM.Economy.TaxRateGet(name))
                     or 0.05
