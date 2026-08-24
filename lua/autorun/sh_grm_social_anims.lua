@@ -25,12 +25,12 @@ S.List = {
         hold = true,
         walk = true,
         bones = {
-            ["ValveBiped.Bip01_R_UpperArm"] = Angle(-22, -82, -12),
-            ["ValveBiped.Bip01_R_Forearm"]  = Angle(4, -18, 6),
-            ["ValveBiped.Bip01_R_Hand"]     = Angle(0, 8, 10),
-            ["ValveBiped.Bip01_L_UpperArm"] = Angle(22, -82, 12),
-            ["ValveBiped.Bip01_L_Forearm"]  = Angle(-4, -18, -6),
-            ["ValveBiped.Bip01_L_Hand"]     = Angle(0, 8, -10),
+            ["ValveBiped.Bip01_R_UpperArm"] = Angle(-16, -28, -64),
+            ["ValveBiped.Bip01_R_Forearm"]  = Angle(8, -22, 4),
+            ["ValveBiped.Bip01_R_Hand"]     = Angle(0, 6, 8),
+            ["ValveBiped.Bip01_L_UpperArm"] = Angle(16, -28, 64),
+            ["ValveBiped.Bip01_L_Forearm"]  = Angle(-8, -22, -4),
+            ["ValveBiped.Bip01_L_Hand"]     = Angle(0, 6, -8),
         },
     },
     {
@@ -54,12 +54,12 @@ S.List = {
         crouch = true,
         walk = false,
         bones = {
-            ["ValveBiped.Bip01_R_UpperArm"] = Angle(-22, -82, -12),
-            ["ValveBiped.Bip01_R_Forearm"]  = Angle(4, -18, 6),
-            ["ValveBiped.Bip01_R_Hand"]     = Angle(0, 8, 10),
-            ["ValveBiped.Bip01_L_UpperArm"] = Angle(22, -82, 12),
-            ["ValveBiped.Bip01_L_Forearm"]  = Angle(-4, -18, -6),
-            ["ValveBiped.Bip01_L_Hand"]     = Angle(0, 8, -10),
+            ["ValveBiped.Bip01_R_UpperArm"] = Angle(-16, -28, -64),
+            ["ValveBiped.Bip01_R_Forearm"]  = Angle(8, -22, 4),
+            ["ValveBiped.Bip01_R_Hand"]     = Angle(0, 6, 8),
+            ["ValveBiped.Bip01_L_UpperArm"] = Angle(16, -28, 64),
+            ["ValveBiped.Bip01_L_Forearm"]  = Angle(-8, -22, -4),
+            ["ValveBiped.Bip01_L_Hand"]     = Angle(0, 6, -8),
         },
     },
     {
@@ -173,7 +173,7 @@ if SERVER then
     hook.Add("PlayerSay", "GRM_Soc_Chat", function(ply, text)
         local t = string.lower(string.Trim(tostring(text or "")))
         if t == "/anim" or t == "/аним" or t == "/анимации" or t == "/social" then
-            if GRM.Notify then GRM.Notify(ply, "Соц.анимации: удержите назначенную клавишу или C-меню.", 180, 210, 240) end
+            if GRM.Notify then GRM.Notify(ply, "Соц.анимации: удержите клавишу из F4 → Настройки.", 180, 210, 240) end
             return ""
         end
         if t == "/animstop" or t == "/стоппоза" then
@@ -501,41 +501,6 @@ concommand.Add("grm_social", function(_, _, args)
 end)
 concommand.Add("grm_social_stop", function() sendPlay("stop") end)
 
-hook.Add("GRM_F4_BuildTabs", "GRM_Soc_F4", function(sheet)
-    if not IsValid(sheet) then return end
-    local p = vgui.Create("DPanel")
-    p:SetPaintBackground(false)
-    local sc = vgui.Create("DScrollPanel", p)
-    sc:Dock(FILL)
-    local card = vgui.Create("DPanel", sc)
-    card:Dock(TOP) card:SetTall(270) card:DockMargin(4, 4, 4, 4)
-    card.Paint = function(_, w, h)
-        draw.RoundedBox(6, 0, 0, w, h, Color(32, 38, 50, 245))
-        draw.SimpleText("Социальные анимации", "GRMF4_Sub" , 12, 16, Color(230, 180, 60), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        draw.SimpleText("Удерживайте клавишу — круг выбора. Повтор той же позы снимает её. C-меню → «Соц. анимации».",
-            "GRMF4_Normal", 12, 40, Color(160, 170, 185), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-    end
-    local lbl = vgui.Create("DLabel", card)
-    lbl:SetPos(12, 68) lbl:SetSize(220, 22)
-    lbl:SetFont("GRMF4_Normal") lbl:SetTextColor(Color(240, 245, 250))
-    lbl:SetText("Клавиша меню анимаций:")
-    local binder = vgui.Create("DBinder", card)
-    binder:SetPos(220, 64) binder:SetSize(140, 28)
-    binder:SetValue(keyNum())
-    binder.OnChange = function(_, num)
-        RunConsoleCommand("grm_cl_social_key", tostring(math.floor(tonumber(num) or 18)))
-    end
-    local y = 108
-    for _, def in ipairs(S.List) do
-        local b = vgui.Create("DButton", card)
-        b:SetPos(12, y) b:SetSize(260, 26) b:SetText(def.name)
-        b.DoClick = function() sendPlay(def.id) end
-        y = y + 30
-    end
-    local stop = vgui.Create("DButton", card)
-    stop:SetPos(280, 108) stop:SetSize(160, 26) stop:SetText("Снять позу")
-    stop.DoClick = function() sendPlay("stop") end
-    sheet:AddSheet("Анимации", p, "icon16/user_comment.png")
-end)
+-- Вкладку «Анимации» не добавляем: в F4 только бинд в «Настройки».
 
 print("[GRM Social] client v" .. S.Version)

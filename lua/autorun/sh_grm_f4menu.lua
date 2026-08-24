@@ -559,28 +559,17 @@ local function buildSettingsTab(sc)
     note:SetText("Стандарт RPDesc — 200 юнитов (~5 метров). Настройки хранятся на вашем ПК (garrysmod/cfg).")
     note:SetWrap(true) note:SetAutoStretchVertical(true)
 
-    local ba = block(sc, 200, "Социальные анимации:")
+    local ba = block(sc, 110, "Социальные анимации:")
     local hintA = vgui.Create("DLabel", ba)
     hintA:SetPos(14, 28) hintA:SetSize(700, 20)
     hintA:SetFont("GRMF4_Normal") hintA:SetTextColor(C.dim)
-    hintA:SetText("Вкладка «Анимации» и назначенная клавиша. В C-меню кнопок нет.")
-    local names = { { "hands", "Руки вверх" }, { "back", "За спиной" }, { "kneel", "На коленях" }, { "docs", "Документы" } }
-    for i, row in ipairs(names) do
-        local b = mkBtn(ba, row[2], C.acc)
-        local col = (i - 1) % 2
-        local rowi = math.floor((i - 1) / 2)
-        b:SetPos(14 + col * 180, 56 + rowi * 34) b:SetSize(170, 30)
-        b.DoClick = function() RunConsoleCommand("grm_social", row[1]) end
-    end
-    local st = mkBtn(ba, "Снять позу", C.red)
-    st:SetPos(14, 128) st:SetSize(170, 28)
-    st.DoClick = function() RunConsoleCommand("grm_social_stop") end
+    hintA:SetText("Удерживайте клавишу — круг выбора. Повтор позы снимает её.")
     local bindL = vgui.Create("DLabel", ba)
-    bindL:SetPos(200, 100) bindL:SetSize(160, 22)
+    bindL:SetPos(14, 62) bindL:SetSize(180, 22)
     bindL:SetFont("GRMF4_Normal") bindL:SetTextColor(C.text)
-    bindL:SetText("Клавиша круга:")
+    bindL:SetText("Клавиша меню:")
     local binder = vgui.Create("DBinder", ba)
-    binder:SetPos(330, 96) binder:SetSize(130, 28)
+    binder:SetPos(160, 58) binder:SetSize(140, 28)
     binder:SetValue(math.Clamp(math.floor(GetConVarNumber("grm_cl_social_key") or 18), 0, 159))
     binder.OnChange = function(_, num)
         RunConsoleCommand("grm_cl_social_key", tostring(math.floor(tonumber(num) or 18)))
