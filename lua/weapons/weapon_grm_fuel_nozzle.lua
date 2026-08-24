@@ -123,7 +123,15 @@ if CLIENT then
         self:DrawModel()
     end
     function SWEP:DrawHUD()
-        local txt = self:GetNWBool("Inserted") and "ЛКМ / R — вынуть   ПКМ — повесить" or "ЛКМ — вставить в бак   ПКМ — повесить на колонку"
-        draw.SimpleTextOutlined(txt, "DermaDefault", ScrW() / 2, ScrH() - 72, Color(250, 190, 70), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 220))
+        local ins = self:GetNWBool("Inserted")
+        local txt = ins and "ЛКМ / R — вынуть   ПКМ — повесить" or "ЛКМ — вставить в бак   ПКМ — повесить"
+        draw.SimpleTextOutlined(txt, "DermaDefault", ScrW() / 2, ScrH() - 86, Color(250, 190, 70), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 220))
+        local sl, pay = self:GetNWFloat("SessL", 0), self:GetNWFloat("SessPay", 0)
+        local now, mx = self:GetNWFloat("TankNow", 0), self:GetNWFloat("TankMax", 0)
+        if sl > 0 or ins then
+            local line = string.format("сессия  %.1f л   %.0f GRM", sl, pay)
+            if mx > 0 then line = line .. string.format("   бак %.0f / %.0f", now, mx) end
+            draw.SimpleTextOutlined(line, "DermaDefault", ScrW() / 2, ScrH() - 64, Color(220, 230, 240), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 220))
+        end
     end
 end

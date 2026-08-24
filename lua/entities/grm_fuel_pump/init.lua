@@ -16,6 +16,7 @@ end
 function ENT:Use(ply)
     if not IsValid(ply) then return end
     if not GRM.Fuel then return end
+    if ply:KeyDown(IN_SPEED) then return end
     local wep = self:GetNWEntity("NozzleWep")
     if IsValid(wep) and wep:GetOwner() == ply then
         GRM.Fuel.ReturnNozzle(wep, self, ply)
