@@ -31,11 +31,13 @@ function ENT:Draw()
         else
             local ply = wep:GetOwner()
             if IsValid(ply) then
-                dest = ply:GetShootPos() + ply:GetRight() * 10 - ply:GetUp() * 18 + ply:GetForward() * 8
+                local att = ply:LookupAttachment("anim_attachment_RH")
+                local a = att and att > 0 and ply:GetAttachment(att)
+                dest = a and a.Pos or (ply:GetShootPos() + ply:GetRight() * 8 - ply:GetUp() * 12)
             end
         end
         if dest then
-            local a = self:LocalToWorld(Vector(8, 0, 42))
+            local a = self:LocalToWorld(Vector(14, -10, 22))
             local pts = sag(a, dest, 14)
             render.SetMaterial(mat())
             for i = 1, #pts - 1 do

@@ -4,7 +4,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Fuel = GRM.Fuel or {}
 local F = GRM.Fuel
-F.Version = "1.2.0"
+F.Version = "1.2.1"
 F.File = "grm_fuel.json"
 F.PumpFile = "grm_fuel_pumps_" .. string.lower(game.GetMap() or "unknown") .. ".json"
 F.PricePerLiter = 8
@@ -184,37 +184,18 @@ if SERVER then
     function F.ClearHose(pump)
         if not IsValid(pump) then return end
         constraint.RemoveConstraints(pump, "Rope")
+        constraint.RemoveConstraints(pump, "Winch")
+        constraint.RemoveConstraints(pump, "Elastic")
         if IsValid(pump.GRMHoseDummy) then pump.GRMHoseDummy:Remove() end
         pump.GRMHoseDummy = nil
     end
 
-    function F.AttachHose(pump, ply)
-        if not (IsValid(pump) and IsValid(ply)) then return end
+    function F.AttachHose(pump)
         F.ClearHose(pump)
-        local dummy = ents.Create("prop_physics")
-        if not IsValid(dummy) then return end
-        dummy:SetModel("models/hunter/blocks/cube025x025x025.mdl")
-        dummy:SetPos(ply:GetShootPos() - ply:GetUp() * 16)
-        dummy:Spawn()
-        dummy:SetCollisionGroup(COLLISION_GROUP_IN_VEHICLE)
-        dummy:SetNoDraw(true)
-        dummy:SetNotSolid(true)
-        dummy:SetParent(ply)
-        dummy:SetLocalPos(Vector(12, 8, 28))
-        local phys = dummy:GetPhysicsObject()
-        if IsValid(phys) then phys:EnableMotion(false) phys:EnableCollisions(false) end
-        pump.GRMHoseDummy = dummy
-        constraint.Rope(pump, dummy, 0, 0, Vector(8, 0, 42), Vector(0, 0, 0), 360, 90, 0, 2.6, "cable/cable2", false)
     end
 
-    function F.HoseToTank(pump, veh)
-        if not (IsValid(pump) and IsValid(veh) and IsValid(pump.GRMHoseDummy)) then return end
-        local dummy = pump.GRMHoseDummy
-        dummy:SetParent(NULL)
-        dummy:SetPos(F.TankWorld(veh))
-        dummy:SetParent(veh)
-        constraint.RemoveConstraints(pump, "Rope")
-        constraint.Rope(pump, dummy, 0, 0, Vector(8, 0, 42), Vector(0, 0, 0), 380, 70, 0, 2.6, "cable/cable2", false)
+    function F.HoseToTank(pump)
+        F.ClearHose(pump)
     end
 
     function F.StopNozzle(wep, msg)
@@ -227,7 +208,7 @@ if SERVER then
         if IsValid(pump) then
             pump:SetBusy(false)
             pump:SetNWEntity("NozzleWep", wep)
-            if IsValid(wep:GetOwner()) then F.AttachHose(pump, wep:GetOwner()) end
+            if IsValid(wep:GetOwner()) then F.ClearHose(pump) end
         end
         local ply = wep:GetOwner()
         if msg and IsValid(ply) and GRM.Notify then GRM.Notify(ply, msg, 180, 210, 140) end
@@ -261,7 +242,7 @@ if SERVER then
         pump:SetNWEntity("NozzleWep", wep)
         pump:SetSessionL(0)
         pump:SetSessionPay(0)
-        F.AttachHose(pump, ply)
+        F.ClearHose(pump)
         if GRM.Notify then GRM.Notify(ply, "Пистолет снят. Вставь в бак у заднего крыла.", 120, 220, 140) end
     end
 
@@ -281,7 +262,7 @@ if SERVER then
         pump:SetSessionPay(0)
         pump:SetTankNow(veh:GetNWFloat("GRM_Fuel", 0))
         pump:SetTankMax(veh:GetNWFloat("GRM_FuelMax", 55))
-        F.HoseToTank(pump, veh)
+        F.ClearHose(pump)
         pump:EmitSound("ambient/water/leak_1.wav", 50, 95)
         local key = "GRM_Nozzle_" .. wep:EntIndex()
         timer.Create(key, 0.35, 0, function()
