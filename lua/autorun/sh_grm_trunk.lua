@@ -720,14 +720,3 @@ if CLIENT then
 
     print("[GRM Trunk] Клиент багажника v" .. TK.Version .. " загружен")
 end
-18, 216, 36, Color(14, 18, 26, 220))
-                surface.SetDrawColor(C.yellow.r, C.yellow.g, C.yellow.b, 230)
-                surface.DrawOutlinedRect(-108, -18, 216, 36, 2)
-                draw.SimpleText("БАГАЖНИК ОТКРЫТ", "GRMTrunk_3D", 0, 0, C.yellow, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                cam.End3D2D()
-            end
-        end
-    end)
-
-    print("[GRM Trunk] Клиент багажника v" .. TK.Version .. " загружен")
-end
