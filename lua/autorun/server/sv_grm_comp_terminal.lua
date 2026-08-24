@@ -405,7 +405,7 @@ net.Receive("GRM_CompTerminal_Act", function(_, ply)
     local target = string.sub(net.ReadString(), 1, 64)
     local text   = string.sub(net.ReadString(), 1, 240)
     local num    = net.ReadUInt(32)
-    local extra  = string.sub(net.ReadString(), 1, 48)
+    local extra  = string.sub(net.ReadString(), 1, 128)
 
     -- Д5: полноценная проверка на приёме, а не только в ENT:Use.
     local okEnt, whyEnt = validTerminal(ply, jur)

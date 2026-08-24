@@ -86,6 +86,7 @@ net.Receive("GRM_CompPolice_Open", function()
     if GRM.Fleet and GRM.Fleet.AttachTab then GRM.Fleet.AttachTab(tabs) end
     -- Вкладка «Номерные знаки»: выдача и проверка регистрационных номеров.
     if GRM.Plates and GRM.Plates.AttachTab then GRM.Plates.AttachTab(tabs) end
+    if GRM.Photo and GRM.Photo.AttachTab then GRM.Photo.AttachTab(tabs) end
 
     -- ══════════════════════════════════════════════════════════════
     -- ВКЛАДКА 1: ОБЩАЯ БАЗА РОЗЫСКА (WANTED)
