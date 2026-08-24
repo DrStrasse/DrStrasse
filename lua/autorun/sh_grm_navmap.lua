@@ -142,11 +142,16 @@ if SERVER then
             save(); send()
         elseif act == "sync" then
             send(ply)
+            if N.SendBounds then N.SendBounds(ply) end
         end
     end)
 
     hook.Add("PlayerInitialSpawn", "GRM_Nav_Join", function(ply)
-        timer.Simple(4, function() if IsValid(ply) then send(ply) end end)
+        timer.Simple(4, function()
+            if not IsValid(ply) then return end
+            send(ply)
+            if N.SendBounds then N.SendBounds(ply) end
+        end)
     end)
 
     print("[GRM Nav] v" .. N.Version .. " server")
@@ -188,12 +193,16 @@ if CLIENT then
         end
     end)
 
-    local function worldBounds()
-        local w = game.GetWorld()
-        if not IsValid(w) then return Vector(-8000, -8000, 0), Vector(8000, 8000, 0) end
-        local a, b = w:GetModelBounds()
-        return Vector(a.x, a.y, a.z), Vector(b.x, b.y, b.z)
-    end
+    N.Bounds = N.Bounds or nil
+    net.Receive("GRM_Nav_Bounds", function()
+        N.Bounds = {
+            w = net.ReadFloat(), e = net.ReadFloat(),
+            s = net.ReadFloat(), n = net.ReadFloat(),
+            h = net.ReadFloat(),
+            cx = net.ReadFloat(), cy = net.ReadFloat(),
+        }
+        N._atlasDirty = true
+    end)
 
     local peekRT = GetRenderTarget("GRM_NavPeekRT", 256, 256, false)
     local peekMat = CreateMaterial("GRM_NavPeekMat", "UnlitGeneric", {
@@ -226,52 +235,66 @@ if CLIENT then
         ["$vertexcolor"] = 1,
     })
     local atlasReady, atlasCenter, atlasSpan = false, nil, 1
+    local atlasW, atlasE, atlasS, atlasN
 
     local function bakeAtlas()
-        if atlasReady then return end
-        atlasReady = true
-        local mn, mx = worldBounds()
-        atlasSpan = math.max(mx.x - mn.x, mx.y - mn.y, 2048)
-        local mid = Vector((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, mx.z)
-        local surfaceZ = mn.z
-        for _, s in ipairs({
-            Vector(mid.x, mid.y, mx.z + 6000),
-            Vector(mn.x + atlasSpan * 0.2, mn.y + atlasSpan * 0.2, mx.z + 6000),
-            Vector(mx.x - atlasSpan * 0.2, mx.y - atlasSpan * 0.2, mx.z + 6000),
-        }) do
-            local tr = util.TraceLine({ start = s, endpos = Vector(s.x, s.y, mn.z - 4000), mask = MASK_SOLID_BRUSHONLY })
-            if tr.Hit then surfaceZ = math.max(surfaceZ, tr.HitPos.z) end
+        if atlasReady and not N._atlasDirty then return end
+        if IsValid(vgui.GetHoveredPanel()) and vgui.CursorVisible() and atlasReady then return end
+        N._atlasDirty = false
+        local b = N.Bounds
+        local lp = LocalPlayer()
+        local origin = IsValid(lp) and lp:GetPos() or Vector(0, 0, 0)
+        if istable(b) then
+            atlasW, atlasE, atlasS, atlasN = b.w, b.e, b.s, b.n
+            atlasCenter = Vector(b.cx, b.cy, b.h * 0.82)
+            atlasSpan = math.max(math.abs(b.e - b.w), math.abs(b.n - b.s), 2048)
+        else
+            atlasW, atlasE = origin.x - 6000, origin.x + 6000
+            atlasS, atlasN = origin.y - 6000, origin.y + 6000
+            atlasCenter = Vector(origin.x, origin.y, origin.z + 9000)
+            atlasSpan = 12000
         end
-        atlasCenter = Vector(mid.x, mid.y, surfaceZ + 80)
         render.PushRenderTarget(atlasRT)
         render.Clear(8, 14, 23, 255, true, true)
+        -- Сначала орто по измеренным краям (как 2-я система zip). Если движок
+        -- орто проглотит — запасной высокий перспективный кадр.
         render.RenderView({
-            origin = atlasCenter,
+            origin = Vector((atlasW + atlasE) * 0.5, (atlasS + atlasN) * 0.5, atlasCenter.z),
             angles = Angle(90, 90, 0),
             x = 0, y = 0, w = 768, h = 768,
             ortho = true,
-            ortholeft = -atlasSpan * 0.5,
-            orthoright = atlasSpan * 0.5,
-            orthotop = -atlasSpan * 0.5,
-            orthobottom = atlasSpan * 0.5,
-            znear = 1, zfar = math.max(16000, atlasSpan * 2),
-            drawhud = false, drawviewmodel = false, drawskybox = false,
+            ortholeft = atlasW,
+            orthoright = atlasE,
+            orthotop = atlasS,
+            orthobottom = atlasN,
+            znear = 8,
+            zfar = math.max(24000, atlasSpan * 3),
+            drawhud = false, drawviewmodel = false, drawskybox = true,
         })
         render.PopRenderTarget()
+        atlasReady = true
     end
 
+    hook.Add("PostRender", "GRM_Nav_Bake", function()
+        if (not atlasReady or N._atlasDirty) and not (gui.IsGameUIVisible and gui.IsGameUIVisible()) then
+            bakeAtlas()
+        end
+    end)
+
     local function worldToAtlas(pos, x, y, size)
-        if not atlasCenter then return x + size / 2, y + size / 2 end
-        local dx = (pos.x - atlasCenter.x) / atlasSpan
-        local dy = (pos.y - atlasCenter.y) / atlasSpan
-        return x + size * (0.5 + dx), y + size * (0.5 - dy)
+        local w, e, s, n = atlasW, atlasE, atlasS, atlasN
+        if not w then return x + size / 2, y + size / 2 end
+        local ux = (pos.x - w) / math.max(1, e - w)
+        local uy = (pos.y - s) / math.max(1, n - s)
+        return x + ux * size, y + (1 - uy) * size
     end
 
     local function atlasToWorld(mx, my, x, y, size)
-        if not atlasCenter then return Vector(0, 0, 0) end
-        local u = (mx - x) / size - 0.5
-        local v = 0.5 - (my - y) / size
-        return Vector(atlasCenter.x + u * atlasSpan, atlasCenter.y + v * atlasSpan, atlasCenter.z)
+        local w, e, s, n = atlasW, atlasE, atlasS, atlasN
+        if not w then return Vector(0, 0, 0) end
+        local ux = (mx - x) / math.max(1, size)
+        local uy = 1 - (my - y) / math.max(1, size)
+        return Vector(w + ux * (e - w), s + uy * (n - s), atlasCenter and atlasCenter.z or 0)
     end
 
     local function collectBlips()
@@ -435,6 +458,10 @@ if CLIENT then
     -- ── большая карта ─────────────────────────────────────────────
     local atlasFrame
     function N.OpenAtlas()
+        if not N.Bounds then
+            net.Start("GRM_Nav_Act") net.WriteString("sync") net.SendToServer()
+        end
+        N._atlasDirty = true
         bakeAtlas()
         if IsValid(atlasFrame) then atlasFrame:Remove() end
         local fr = vgui.Create("DFrame")
@@ -578,6 +605,72 @@ if CLIENT then
                     return
                 end
                 local _, kind = kindBox:GetSelected()
+                net.Start("GRM_Nav_Act")
+                    net.WriteString("add")
+                    net.WriteString(nameEnt:GetValue())
+                    net.WriteString(kind or "pin")
+                    net.WriteBool(pinChk:GetChecked())
+                    net.WriteFloat(world.x) net.WriteFloat(world.y) net.WriteFloat(world.z)
+                net.SendToServer()
+            end
+        end
+
+        hook.Add("GRM_NavMarks", "GRM_NavAtlasList", function()
+            if IsValid(list) then refill() end
+        end)
+    end
+
+    hook.Add("Think", "GRM_Nav_MarkHook", function()
+        -- лёгкий фан-аут после синка
+    end)
+
+    local lastMarks
+    timer.Create("GRM_Nav_MarkPulse", 0.4, 0, function()
+        if lastMarks ~= N.Marks then
+            lastMarks = N.Marks
+            hook.Run("GRM_NavMarks")
+        end
+    end)
+
+    hook.Add("PlayerButtonDown", "GRM_Nav_Key", function(ply, btn)
+        if ply ~= LocalPlayer() then return end
+        if vgui.GetKeyboardFocus() then return end
+        if gui.IsGameUIVisible and gui.IsGameUIVisible() then return end
+        if btn == KEY_M then
+            if IsValid(atlasFrame) then atlasFrame:Close() else N.OpenAtlas() end
+        end
+    end)
+
+    hook.Add("PlayerSayTransform", "GRM_Nav_Chat", function(ply, pack)
+        if ply ~= LocalPlayer() then return end
+        local t = string.lower(string.Trim(pack and pack[1] or ""))
+        if t == "/карта" or t == "/map" or t == "/atlas" then
+            N.OpenAtlas()
+            pack[1] = ""
+            return true
+        end
+        if t == "/миникарта" or t == "/minimap" then
+            N.Visible = not N.Visible
+            pack[1] = ""
+            return true
+        end
+    end)
+
+    concommand.Add("grm_atlas", function() N.OpenAtlas() end)
+
+    hook.Add("Think", "GRM_Nav_Arrive", function()
+        if not N.Waypoint then return end
+        local lp = LocalPlayer()
+        if not IsValid(lp) then return end
+        if lp:GetPos():DistToSqr(N.Waypoint.pos) < 140 * 140 then
+            notification.AddLegacy("Вы на месте.", NOTIFY_GENERIC, 4)
+            N.ClearWaypoint()
+        end
+    end)
+
+    print("[GRM Nav] client")
+end
+lected()
                 net.Start("GRM_Nav_Act")
                     net.WriteString("add")
                     net.WriteString(nameEnt:GetValue())
