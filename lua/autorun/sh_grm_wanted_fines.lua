@@ -309,6 +309,7 @@ function F.Issue(issuer, target, amount, reason, opts)
         jurisdiction = opts.jurisdiction == "military" and "military" or "civil",
         status       = tostring(opts.status or "unpaid") == "paid" and "paid" or "unpaid",
         issued       = os.time(),
+        issuerFaction = tostring(opts.issuerFaction or (IsValid(issuer) and issuer:GetNWString("GRM_Faction", "") or "")),
     }
     if rec.status == "paid" then
         rec.paid = amount

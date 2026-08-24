@@ -339,7 +339,10 @@ if SERVER then
         local st = E.Data.state
         st.budget = math.max(0, math.floor((tonumber(st.budget) or 0) + delta))
         dirty = true
-        if SetGlobalDouble then SetGlobalDouble("GRM_StateBudget", st.budget) end
+        if SetGlobalDouble then
+            SetGlobalDouble("GRM_StateBudget", st.budget)
+            SetGlobalDouble("GRM_CityBudget", st.budget)
+        end
         if reason then stateHist(reason) end
         -- Находка 178: банковские хранилища отражают гос.бюджет в реальном
         -- времени (NWVar на каждом хранилище + таймер-страховка).
@@ -1231,7 +1234,10 @@ if SERVER then
     function E.StateBudgetSet(value, reason)
         E.Data.state.budget = math.max(0, math.floor(tonumber(value) or 0))
         dirty = true
-        if SetGlobalDouble then SetGlobalDouble("GRM_StateBudget", E.Data.state.budget) end
+        if SetGlobalDouble then
+            SetGlobalDouble("GRM_StateBudget", E.Data.state.budget)
+            SetGlobalDouble("GRM_CityBudget", E.Data.state.budget)
+        end
         if reason then stateHist(reason) end
         -- Находка 178: синк дисплеев хранилищ
         if E.SyncVaultsState then E.SyncVaultsState() end
@@ -1243,6 +1249,15 @@ if SERVER then
         if GetGlobalDouble then return GetGlobalDouble("GRM_StateBudget", 0) end
         return 0
     end
+
+    function GRM.CityBudgetGet()
+        return GRM.StateBudgetGet()
+    end
+    function GRM.CityBudgetAdd(delta, reason)
+        return E.StateBudgetAdd(delta, reason)
+    end
+    E.CityBudgetGet = E.StateBudgetGet
+    E.CityBudgetAdd = E.StateBudgetAdd
 
     -- Сводка по фракции для админ-панелей (не мутирует запись)
     function E.FactionInfo(name)
@@ -1608,6 +1623,7 @@ if SERVER then
     -- ── СИНХРОНИЗАЦИЯ клиентов ──────────────────────────────
     local function syncPlayer(ply)
         local name = factionOf(ply)
+        if name then foldFactionBudget(name) end
         net.Start(NET_SYNC)
             net.WriteString(name or "")
             net.WriteTable(name and entry(name) or {})
@@ -2237,6 +2253,7 @@ if SERVER then
     load()
     if SetGlobalDouble and E.Data and E.Data.state then
         SetGlobalDouble("GRM_StateBudget", tonumber(E.Data.state.budget) or 0)
+        SetGlobalDouble("GRM_CityBudget", tonumber(E.Data.state.budget) or 0)
     end
     local function foldAllFactionBudgets()
         if not istable(Factions) then return end
@@ -3191,6 +3208,27 @@ if CLIENT then
             if istable(d.factionData.history) then
                 tabSmall(p3, "Последние операции фракции:", CUI.text, 14, 118)
                 local hist = vgui.Create("DScrollPanel", p3)
+                hist:SetPos(14, 142) hist:SetSize(535, 290)
+                hist.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CUI.panel) end
+                local h = d.factionData.history
+                for i = #h, math.max(1, #h - 30), -1 do
+                    local rec = h[i]
+                    local l = vgui.Create("DLabel", hist)
+                    l:Dock(TOP) l:SetTall(16) l:DockMargin(8, 2, 4, 1)
+                    l:SetFont("GRM_Eco_Small") l:SetTextColor(CUI.dim)
+                    l:SetText(os.date("%d.%m %H:%M", rec.t or 0) .. " — " .. tostring(rec.s or ""))
+                end
+            end
+        end
+    end)
+
+    concommand.Add("grm_salary_admin", function()
+        net.Start(NET_OPEN_ADMIN) net.SendToServer()
+    end)
+
+    print("[GRM Economy] Unified Economy v3.0.3 — клиент загружен")
+end
+ hist = vgui.Create("DScrollPanel", p3)
                 hist:SetPos(14, 142) hist:SetSize(535, 290)
                 hist.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CUI.panel) end
                 local h = d.factionData.history

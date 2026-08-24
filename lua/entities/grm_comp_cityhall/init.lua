@@ -50,7 +50,9 @@ local function overview()
     local E = GRM.Economy
     local S = GRM.Services
     local budget = 0
-    if E and isfunction(E.StateBudgetGet) then budget = E.StateBudgetGet() end
+    if GRM.CityBudgetGet then budget = GRM.CityBudgetGet()
+    elseif GRM.StateBudgetGet then budget = GRM.StateBudgetGet()
+    elseif E and isfunction(E.StateBudgetGet) then budget = E.StateBudgetGet() end
 
     local business = {}
     if DOC and DOC.Registry and istable(DOC.Registry.businessLicenses) then

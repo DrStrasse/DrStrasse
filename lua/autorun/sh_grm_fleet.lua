@@ -1319,7 +1319,12 @@ if SERVER then
 
         return {
             faction = faction,
-            budget = math.max(0, math.floor(tonumber(GRM.FactionBudgetGet and GRM.FactionBudgetGet(faction)) or 0)),
+            budget = (function()
+                local b = math.floor(tonumber(GRM.FactionBudgetGet and GRM.FactionBudgetGet(faction)) or 0)
+                local fac = istable(Factions) and Factions[faction]
+                if istable(fac) then b = math.max(b, math.floor(tonumber(fac.Budget) or 0)) end
+                return math.max(0, b)
+            end)(),
             canBuy = select(1, FL.CanBuy(ply, faction)) == true,
             canManage = FL.CanManage(ply, faction) == true,
             isAdmin = isAdmin,
@@ -2149,6 +2154,12 @@ if CLIENT then
 
         local body = vgui.Create("DPanel", f)
         body:Dock(FILL) body:DockMargin(6, 52, 6, 6) body:SetPaintBackground(false)
+        FL.BuildPanel(body)
+    end)
+end
+
+print("[GRM Fleet] v" .. FL.Version .. " loaded (" .. (SERVER and "Server" or "Client") .. ")")
+e)
         FL.BuildPanel(body)
     end)
 end

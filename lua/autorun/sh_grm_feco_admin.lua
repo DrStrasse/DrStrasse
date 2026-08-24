@@ -37,23 +37,29 @@ if SERVER then
         
         local data = {}
         
-        -- Гос.бюджет
-        if GRM.Economy and GRM.Economy.Data and GRM.Economy.Data.state then
-            data.stateBudget = GRM.Economy.Data.state.budget or 0
-        else
-            data.stateBudget = 0
-        end
-        
-        -- Фракции
+        data.stateBudget = (GRM.StateBudgetGet and GRM.StateBudgetGet())
+            or (GRM.Economy and GRM.Economy.StateBudgetGet and GRM.Economy.StateBudgetGet())
+            or 0
+
         data.factions = {}
-        if GRM.Economy and GRM.Economy.Data and GRM.Economy.Data.factions then
-            for name, eco in pairs(GRM.Economy.Data.factions) do
-                data.factions[name] = {
-                    budget = eco.budget or 0,
-                    taxRate = eco.taxRate or 0.05,
-                    baseSalary = eco.baseSalary or 0,
-                }
-            end
+        local seen = {}
+        local function put(name)
+            name = tostring(name or "")
+            if name == "" or seen[name] then return end
+            seen[name] = true
+            local eco = GRM.Economy and GRM.Economy.Data and GRM.Economy.Data.factions and GRM.Economy.Data.factions[name]
+            data.factions[name] = {
+                budget = (GRM.FactionBudgetGet and GRM.FactionBudgetGet(name))
+                    or (eco and eco.budget) or 0,
+                taxRate = (eco and eco.taxRate) or 0.05,
+                baseSalary = (eco and eco.baseSalary) or 0,
+            }
+        end
+        if istable(Factions) then
+            for name in pairs(Factions) do put(name) end
+        end
+        if GRM.Economy and GRM.Economy.Data and istable(GRM.Economy.Data.factions) then
+            for name in pairs(GRM.Economy.Data.factions) do put(name) end
         end
         
         -- Игроки онлайн с балансами
@@ -196,7 +202,8 @@ if CLIENT then
     -- Консольная команда
     concommand.Add("grm_feco", function()
         if LocalPlayer():IsSuperAdmin() then
-            openFecoAdmin()
+            net.Start("GRM_Eco_AdminOpen")
+            net.SendToServer()
         else
             notification.AddLegacy("Только суперадмин", NOTIFY_ERROR, 3)
         end
