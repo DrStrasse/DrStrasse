@@ -2230,9 +2230,3 @@ if CLIENT then
 
     print("[GRM Char] Ядро персонажей v" .. CH.Version .. " загружено (клиент)")
 end
-bile.ClientClose()
-        end
-    end)
-
-    print("[GRM Char] Ядро персонажей v" .. CH.Version .. " загружено (клиент)")
-end

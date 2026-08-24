@@ -214,17 +214,26 @@ if CLIENT then
         frame.Close = function() end
         frame.OnKeyCodePressed = function(_, key) if key == KEY_ESCAPE then return true end end
 
+        -- Мягкое дыхание: заголовок и линия чуть ярче/тусклее, без дёрганья.
+        local function pulse(a0, a1)
+            local t = (math.sin(RealTime() * 2.4) + 1) * 0.5
+            return Lerp(t, a0, a1)
+        end
+
         frame.Paint = function(_, w, h)
             draw.RoundedBox(0, 0, 0, w, h, Color(0, 0, 0, 255))
 
             local cy = h * 0.34
-            draw.SimpleText("GROENNERLAND2036", "GRMLoad_Title", w / 2, cy, GOLD,
+            local titleA = pulse(200, 255)
+            local subA = pulse(110, 220)
+            draw.SimpleText("GROENNERLAND2036", "GRMLoad_Title", w / 2, cy,
+                Color(GOLD.r, GOLD.g, GOLD.b, titleA),
                 TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-            draw.SimpleText("ДОБРО ПОЖАЛОВАТЬ НА ПРОЕКТ!", "GRMLoad_Sub", w / 2, cy + 54, GOLD_DIM,
+            draw.SimpleText("ДОБРО ПОЖАЛОВАТЬ НА ПРОЕКТ!", "GRMLoad_Sub", w / 2, cy + 54,
+                Color(GOLD_DIM.r, GOLD_DIM.g, GOLD_DIM.b, subA),
                 TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 
-            -- тонкая золотая линия под заголовком
-            surface.SetDrawColor(GOLD.r, GOLD.g, GOLD.b, 90)
+            surface.SetDrawColor(GOLD.r, GOLD.g, GOLD.b, pulse(50, 160))
             surface.DrawRect(w / 2 - 260, cy + 80, 520, 1)
         end
 
@@ -233,13 +242,17 @@ if CLIENT then
         bar:SetSize(barW, barH)
         bar:SetPos(ScrW() / 2 - barW / 2, ScrH() * 0.34 + 130)
         bar.Paint = function(_, w, h)
+            local blink = (math.sin(RealTime() * 3.2) + 1) * 0.5
+            local fillA = Lerp(blink, 150, 255)
+            local outlineA = Lerp(blink, 70, 200)
             draw.RoundedBox(4, 0, 0, w, h, Color(24, 22, 18, 255))
-            surface.SetDrawColor(GOLD.r, GOLD.g, GOLD.b, 120)
+            surface.SetDrawColor(GOLD.r, GOLD.g, GOLD.b, outlineA)
             surface.DrawOutlinedRect(0, 0, w, h, 1)
             local p = share()
-            draw.RoundedBox(4, 2, 2, math.max(0, (w - 4) * p), h - 4, GOLD)
+            draw.RoundedBox(4, 2, 2, math.max(0, (w - 4) * p), h - 4,
+                Color(GOLD.r, GOLD.g, GOLD.b, fillA))
             draw.SimpleText(("%d%%"):format(math.floor(p * 100)), "GRMLoad_Small", w / 2, h / 2,
-                Color(20, 18, 14), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                Color(20, 18, 14, Lerp(blink, 180, 255)), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
 
         stepLabel = vgui.Create("DLabel", frame)
@@ -266,9 +279,13 @@ if CLIENT then
             LD.Close()
         end
 
-        --[[ Раз в четверть секунды сверяем этапы. Каждый кадр тут считать
-             нечего: полоса не должна сама создавать нагрузку. ]]
+        --[[ Этапы сверяем редко. Альфу подписи крутим каждый кадр — иначе
+             мигание ступеньками по 250 мс. ]]
         frame.Think = function(self)
+            if IsValid(stepLabel) and stepLabel:IsVisible() then
+                local a = 110 + math.floor((math.sin(RealTime() * 3.2) + 1) * 0.5 * 120)
+                stepLabel:SetTextColor(Color(GOLD_DIM.r, GOLD_DIM.g, GOLD_DIM.b, a))
+            end
             if (self.nextCheck or 0) > RealTime() then return end
             self.nextCheck = RealTime() + 0.25
 
