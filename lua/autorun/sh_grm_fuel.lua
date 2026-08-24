@@ -4,7 +4,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Fuel = GRM.Fuel or {}
 local F = GRM.Fuel
-F.Version = "1.2.3"
+F.Version = "1.2.4"
 F.File = "grm_fuel.json"
 F.PumpFile = "grm_fuel_pumps_" .. string.lower(game.GetMap() or "unknown") .. ".json"
 F.PricePerLiter = 8
@@ -178,6 +178,7 @@ if SERVER then
         ent:SetNWFloat("GRM_Fuel", rec.liters)
         ent:SetNWFloat("GRM_FuelMax", F.TankSize())
         ent:SetNWString("GRM_FuelType", rec.typ)
+        ent:SetNWBool("GRM_OutOfFuel", rec.liters <= 0.05)
     end
 
     function F.AddLiters(ent, amount, typ)
@@ -194,7 +195,7 @@ if SERVER then
         return add
     end
 
-    local function killEngine(ent)
+    local function killEngine(ent, empty)
         if not IsValid(ent) then return end
         pcall(function()
             if ent.EnableEngine then ent:EnableEngine(false) end
@@ -203,7 +204,9 @@ if SERVER then
             if ent.TurnOff then ent:TurnOff() end
             if ent.StopEngine then ent:StopEngine() end
         end)
-        ent:SetNWBool("GRM_OutOfFuel", true)
+        if empty then
+            ent:SetNWBool("GRM_OutOfFuel", true)
+        end
     end
 
     function F.ClearHose(pump)
@@ -466,7 +469,7 @@ if SERVER then
         if on then
             if veh:GetNWBool("GRM_VehBroken") then return false, "поломана" end
             if (veh:GetNWFloat("GRM_Fuel", 0) or 0) <= 0.05 then
-                killEngine(veh)
+                killEngine(veh, true)
                 return false, "нет топлива"
             end
             veh:SetNWBool("GRM_EngineOn", true)
@@ -523,12 +526,15 @@ if SERVER then
             end
             if uid == "" then continue end
             local rec = F.Get(uid)
-            if rec.liters <= 0 then
-                if not veh:GetNWBool("GRM_OutOfFuel", false) then killEngine(veh) end
+            if rec.liters <= 0.05 then
+                if not veh:GetNWBool("GRM_OutOfFuel", false) then killEngine(veh, true) end
                 continue
             end
+            if veh:GetNWBool("GRM_OutOfFuel", false) then
+                veh:SetNWBool("GRM_OutOfFuel", false)
+            end
             if not veh:GetNWBool("GRM_EngineOn", false) then
-                if not veh:GetNWBool("GRM_OutOfFuel", false) then killEngine(veh) end
+                killEngine(veh, false)
                 continue
             end
             if veh:GetNWBool("GRM_VehBroken") then continue end

@@ -254,7 +254,7 @@ hook.Add("HUDPaint", "GRM_Vehicle_Cluster", function()
     local fmax = math.max(1, veh:GetNWFloat("GRM_FuelMax", 100))
     local typ = veh:GetNWString("GRM_FuelType", "petrol")
     local typN = (GRM.Fuel.Types and GRM.Fuel.Types[typ]) or typ
-    local empty = veh:GetNWBool("GRM_OutOfFuel", false) or (fuel >= 0 and fuel <= 0.05)
+    local empty = fuel >= 0 and fuel <= 0.05
     local hp = veh:GetNWFloat("GRM_VehHP", -1)
     local hpmax = math.max(1, veh:GetNWFloat("GRM_VehHPMax", 100))
     local broken = veh:GetNWBool("GRM_VehBroken", false)
