@@ -118,13 +118,62 @@ function S.BoneToPos(rec)
     return Vector(tonumber(rec.px or rec.x) or 0, tonumber(rec.py) or 0, tonumber(rec.pz or rec.z) or 0)
 end
 
-function S.ApplyCatalog(list)
+function S.CatName(id)
+    id = tostring(id or "general")
+    for i = 1, #(S.CatList or {}) do
+        if S.CatList[i].id == id then return S.CatList[i].name or id end
+    end
+    if id == "docs" then return "Документы" end
+    if id == "general" then return "Общее" end
+    return id
+end
+
+function S.Categories()
+    local seen, out = {}, {}
+    for i = 1, #(S.CatList or {}) do
+        local c = S.CatList[i]
+        if istable(c) and c.id and not seen[c.id] then
+            seen[c.id] = true
+            out[#out + 1] = { id = c.id, name = c.name or c.id }
+        end
+    end
+    for i = 1, #(S.List or {}) do
+        local id = tostring(S.List[i].cat or "general")
+        if id ~= "" and not seen[id] then
+            seen[id] = true
+            out[#out + 1] = { id = id, name = S.CatName(id) }
+        end
+    end
+    if #out == 0 then out[1] = { id = "general", name = "Общее" } end
+    return out
+end
+
+function S.InCat(cat)
+    cat = tostring(cat or "general")
+    local out = {}
+    for i = 1, #(S.List or {}) do
+        local p = S.List[i]
+        if tostring(p.cat or "general") == cat then out[#out + 1] = p end
+    end
+    if #out == 0 and cat == "general" then
+        for i = 1, #(S.List or {}) do out[#out + 1] = S.List[i] end
+    end
+    return out
+end
+
+function S.ApplyCatalog(list, cats)
+    if istable(list) and list.poses then
+        cats = list.cats or cats
+        list = list.poses
+    end
+    if istable(cats) then S.CatList = cats end
     if not istable(list) then return end
     S.Catalog = list
     local out = {}
     for i = 1, #list do
         local p = list[i]
         if istable(p) and p.players ~= false and p.id then
+            p.cat = tostring(p.cat or "general")
             out[#out + 1] = p
         end
     end
@@ -425,7 +474,7 @@ function S.OpenMenu()
 
     local function fill()
         grid:Clear()
-        local items = S.InCat(S._menuCat)
+        local items = (isfunction(S.InCat) and S.InCat(S._menuCat)) or (S.List or {})
         local col, bw, bh, gap = 2, 210, 36, 8
         for i, def in ipairs(items) do
             local r = math.floor((i - 1) / col)
