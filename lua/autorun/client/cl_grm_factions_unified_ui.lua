@@ -511,12 +511,22 @@ function UI.Open(requestedFaction, requestedTab)
         comboFac:SetSize(260, 28)
         comboFac:SetPos(f:GetWide() - 430, 9)
         skinCombo(comboFac)
+        comboFac._grmSilent = true
+        local keep = currentTargetFac or targetFac
         for _, fname in ipairs(fnames) do
             local disp = GRM.Factions.DisplayName(fname)
-            comboFac:AddChoice(disp .. " [" .. fname .. "]", fname, fname == targetFac)
+            comboFac:AddChoice(disp .. " [" .. fname .. "]", fname, fname == keep)
         end
-        if not targetFac then comboFac:SetValue("— выберите организацию —") end
-        comboFac.OnSelect = function(_, _, _, val) switchFaction(val) end
+        if keep then
+            comboFac:SetValue(GRM.Factions.DisplayName(keep) .. " [" .. keep .. "]")
+        else
+            comboFac:SetValue("— выберите организацию —")
+        end
+        comboFac.OnSelect = function(_, _, value, val)
+            if comboFac._grmSilent then return end
+            switchFaction(val or value)
+        end
+        timer.Simple(0, function() if IsValid(comboFac) then comboFac._grmSilent = false end end)
     end
 
     UI.RebuildSelector = function() if IsValid(f) then buildSelector() end end

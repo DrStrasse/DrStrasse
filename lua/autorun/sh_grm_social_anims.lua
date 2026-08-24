@@ -431,7 +431,6 @@ S._menuCat = "general"
 
 local function inputBusy()
     if gui.IsGameUIVisible() or gui.IsConsoleVisible() then return true end
-    if IsValid(vgui.GetKeyboardFocus()) then return true end
     local lp = LocalPlayer()
     if IsValid(lp) and lp.IsTyping and lp:IsTyping() then return true end
     return false
@@ -449,8 +448,13 @@ function S.CloseMenu()
 end
 
 function S.OpenMenu()
-    if IsValid(S._menu) then S._menu:MakePopup() return end
-    local cats = S.Categories()
+    if IsValid(S._menu) then
+        S._menu:SetVisible(true)
+        S._menu:MakePopup()
+        S._menu:MoveToFront()
+        return
+    end
+    local cats = isfunction(S.Categories) and S.Categories() or { { id = "general", name = "Общее" } }
     local have
     for i = 1, #cats do if cats[i].id == S._menuCat then have = true break end end
     if not have then S._menuCat = cats[1] and cats[1].id or "general" end
@@ -550,14 +554,21 @@ end
 function S.OpenRadial() S.OpenMenu() end
 function S.CloseRadial() S.CloseMenu() end
 
+S._keyLock = 0
 hook.Add("PlayerButtonDown", "GRM_Soc_Key", function(ply, key)
     if ply ~= LocalPlayer() then return end
-    if IsValid(S._menu) then
-        if key == MOUSE_RIGHT or key == KEY_ESCAPE then S.CloseMenu() return end
+    if IsValid(S._menu) and (key == MOUSE_RIGHT or key == KEY_ESCAPE) then
+        S.CloseMenu()
+        return
     end
     if key ~= keyNum() or key <= 0 then return end
     if inputBusy() then return end
-    if IsValid(S._menu) then S.CloseMenu() else S.OpenMenu() end
+    local now = CurTime()
+    if now < (S._keyLock or 0) then return end
+    S._keyLock = now + 0.35
+    -- Удержание не закрывает: повтор клавиши при hold давал мерцание.
+    if IsValid(S._menu) then return end
+    S.OpenMenu()
 end)
 
 hook.Add("StartCommand", "GRM_Soc_MenuFreeze", function(ply, cmd)

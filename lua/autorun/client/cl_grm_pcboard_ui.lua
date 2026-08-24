@@ -279,6 +279,7 @@ end
 -- и остальное меню) либо отдельный DFrame.
 function PB.BuildAccessEditor(host, payload)
     if not IsValid(host) then return end
+    local keep = PB._editorSel
     host:Clear()
     payload = istable(payload) and payload or {}
     local cfg = istable(payload.config) and payload.config or { settings = {}, factions = {} }
@@ -302,9 +303,12 @@ function PB.BuildAccessEditor(host, payload)
     -- ── левая колонка: организации и узлы ──────────────────────────
     local left = vgui.Create("DPanel", frame)
     left:Dock(LEFT)
-    left:SetWide(math.Clamp(math.floor(frame:GetWide() * 0.30), 320, 460))
+    left:SetWide(360)
     left:DockMargin(10, 62, 8, 76)
     left.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, C.card) end
+    frame.PerformLayout = function(_, w)
+        if IsValid(left) then left:SetWide(math.Clamp(math.floor((w or 800) * 0.32), 300, 480)) end
+    end
 
     local facCombo = vgui.Create("DComboBox", left)
     facCombo:Dock(TOP)
@@ -420,7 +424,9 @@ function PB.BuildAccessEditor(host, payload)
             levelCombo:AddChoice(row.name, row.id, (chosen or "") == row.id or (isRoot and chosen == nil and row.id == "none"))
         end
         levelCombo:SetValue(chosen and GRM.PCBoard.LevelName(chosen) or (isRoot and GRM.PCBoard.LevelName("none") or "Наследовать"))
+        levelCombo._grmSilent = true
         levelCombo.OnSelect = function(_, _, value, id)
+            if levelCombo._grmSilent then return end
             if id == nil then
                 for _, row in ipairs(levelChoices(not isRoot)) do
                     if row.name == value then id = row.id break end
@@ -431,6 +437,7 @@ function PB.BuildAccessEditor(host, payload)
             rebuildBlocks(node, id ~= "" and id or "none")
             if rebuildNodes then rebuildNodes() end
         end
+        timer.Simple(0, function() if IsValid(levelCombo) then levelCombo._grmSilent = false end end)
 
         -- Для наследующего узла показываем итог по цепочке, а не «none».
         local effLevel = node.level
@@ -508,24 +515,37 @@ function PB.BuildAccessEditor(host, payload)
         end
     end
     -- GMod зовёт OnSelect(index, value, data). Четвёртый аргумент бывает nil.
+    facCombo._grmSilent = true
     facCombo.OnSelect = function(_, _, value, data)
+        if facCombo._grmSilent then return end
         local name = tostring(data or value or "")
         if name == "" or name == "Организация…" then return end
         current.fac, current.field, current.key, current.label = name, nil, nil, nil
+        PB._editorSel = { fac = name }
         nodeOf(cfg, name)
         rebuildNodes()
         rebuildRight()
     end
-    if tree[1] then
-        local first = tostring(tree[1].name or tree[1].display or "")
-        facCombo:SetValue(tostring(tree[1].display or first))
-        if first ~= "" then
-            current.fac = first
-            nodeOf(cfg, first)
-            rebuildNodes()
-            rebuildRight()
+    local startFac
+    if keep and keep.fac then
+        for _, row in ipairs(tree) do
+            if tostring(row.name) == tostring(keep.fac) then startFac = keep.fac break end
         end
     end
+    if not startFac and tree[1] then startFac = tostring(tree[1].name or tree[1].display or "") end
+    if startFac and startFac ~= "" then
+        local disp = startFac
+        for _, row in ipairs(tree) do
+            if tostring(row.name) == startFac then disp = tostring(row.display or row.name) break end
+        end
+        facCombo:SetValue(disp)
+        current.fac = startFac
+        current.field, current.key, current.label = keep and keep.field, keep and keep.key, keep and keep.label
+        nodeOf(cfg, startFac)
+        rebuildNodes()
+        rebuildRight()
+    end
+    timer.Simple(0, function() if IsValid(facCombo) then facCombo._grmSilent = false end end)
 
     -- ── низ: общие настройки и сохранение ──────────────────────────
     -- Панель высокая: подпись поля рисуется НАД полем, а не под ним, иначе
