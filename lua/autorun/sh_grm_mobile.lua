@@ -20,7 +20,7 @@ MB.SmsCap = 40
 MB.ContactsCap = 50
 MB.NotesCap = 30
 MB.Version = "1.2.2" -- network/data compatibility
-MB.UIVersion = "3.4.0"
+MB.UIVersion = "3.5.0"
 
 MB.Tiers = {
     crappy = {
@@ -1451,6 +1451,85 @@ if CLIENT then
         end
     end
 
+    local function facInitial(name)
+        name = string.Trim(tostring(name or "?"))
+        local first = string.byte(name, 1) or 63
+        local length = first < 128 and 1 or (first < 224 and 2 or (first < 240 and 3 or 4))
+        return string.upper(string.sub(name, 1, length))
+    end
+
+    local function drawFacRoster(w, startY, maxY, items)
+        M.listSel = clamp(M.listSel, 1, math.max(1, #items))
+        M.hitboxes = {}
+        local pack = (M.data.fac or {}).data
+        local hasFac = istable(pack)
+        local name = hasFac and tostring(pack.name or "Фракция") or "Нет фракции"
+        local online = hasFac and (tonumber(pack.online) or 0) or 0
+        local total = hasFac and (tonumber(pack.total) or #(pack.rows or {})) or 0
+        local members = hasFac and (pack.rows or {}) or {}
+
+        local bannerH = 92
+        draw.RoundedBox(16, 18, startY, w - 36, bannerH, Color(42, 28, 36, 250))
+        draw.RoundedBox(18, 30, startY + 18, 56, 56, Color(202, 83, 91, 245))
+        draw.SimpleText(facInitial(name), "GRMMob_T", 58, startY + 46, C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText(fitText(name, "GRMMob_B", w - 180), "GRMMob_B", 98, startY + 32, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        if hasFac then
+            draw.SimpleText("онлайн  " .. tostring(online) .. "  ·  состав  " .. tostring(total), "GRMMob_XS", 98, startY + 56, Color(245, 180, 185), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        else
+            draw.SimpleText("вы не состоите в организации", "GRMMob_XS", 98, startY + 56, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        end
+
+        local y = startY + bannerH + 10
+        local btnW = math.floor((w - 44) / 2)
+        local labels = { "↻  Обновить", "‹  Назад" }
+        local colors = { Color(72, 48, 56, 250), Color(48, 42, 52, 250) }
+        for i = 1, 2 do
+            local x = 18 + (i - 1) * (btnW + 8)
+            local active = M.listSel == i
+            draw.RoundedBox(12, x, y, btnW, 40, active and Color(202, 83, 91, 250) or colors[i])
+            local _, pressed = drawPointerFeedback(12, x, y, btnW, 40, i)
+            draw.SimpleText(labels[i], "GRMMob_S", x + btnW / 2, y + 20 + (pressed and 1 or 0), C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            M.hitboxes[#M.hitboxes + 1] = { x = x, y = y, w = btnW, h = 40, index = i }
+        end
+        y = y + 52
+
+        if not hasFac then
+            drawEmpty(w, y, "Нет фракции", "Вступите в организацию, чтобы видеть состав")
+            return
+        end
+        if #members == 0 then
+            drawEmpty(w, y, "Состав пуст", "Обновите список или дождитесь назначения")
+            return
+        end
+
+        local cardH = 58
+        local visible = math.max(1, math.floor((maxY - y + 8) / (cardH + 8)))
+        local selectedMember = M.listSel > 2 and (M.listSel - 2) or 1
+        local first = clamp(selectedMember - visible + 1, 1, math.max(1, #members - visible + 1))
+        for mi = first, math.min(#members, first + visible - 1) do
+            local itemIndex = mi + 2
+            local rec = members[mi] or {}
+            local active = M.listSel == itemIndex
+            local on = rec.online == true
+            local cardCol = active and Color(78, 38, 46, 250) or (on and Color(28, 36, 42, 246) or Color(22, 24, 30, 246))
+            draw.RoundedBox(12, 18, y, w - 36, cardH, cardCol)
+            drawPointerFeedback(12, 18, y, w - 36, cardH, itemIndex)
+            draw.RoundedBox(14, 30, y + 12, 34, 34, on and Color(55, 185, 110, 230) or Color(70, 76, 86, 230))
+            draw.SimpleText(facInitial(rec.name), "GRMMob_B", 47, y + 29, C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            local badge = rec.leader and "лидер" or (on and "в сети" or "оффлайн")
+            draw.SimpleText(fitText(rec.name, "GRMMob_B", w - 170), "GRMMob_B", 76, y + 20, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(badge, "GRMMob_XS", w - 30, y + 20, rec.leader and C.yellow or (on and C.green or C.dim), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            local role = tostring(rec.role or "")
+            local dept = tostring(rec.dept or "")
+            local sub = role
+            if dept ~= "" then sub = (sub ~= "" and (role .. "  ·  " .. dept) or dept) end
+            if sub == "" then sub = "без должности" end
+            draw.SimpleText(fitText(sub, "GRMMob_XS", w - 90), "GRMMob_XS", 76, y + 40, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            M.hitboxes[#M.hitboxes + 1] = { x = 18, y = y, w = w - 36, h = cardH, index = itemIndex }
+            y = y + cardH + 8
+        end
+    end
+
     local function drawButtonList(w, startY, maxY)
         local items = screenItems()
         if #items == 0 then return end
@@ -1462,6 +1541,7 @@ if CLIENT then
 
         if not callControls and M.screen == "forum" then drawForumFeed(w, startY, maxY, items) return end
         if not callControls and M.screen == "forum_detail" then drawForumDetail(w, startY, maxY, items) return end
+        if not callControls and M.screen == "fac" then drawFacRoster(w, startY, maxY, items) return end
 
         if not callControls and M.screen == "home" and smartForm() then
             local cols,gap=3,10
