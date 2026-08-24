@@ -119,6 +119,12 @@ if SERVER then
         if not istable(rows) then return end
         for _, r in ipairs(rows) do
             if istable(r.pos) then
+                local spot = Vector(r.pos.x or 0, r.pos.y or 0, r.pos.z or 0)
+                local busy
+                for _, ex in ipairs(ents.FindInSphere(spot, 8)) do
+                    if IsValid(ex) and ex:GetClass() == "grm_fuel_pump" then busy = true break end
+                end
+                if busy then continue end
                 local e = ents.Create("grm_fuel_pump")
                 if IsValid(e) then
                     e:SetPos(Vector(r.pos.x, r.pos.y, r.pos.z))
@@ -352,6 +358,9 @@ if SERVER then
             if (e:GetPriceL() or 0) <= 0 then e:SetPriceL(F.PricePerLiter) end
         end
         F.SavePumps()
+        if GRM.PermData and GRM.PermData.Upsert then
+            for _, e in ipairs(free) do GRM.PermData.Upsert(e) end
+        end
         return true, whole and ("Заправка: " .. #free .. " колонок, " .. price .. " GRM") or ("Колонка куплена за " .. price .. " GRM")
     end
 
@@ -365,6 +374,11 @@ if SERVER then
             end
         end
         F.SavePumps()
+        if GRM.PermData and GRM.PermData.Upsert then
+            for _, e in ipairs(ents.FindByClass("grm_fuel_pump")) do
+                if IsValid(e) and F.IsOwner(ply, e) then GRM.PermData.Upsert(e) end
+            end
+        end
         return true, "Цена станции: " .. price .. " GRM/л"
     end
 
@@ -397,6 +411,21 @@ if SERVER then
         elseif op == "buyall" then ok, msg = F.BuyPump(ply, ent, true)
         elseif op == "price" then ok, msg = F.SetStationPrice(ply, ent, net.ReadFloat())
         elseif op == "cash" then ok, msg = F.Withdraw(ply, ent)
+        elseif op == "del" then
+            if not (F.IsOwner(ply, ent) or ply:IsSuperAdmin()) then
+                ok, msg = false, "Нельзя снять чужую колонку"
+            else
+                if GRM.Perm and GRM.Perm.Remove then
+                    local rok, rmsg = GRM.Perm.Remove(ply, ent, true)
+                    if rok then ok, msg = true, "Колонка снята с карты и из перма"
+                    elseif IsValid(ent) then ent:Remove() ok, msg = true, "Колонка удалена"
+                    else ok, msg = false, tostring(rmsg) end
+                else
+                    if IsValid(ent) then ent:Remove() end
+                    ok, msg = true, "Колонка удалена"
+                end
+                F.SavePumps()
+            end
         else return end
         if GRM.Notify then GRM.Notify(ply, tostring(msg), ok and 120 or 255, ok and 220 or 140, 100) end
     end)
@@ -424,6 +453,7 @@ if SERVER then
             local burn = 0.026
             if ply:KeyDown(IN_FORWARD) then burn = burn + 0.055 end
             if ply:KeyDown(IN_SPEED) then burn = burn + 0.04 end
+            if veh:GetNWBool("GRM_VehBroken") then continue end
             rec.liters = math.max(0, rec.liters - burn)
             if GRM.Perf and GRM.Perf.NWFloat then
                 GRM.Perf.NWFloat(veh, "GRM_Fuel", rec.liters, 0.05)
@@ -488,6 +518,29 @@ if SERVER then
         if IsValid(ply) then ply:PrintMessage(HUD_PRINTCONSOLE, msg) else print(msg) end
     end)
 
+    timer.Simple(0, function()
+        if GRM.Perm and GRM.Perm.RegisterClass then GRM.Perm.RegisterClass("grm_fuel_pump", true) end
+        if not (GRM.PermData and GRM.PermData.Extract) then return end
+        GRM.PermData.Extract["grm_fuel_pump"] = function(ent)
+            if not IsValid(ent) then return nil end
+            return {
+                owner = ent:GetOwnerKey(),
+                station = ent:GetStationID(),
+                price = ent:GetPriceL(),
+                cash = ent:GetCash(),
+                kind = ent:GetFuelKind(),
+            }
+        end
+        GRM.PermData.Apply["grm_fuel_pump"] = function(ent, data)
+            if not (IsValid(ent) and istable(data)) then return end
+            if isstring(data.owner) then ent:SetOwnerKey(data.owner) end
+            if isstring(data.station) then ent:SetStationID(data.station) end
+            if tonumber(data.price) then ent:SetPriceL(tonumber(data.price)) end
+            if tonumber(data.cash) then ent:SetCash(math.floor(tonumber(data.cash))) end
+            if isstring(data.kind) and data.kind ~= "" then ent:SetFuelKind(data.kind) end
+        end
+    end)
+
     F.Load()
     print("[GRM Fuel] server v" .. F.Version)
 end
@@ -536,11 +589,18 @@ if CLIENT then
             send("price", ent, function() net.WriteFloat(wang:GetValue()) end)
         end
         local cash = vgui.Create("DButton", fr)
-        cash:SetPos(16, 184) cash:SetSize(348, 32) cash:SetText("Снять кассу станции")
+        cash:SetPos(16, 184) cash:SetSize(168, 32) cash:SetText("Снять кассу")
         cash.DoClick = function() send("cash", ent) fr:Close() end
+        local del = vgui.Create("DButton", fr)
+        del:SetPos(196, 184) del:SetSize(168, 32) del:SetText("Удалить колонку")
+        del.DoClick = function()
+            Derma_Query("Снять колонку с карты и из перма?", "Заправка", "Удалить", function()
+                send("del", ent) fr:Close()
+            end, "Отмена")
+        end
         local hint = vgui.Create("DLabel", fr)
         hint:SetPos(16, 224) hint:SetSize(348, 24)
-        hint:SetText("E без Shift — пистолет. Shift+E — это окно.")
+        hint:SetText("E — пистолет. Shift+E — касса. /permadd — закрепить.")
     end
 
     hook.Add("PlayerButtonDown", "GRM_Fuel_StationKey", function(ply, btn)

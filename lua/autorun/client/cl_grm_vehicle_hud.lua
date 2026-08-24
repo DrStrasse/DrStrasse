@@ -80,6 +80,15 @@ hook.Add("HUDPaint", "GRM_Vehicle_Cluster", function()
     else
         draw.SimpleText("бак не привязан", "GRMVeh_Sm", x + 118, y + 32, Color(140, 160, 180))
     end
+    if hp >= 0 then
+        local pct = math.Clamp(hp / hpmax, 0, 1)
+        local bx, by = x + 22, y + h - 22
+        draw.SimpleText(broken and "ПОЛОМКА" or "прочность", "GRMVeh_Sm", bx, by - 14, broken and Color(230, 80, 70) or Color(180, 195, 210))
+        surface.SetDrawColor(30, 36, 46)
+        surface.DrawRect(bx, by, 224, 8)
+        surface.SetDrawColor(pct < 0.25 and Color(220, 70, 50) or Color(80, 190, 120))
+        surface.DrawRect(bx, by, 224 * pct, 8)
+    end
 end)
 
 print("[GRM Fuel] vehicle HUD")
