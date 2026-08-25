@@ -421,5 +421,13 @@ concommand.Add("grm_fbg_resolve", function()
     print("Faction:", lp:GetNWString("GRM_Faction",""))
     print("Role:   ", lp:GetNWString("GRM_Role",""))
     print("Rules keys:")
-    for k in pairs(FB.Rules or {}) do print("  ", k) end
+    for k, groups in pairs(FB.Rules or {}) do
+        print("  ", k, "-> groups:")
+        for gi, g in pairs(groups) do print("      [", gi, "] =", util.TableToJSON(g)) end
+    end
+    -- тестовый вызов Resolve для модели из меню персонажа
+    local testMdl = "models/groennerlandinfantry/male_07.mdl"
+    local res = FB.Resolve(lp, testMdl)
+    print("Resolve(" .. testMdl .. "):")
+    PrintTable(res)
 end)
