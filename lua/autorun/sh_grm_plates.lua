@@ -3399,7 +3399,7 @@ if CLIENT then
         closeEditor()
         local f = vgui.Create("DFrame")
         editor = f
-        f:SetSize(370, 390) f:Center() f:MakePopup()
+        f:SetSize(390, 430) f:Center() f:MakePopup()
         f:SetTitle("") f:ShowCloseButton(false)
         f.Paint = function(_, w, h)
             draw.RoundedBox(8, 0, 0, w, h, C.bg)
@@ -3435,35 +3435,50 @@ if CLIENT then
             local col20 = step == 20 and C.accent or C.cardHov
         end
 
-        -- крестовина перемещения (по осям машины: X — вперёд/назад, Z — вверх/вниз, Y — влево/вправо)
-        local function arrow(label, ax, ay, kind, axis, delta)
-            stepBtn(body, label, ax, ay, 40, 34, function() nudge(plate, kind, axis, delta * step) end)
+        -- крестовина перемещения (по осям машины):
+        -- Z вверх/вниз, Y влево/вправо, X вперёд/назад
+        local function arrow(label, ax, ay, kind, axis, delta, w, h)
+            stepBtn(body, label, ax, ay, w or 44, h or 34, function() nudge(plate, kind, axis, delta * step) end)
         end
-        local lbl = vgui.Create("DLabel", body); lbl:SetPos(10, 36); lbl:SetSize(330, 18)
+        local function axisLbl(text, x, y, w)
+            local l = vgui.Create("DLabel", body); l:SetPos(x, y); l:SetSize(w or 60, 14)
+            l:SetFont("GRMPlate_Small"); l:SetTextColor(C.dim); l:SetText(text); l:SetContentAlignment(5)
+        end
+
+        local lbl = vgui.Create("DLabel", body); lbl:SetPos(10, 36); lbl:SetSize(340, 16)
         lbl:SetFont("GRMPlate_Small"); lbl:SetTextColor(C.dim); lbl:SetText("СДВИГ (локальные оси машины)")
 
-        arrow("↑", 60, 58, "move", "z", 1)
-        arrow("↓", 60, 130, "move", "z", -1)
-        arrow("←", 18, 94, "move", "y", -1)
-        arrow("→", 102, 94, "move", "y", 1)
-        arrow("F", 146, 94, "move", "x", 1)
-        arrow("R", 146, 58, "move", "x", -1)
+        -- Z — вверх/вниз (центр)
+        arrow("↑", 120, 56, "move", "z", 1, 44, 30)
+        arrow("↓", 120, 124, "move", "z", -1, 44, 30)
+        axisLbl("ВЕРХ", 112, 88, 60)
+
+        -- Y — влево/вправо
+        arrow("←", 70, 90, "move", "y", -1, 44, 30)
+        arrow("→", 170, 90, "move", "y", 1, 44, 30)
+        axisLbl("ЛЕВО", 60, 122, 64)
+        axisLbl("ПРАВО", 160, 122, 64)
+
+        -- X — вперёд/назад (третья колонка)
+        arrow("ВПЕРЁД", 226, 56, "move", "x", 1, 110, 30)
+        arrow("НАЗАД", 226, 124, "move", "x", -1, 110, 30)
+        axisLbl("ВПЕРЁД/НАЗАД (F/R)", 226, 90, 110)
 
         -- поворот
-        local rl = vgui.Create("DLabel", body); rl:SetPos(10, 174); rl:SetSize(200, 18)
+        local rl = vgui.Create("DLabel", body); rl:SetPos(10, 168); rl:SetSize(200, 18)
         rl:SetFont("GRMPlate_Small"); rl:SetTextColor(C.dim); rl:SetText("ПОВОРОТ (градусы × шаг)")
-        stepBtn(body, "P▼", 10, 196, 60, 30, function() nudge(plate, "turn", "p", -step) end)
-        stepBtn(body, "P▲", 74, 196, 60, 30, function() nudge(plate, "turn", "p", step) end)
-        stepBtn(body, "Y◀", 138, 196, 60, 30, function() nudge(plate, "turn", "y", -step) end)
-        stepBtn(body, "Y▶", 202, 196, 60, 30, function() nudge(plate, "turn", "y", step) end)
-        stepBtn(body, "R↶", 266, 196, 44, 30, function() nudge(plate, "turn", "r", -step) end)
+        stepBtn(body, "P▼", 10, 190, 60, 30, function() nudge(plate, "turn", "p", -step) end)
+        stepBtn(body, "P▲", 74, 190, 60, 30, function() nudge(plate, "turn", "p", step) end)
+        stepBtn(body, "Y◀", 138, 190, 60, 30, function() nudge(plate, "turn", "y", -step) end)
+        stepBtn(body, "Y▶", 202, 190, 60, 30, function() nudge(plate, "turn", "y", step) end)
+        stepBtn(body, "R↶", 266, 190, 44, 30, function() nudge(plate, "turn", "r", -step) end)
 
         -- действия
         local auto = button(body, "АВТО", C.green, function()
             net.Start(PL.Net.ACT) net.WriteString("attach_auto")
                 net.WriteTable({ ent = plate:EntIndex() }) net.SendToServer()
         end)
-        auto:SetPos(10, 236) auto:SetSize(104, 30)
+        auto:SetPos(10, 270) auto:SetSize(104, 30)
 
         --[[ Сохранить положение для ВСЕХ машин этого класса
              (simfphys_mafia2_jeep и т.п.). Требует права регистрации
@@ -3478,15 +3493,15 @@ if CLIENT then
                 end,
                 "Отмена", function() end)
         end)
-        allClass:SetPos(120, 236) allClass:SetSize(120, 30)
+        allClass:SetPos(120, 270) allClass:SetSize(120, 30)
 
         local detach = button(body, "СНЯТЬ", C.red, function()
             net.Start(PL.Net.ACT) net.WriteString("detach")
                 net.WriteTable({ ent = plate:EntIndex() }) net.SendToServer()
             closeEditor()
         end)
-        detach:SetPos(246, 236) detach:SetSize(94, 30)
-        local hint = vgui.Create("DLabel", body); hint:SetPos(10, 272); hint:SetSize(330, 18)
+        detach:SetPos(246, 270) detach:SetSize(94, 30)
+        local hint = vgui.Create("DLabel", body); hint:SetPos(10, 308); hint:SetSize(330, 18)
         hint:SetFont("GRMPlate_Small"); hint:SetTextColor(C.dim)
         hint:SetText("F=вперёд R=назад. Позиция запоминается на этой машине.")
     end

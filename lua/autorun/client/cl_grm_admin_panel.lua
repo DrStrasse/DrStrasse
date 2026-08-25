@@ -1055,13 +1055,27 @@ local function buildChars(pnl)
     end)
     find:SetPos(442, 50) find:SetSize(110, 28)
 
+<<<<<<< HEAD
     -- Колонки: имя/фракция/модель занимают левую часть, кнопки справа.
     local COL_NAME, COL_FAC, COL_MODEL = 240, 150, 220
     local BTN = 62
+=======
+    local hint = vgui.Create("DLabel", head)
+    hint:SetFont("GRMAdm_Small"); hint:SetTextColor(C.dim)
+    hint:SetText("В колонке «МОДЕЛЬ» — только имя файла; полный путь открывается кнопкой.")
+    hint:SetPos(570, 56) hint:SetSize(520, 20)
+
+    -- Резиновая сетка: блок кнопок фиксированной ширины справа.
+    local BTN_W, BTN_H, BTN_GAP = 78, 28, 6
+    local BTN_BLOCK = BTN_W * 5 + BTN_GAP * 4
+    local COL_FAC, COL_MODEL = 210, 230
+    local ROW_H = 40
+>>>>>>> 692bb00 (HUD card: add player ID and session timer under avatar; move wanted badge to top; anim studio categories)
 
     local scroll = vgui.Create("DScrollPanel", pnl)
     scroll:Dock(FILL)
 
+<<<<<<< HEAD
     local function headerRow(parent)
         local bar = vgui.Create("DPanel", parent)
         bar:Dock(TOP) bar:SetTall(22) bar:DockMargin(0, 0, 6, 4)
@@ -1071,12 +1085,94 @@ local function buildChars(pnl)
             draw.SimpleText("ФРАКЦИЯ", "GRMAdm_Small", COL_NAME + 10, 4, C.dim)
             draw.SimpleText("МОДЕЛЬ", "GRMAdm_Small", COL_NAME + COL_FAC + 10, 4, C.dim)
         end
+=======
+    local function slotRow(parent, acc, sl, i, total)
+        local row = vgui.Create("DPanel", parent)
+        row:Dock(TOP) row:DockMargin(12, 0, 12, i == total and 6 or 4) row:SetTall(ROW_H)
+        row.Paint = function(self, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, C.cardLight)
+            local xF = w - BTN_BLOCK - COL_FAC - COL_MODEL
+            local xM = w - BTN_BLOCK - COL_MODEL
+            if not sl.exists then
+                draw.SimpleText("Пустой слот " .. i, "GRMAdm_Body", 10, h / 2 - 8, C.dim)
+                draw.SimpleText("—", "GRMAdm_Small", xF, h / 2 - 7, C.dim)
+                draw.SimpleText("—", "GRMAdm_Small", xM, h / 2 - 7, C.dim)
+                return
+            end
+            draw.SimpleText(sl.name ~= "" and sl.name or ("Слот " .. i), "GRMAdm_Body", 10, h / 2 - 8, C.text)
+            if sl.active then
+                draw.SimpleText("● активен", "GRMAdm_Small", 260, h / 2 - 7, C.green)
+            end
+            local fac = (sl.factionName ~= "" and sl.factionName) or "гражданин"
+            draw.SimpleText(fac, "GRMAdm_Small", xF, h / 2 - 7,
+                (sl.factionName ~= "") and C.gold or C.dim)
+            local m = sl.model ~= "" and (string.match(sl.model, "([^/\\]+)$") or sl.model) or "по умолчанию"
+            draw.SimpleText(m, "GRMAdm_Small", xM, h / 2 - 7, C.dim)
+        end
+
+        if not sl.exists then return row end
+
+        local function q() return search:GetValue() end
+        local bxs = {}
+        local function placeButtons()
+            local w = row:GetWide()
+            for k, b in ipairs(bxs) do
+                b:SetPos(w - BTN_BLOCK + (k - 1) * (BTN_W + BTN_GAP), (ROW_H - BTN_H) / 2)
+            end
+        end
+
+        local rename = btn(row, "ИМЯ", C.accent, function()
+            Derma_StringRequest("РП-имя", "Новое имя и фамилия для " .. tostring(sl.id),
+                sl.name or "", function(text)
+                    act("char_rename", "", { sid = acc.sid, slot = sl.id, name = text, query = q() })
+                end)
+        end) rename:SetSize(BTN_W, BTN_H); bxs[#bxs + 1] = rename
+
+        local mdl = btn(row, "МОДЕЛЬ", C.cardHov, function()
+            Derma_StringRequest("Модель персонажа",
+                "Путь к модели (.mdl). Пусто — снять принудительную.",
+                tostring(sl.model or ""), function(text)
+                    act("char_model", "", { sid = acc.sid, slot = sl.id, model = string.Trim(text or ""), query = q() })
+                end)
+        end) mdl:SetSize(BTN_W, BTN_H); bxs[#bxs + 1] = mdl
+
+        local fac = btn(row, "ФРАКЦИЯ", C.cardHov, function()
+            Derma_StringRequest("Фракция",
+                "Ключ фракции (как в /factions). Пусто = гражданский (без сброса прав).",
+                tostring(sl.factionName or ""), function(text)
+                    act("char_faction", "", { sid = acc.sid, slot = sl.id, faction = string.Trim(text or ""), query = q() })
+                end)
+        end) fac:SetSize(BTN_W, BTN_H); bxs[#bxs + 1] = fac
+
+        local accb = btn(row, "ДОСТУП", C.cardHov, function()
+            Derma_StringRequest("Персональный доступ",
+                "Capability (например wanted.civil.edit). Префикс «-» снимает право.",
+                "", function(text)
+                    local v = string.Trim(text or "")
+                    local allow = not string.StartWith(v, "-")
+                    local cap = allow and v or string.sub(v, 2)
+                    act("char_access", "", { sid = acc.sid, slot = sl.id, capability = cap, allow = allow, query = q() })
+                end)
+        end) accb:SetSize(BTN_W, BTN_H); bxs[#bxs + 1] = accb
+
+        local del = btn(row, "УДАЛИТЬ", C.red, function()
+            Derma_Query(("Удалить персонажа «%s» (%s)?\nИмя, модель, фракция и персональные права очищены.")
+                :format(sl.name ~= "" and sl.name or sl.id, sl.id),
+                "Удаление персонажа", "Удалить", function()
+                    act("char_delete", "", { sid = acc.sid, slot = sl.id, query = q() })
+                end, "Отмена")
+        end) del:SetSize(BTN_W, BTN_H); bxs[#bxs + 1] = del
+
+        row.PerformLayout = placeButtons
+        return row
+>>>>>>> 692bb00 (HUD card: add player ID and session timer under avatar; move wanted badge to top; anim studio categories)
     end
 
     local function paintRoster()
         if not IsValid(scroll) then return end
         scroll:Clear()
         local accounts = istable(CHAR_ROSTER.accounts) and CHAR_ROSTER.accounts or {}
+
         if #accounts == 0 then
             local empty = vgui.Create("DPanel", scroll)
             empty:Dock(TOP) empty:SetTall(70)
@@ -1089,8 +1185,13 @@ local function buildChars(pnl)
         end
 
         for _, acc in ipairs(accounts) do
+            local slots = acc.slots or {}
+            local rows = 0
+            for _ in ipairs(slots) do rows = rows + 1 end
+
             local card = vgui.Create("DPanel", scroll)
             card:Dock(TOP) card:DockMargin(0, 0, 6, 8)
+<<<<<<< HEAD
             local rows = 0
             for _ in ipairs(acc.slots or {}) do rows = rows + 1 end
             card:SetTall(34 + rows * 42)
@@ -1167,7 +1268,35 @@ local function buildChars(pnl)
                     end)
                     del:SetPos(x + 6 + (BTN + 4) * 4, 5) del:SetSize(76, 28)
                 end
+=======
+            card:SetTall(36 + (rows > 0 and (22 + 4) or 0) + rows * (ROW_H + 4) + 6)
+            card.Paint = function(_, w, h)
+                draw.RoundedBox(8, 0, 0, w, h, C.card)
+                draw.SimpleText(acc.nick ~= "" and acc.nick or acc.sid, "GRMAdm_Sub", 14, 8, C.text)
+                draw.SimpleText(acc.online and "в сети" or "офлайн", "GRMAdm_Small",
+                    14 + ((acc.nick ~= "" and acc.nick or acc.sid):len() * 8 + 14), 12,
+                    acc.online and C.green or C.dim)
+                draw.SimpleText("SteamID64: " .. tostring(acc.sid), "GRMAdm_Small", 14, 26, C.dim)
             end
+
+            if rows == 0 then goto nextacc end
+
+            local bar = vgui.Create("DPanel", card)
+            bar:Dock(TOP) bar:DockMargin(12, 36, 12, 4) bar:SetTall(20)
+            bar.Paint = function(self, w, h)
+                draw.RoundedBox(6, 0, 0, w, h, Color(28, 36, 50))
+                draw.SimpleText("СЛОТ / ИМЯ", "GRMAdm_Small", 10, 3, C.dim)
+                draw.SimpleText("ФРАКЦИЯ", "GRMAdm_Small",
+                    w - BTN_BLOCK - COL_FAC - COL_MODEL, 3, C.dim)
+                draw.SimpleText("МОДЕЛЬ", "GRMAdm_Small",
+                    w - BTN_BLOCK - COL_MODEL, 3, C.dim)
+>>>>>>> 692bb00 (HUD card: add player ID and session timer under avatar; move wanted badge to top; anim studio categories)
+            end
+
+            for i, sl in ipairs(slots) do
+                slotRow(card, acc, sl, i, rows)
+            end
+            ::nextacc::
         end
     end
 
@@ -1185,7 +1314,7 @@ local function buildChars(pnl)
 end
 
 -----------------------------------------------------------------------
--- ОКНО
+-- OKNO
 -----------------------------------------------------------------------
 function AD.OpenPanel()
     if not can("menu.open") then

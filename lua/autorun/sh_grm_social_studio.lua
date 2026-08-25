@@ -166,6 +166,50 @@ if SERVER then
             S.SyncCatalog()
             return
         end
+        if op == "delcat" then
+            local id = slug(net.ReadString())
+            if id == "general" then return end
+            S.CatList = S.CatList or {}
+            for i = #S.CatList, 1, -1 do if S.CatList[i].id == id then table.remove(S.CatList, i) end end
+            -- позы удалённой категории уходят в «Общее»
+            for _, p in ipairs(S.Catalog or {}) do
+                if p.cat == id then p.cat, p.catName = "general", "Общее" end
+            end
+            if #S.CatList == 0 then S.CatList = { { id = "general", name = "Общее" } } end
+            S.SaveCatalog()
+            S.SyncCatalog()
+            return
+        end
+        if op == "renamecat" then
+            local id = slug(net.ReadString())
+            local name = string.sub(string.Trim(tostring(net.ReadString() or "")), 1, 32)
+            if name == "" then return end
+            for i = 1, #(S.CatList or {}) do
+                if S.CatList[i].id == id then
+                    S.CatList[i].name = name
+                    for _, p in ipairs(S.Catalog or {}) do if p.cat == id then p.catName = name end end
+                    break
+                end
+            end
+            S.SaveCatalog()
+            S.SyncCatalog()
+            return
+        end
+        if op == "movepose" then
+            local id = slug(net.ReadString())
+            local toCat = slug(net.ReadString())
+            local catName = ""
+            for i = 1, #(S.CatList or {}) do
+                if S.CatList[i].id == toCat then catName = S.CatList[i].name break end
+            end
+            if catName == "" then return end
+            for _, p in ipairs(S.Catalog or {}) do
+                if p.id == id then p.cat, p.catName = toCat, catName break end
+            end
+            S.SaveCatalog()
+            S.SyncCatalog()
+            return
+        end
     end)
 
     hook.Add("CalcMainActivity", "GRM_SocStudio_Act", function(ply)
@@ -541,11 +585,30 @@ local function openStudio()
         if not sel then catBox:AddChoice("Общее", "general", true) end
     end
     ST.rebuildCats()
-    local catNew = vgui.Create("DTextEntry", left)
-    catNew:SetPos(182, 68) catNew:SetSize(54, 24) catNew:SetPlaceholderText("+кат")
-    catNew.OnEnter = function(s)
-        local n = string.Trim(s:GetValue() or "")
-        if n ~= "" then sendAct("addcat", n) s:SetText("") end
+    local catNew = vgui.Create("DButton", left)
+    catNew:SetPos(182, 68) catNew:SetSize(88, 24) catNew:SetText("")
+    catNew.Paint = function(s, w, h)
+        draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(60, 150, 90) or Color(46, 110, 70))
+        draw.SimpleText("+ КАТЕГОРИЯ", "GRMSocEd_B", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
+    catNew.DoClick = function()
+        Derma_StringRequest("Новая категория", "Название категории поз", "", function(n)
+            n = string.Trim(n or "")
+            if n ~= "" then sendAct("addcat", n) end
+        end)
+    end
+
+    local catDel = vgui.Create("DButton", left)
+    catDel:SetPos(10, 126) catDel:SetSize(260, 20) catDel:SetText("")
+    catDel.Paint = function(s, w, h)
+        draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(150, 60, 60) or Color(90, 50, 50))
+        draw.SimpleText("Удалить текущую категорию", "GRMSocEd_B", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
+    catDel.DoClick = function()
+        local id = IsValid(catBox) and catBox:GetOptionData(catBox:GetSelectedID()) or "general"
+        if id == "general" then return end
+        Derma_Query("Удалить категорию и перенести позы в «Общее»?", "Категория",
+            "Удалить", function() sendAct("delcat", id) end, "Отмена", function() end)
     end
 
     local stance = vgui.Create("DComboBox", left)
@@ -571,19 +634,46 @@ local function openStudio()
     seq.OnSelect = function(_, _, _, v) sendAct("seq", v or "") end
 
     local list = vgui.Create("DListView", left)
-    list:SetPos(10, 128) list:SetSize(260, 160)
+    list:SetPos(10, 152) list:SetSize(260, 136)
     list:AddColumn("Сохранённые позы")
     list:SetMultiSelect(false)
     function ST.rebuildList()
         if not IsValid(list) then return end
         list:Clear()
+        local keep = IsValid(catBox) and catBox:GetOptionData(catBox:GetSelectedID() or 0) or "all"
+        local cats = ST.cats or {}
+        local catNameOf = function(id)
+            for _, c in ipairs(cats) do if c.id == id then return c.name end end
+            return id
+        end
         for _, p in ipairs(ST.catalog or {}) do
-            local cat = p.catName or p.cat or "общее"
-            local line = list:AddLine((p.players ~= false and "● " or "○ ") .. (p.name or p.id) .. "  [" .. tostring(cat) .. "]")
-            line._id = p.id
+            if keep == "all" or (p.cat or "general") == keep then
+                local cat = p.catName or p.cat or "общее"
+                local line = list:AddLine((p.players ~= false and "● " or "○ ") .. (p.name or p.id) .. "  [" .. tostring(cat) .. "]")
+                line._id = p.id
+                line._cat = p.cat or "general"
+            end
         end
     end
     ST.rebuildList()
+
+    -- контекстное меню позы: загрузить / переместить / удалить
+    list.OnRowRightClick = function(_, _, line)
+        if not (line and line._id) then return end
+        local menu = DermaMenu()
+        menu:AddOption("Загрузить", function() loadPose(line._id) end)
+        local move = menu:AddSubMenu("Переместить в…")
+        for _, c in ipairs(ST.cats or { { id = "general", name = "Общее" } }) do
+            move:AddOption(c.name or c.id, function()
+                sendAct("movepose", line._id, c.id)
+            end)
+        end
+        menu:AddOption("Удалить", function()
+            Derma_Query("Удалить позу «" .. tostring(line._id) .. "»?", "Удаление",
+                "Удалить", function() sendAct("delete", line._id) end, "Отмена", function() end)
+        end)
+        menu:Open()
+    end
 
     local function loadPose(id)
         for _, p in ipairs(ST.catalog or {}) do
@@ -709,6 +799,8 @@ local function openStudio()
         ST.refreshSliders()
     end)
     mk("СОХРАНИТЬ ПОЗУ", Color(50, 150, 90), yy + 88, function()
+        local catId = IsValid(catBox) and catBox:GetOptionData(catBox:GetSelectedID()) or "general"
+        local catName = IsValid(catBox) and catBox:GetValue() or "Общее"
         sendAct("save", {
             id = idE:GetValue(),
             name = nameE:GetValue(),
@@ -719,6 +811,8 @@ local function openStudio()
             stance = stance:GetOptionData(stance:GetSelectedID()) or "idle",
             sequence = seq:GetOptionData(seq:GetSelectedID()) or "",
             bones = ST.bones,
+            cat = catId,
+            catName = catName,
         })
     end)
     mk("УДАЛИТЬ ВЫБРАННУЮ", Color(180, 70, 70), yy + 124, function()
