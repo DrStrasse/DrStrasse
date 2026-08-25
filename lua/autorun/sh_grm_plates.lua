@@ -572,11 +572,22 @@ function PL.Get(number)
     return PL.Data.plates and PL.Data.plates[number] or nil
 end
 
-function PL.ListFor(charKey)
-    charKey = tostring(charKey or "")
+function PL.FactionOwnerKey(name)
+    name = tostring(name or "")
+    if name == "" then return "" end
+    if string.sub(name, 1, 8) == "faction:" then return name end
+    return "faction:" .. name
+end
+
+function PL.IsFactionOwner(key)
+    return string.sub(tostring(key or ""), 1, 8) == "faction:"
+end
+
+function PL.ListFor(ownerKey)
+    ownerKey = tostring(ownerKey or "")
     local out = {}
     for number, rec in pairs(PL.Data.plates or {}) do
-        if istable(rec) and tostring(rec.ownerKey or "") == charKey then
+        if istable(rec) and tostring(rec.ownerKey or "") == ownerKey then
             rec.number = number
             out[#out + 1] = rec
         end
@@ -585,8 +596,24 @@ function PL.ListFor(charKey)
     return out
 end
 
-function PL.CountFor(charKey)
-    return #PL.ListFor(charKey)
+--- Личные знаки персонажа плюс знаки его организации (лимит личный не ест фракционные).
+function PL.ListVisibleFor(charKey, factionName)
+    local seen, out = {}, {}
+    local function add(list)
+        for _, rec in ipairs(list or {}) do
+            local n = tostring(rec.number or "")
+            if n ~= "" and not seen[n] then seen[n] = true out[#out + 1] = rec end
+        end
+    end
+    add(PL.ListFor(charKey))
+    local fk = PL.FactionOwnerKey(factionName)
+    if fk ~= "" then add(PL.ListFor(fk)) end
+    table.sort(out, function(a, b) return tostring(a.number) < tostring(b.number) end)
+    return out
+end
+
+function PL.CountFor(ownerKey)
+    return #PL.ListFor(ownerKey)
 end
 
 --- Сколько знаков одному персонажу (0 — без ограничения).
@@ -831,7 +858,8 @@ if SERVER then
         if ownerKey == "" then return nil, "Не указан владелец" end
 
         local limit = PL.Limit()
-        if limit > 0 and PL.CountFor(ownerKey) >= limit then
+        -- Фракционный пул не упирается в личный лимит персонажа.
+        if limit > 0 and not PL.IsFactionOwner(ownerKey) and PL.CountFor(ownerKey) >= limit then
             return nil, ("У владельца уже %d знаков — это предел"):format(limit)
         end
 
@@ -988,10 +1016,7 @@ if SERVER then
         end
 
         local rec, ply = garageRecordOf(veh)
-        if istable(rec) then
-            rec.plates = layout
-            rec.plate = layout[1] and tostring(layout[1].number or "") or ""
-            if GRM.VehicleDealer and GRM.VehicleDealer.SaveGarages then GRM.VehicleDealer.SaveGarages() end
+        if istablealer and GRM.VehicleDealer.SaveGarages then GRM.VehicleDealer.SaveGarages() end
         end
 
         -- Служебный автопарк: номер тоже должен читаться из записи единицы.
@@ -1143,7 +1168,11 @@ if SERVER then
         if not (IsValid(ply) and IsValid(plate)) then return false end
         if ply:IsSuperAdmin() then return true, "superadmin" end
         local rec = PL.Get(plate:GetNWString("GRM_Plate", ""))
-        if rec and tostring(rec.ownerKey) == charKey(ply) then return true, "owner" end
+        if rec then
+            if tostring(rec.ownerKey) == charKey(ply) then return true, "owner" end
+            local fac = IsValid(ply) and ply:GetNWString("GRM_Faction", "") or ""
+            if fac ~= "" and tostring(rec.ownerKey) == PL.FactionOwnerKey(fac) then return true, "faction" end
+        end
         if PL.CanIssue(ply) then return true, "police" end
         return false
     end
@@ -1284,6 +1313,9 @@ if SERVER then
             if not plateRec then return end
             done[number] = true
             local lp = Vector(tonumber(pos and pos.x) or 0, tonumber(pos and pos.y) or 0, tonumber(pos and pos.z) or 0)
+            local la = Angle(tonumber(ang and          if not plateRec then return end
+            done[number] = true
+            local lp = Vector(tonumber(pos and pos.x) or 0, tonumber(pos and pos.y) or 0, tonumber(pos and pos.z) or 0)
             local la = Angle(tonumber(ang and ang.p) or 0, tonumber(ang and ang.y) or 0, tonumber(ang and ang.r) or 0)
             local plate = PL.SpawnPlate(number, ent:LocalToWorld(lp), ent:LocalToWorldAngles(la), ply)
             if IsValid(plate) and PL.Attach(plate, ent, ply) then restored = restored + 1 end
@@ -1412,15 +1444,59 @@ if SERVER then
            • если у энтити есть WorldSpaceAABB — считаем по мировым
              габаритам, чтобы точка была на корме даже со смещённым
              origin. ]]
-    function PL.MountPointFor(veh)
-        if not IsValid(veh) then return nil, "Транспорт не найден" end
-        if not (isfunction(veh.OBBMins) and isfunction(veh.OBBMaxs) and isfunction(veh.LocalToWorld)) then
-            return nil, "У модели нет габаритов"
+    -- Точка на кузове: луч снаружи внутрь. OBB у simfphys часто врёт,
+    -- из-за этого знак оказывался на земле за машиной.
+    local function hullEndHit(veh, dir)
+        if not IsValid(veh) then return nil end
+        local wmin, wmax = veh:WorldSpaceAABB()
+        local c = (wmin + wmax) * 0.5
+        local h = math.max(8, wmax.z - wmin.z)
+        c.z = wmin.z + math.Clamp(h * 0.30, 14, 42)
+        dir = Vector(dir.x, dir.y, 0)
+        if dir:Length() < 0.05 then return nil end
+        dir:Normalize()
+        local span = math.max(wmax.x - wmin.x, wmax.y - wmin.y) * 0.75 + 90
+        local tr = util.TraceLine({
+            start = c + dir * span,
+            endpos = c,
+            filter = function(ent)
+                if not IsValid(ent) then return true end
+                if ent == veh then return false end
+                local par = ent.GetParent and ent:GetParent() or nil
+                if par == veh then return false end
+                return true
+            end,
+        })
+        local hitUs = IsValid(tr.Entity) and (tr.Entity == veh or vehicleBase(tr.Entity) == veh)
+        if tr.Hit and hitUs and tr.HitNormal:Length() > 0.2 then
+            local n = Vector(tr.HitNormal.x, tr.HitNormal.y, tr.HitNormal.z)
+            n:Normalize()
+            return { pos = tr.HitPos, normal = n, up = veh:GetUp() }
         end
+        local face = Vector(c.x, c.y, c.z) + dir * (math.max(wmax.x - wmin.x, wmax.y - wmin.y) * 0.48)
+        return { pos = face, normal = -dir, up = veh:GetUp() }
+    end
 
-        -- 1) Настраиваемый layout по классу/модели (сохраняется в render.json).
+    function PL.MountEnds(veh)
+        if not IsValid(veh) then return nil, nil end
+        local fwd = veh:GetForward()
+        fwd.z = 0
+        if fwd:Length() < 0.15 and isfunction(veh.LocalToWorld) then
+            local wx = veh:LocalToWorld(Vector(1, 0, 0)) - veh:GetPos()
+            wx.z = 0
+            local wy = veh:LocalToWorld(Vector(0, 1, 0)) - veh:GetPos()
+            wy.z = 0
+            fwd = (wx:Length() >= wy:Length()) and wx or wy
+        end
+        if fwd:Length() < 0.05 then fwd = Vector(1, 0, 0) else fwd:Normalize() end
+        return hullEndHit(veh, fwd), hullEndHit(veh, -fwd)
+    end
+
+    function PL.MountPointFor(veh, wantFront, nearPos)
+        if not IsValid(veh) then return nil, "Транспорт не найден" end
+
         local layout = PL.LayoutFor and PL.LayoutFor(veh)
-        if istable(layout) and layout.enabled ~= false then
+        if istable(layout) and layout.enabled ~= false and isfunction(veh.LocalToWorld) then
             local p = Vector(layout.pos.x, layout.pos.y, layout.pos.z)
             local world = veh:LocalToWorld(p)
             local nrm = (veh:LocalToWorld(Vector(layout.normal.x, layout.normal.y, layout.normal.z)) - veh:GetPos()):GetNormalized()
@@ -1428,15 +1504,14 @@ if SERVER then
             return { pos = world, normal = nrm, up = up, layout = layout }
         end
 
-        -- 2) Автоматика: задний борт по локальной -X.
-        local mins, maxs = veh:OBBMins(), veh:OBBMaxs()
-        local h = (maxs.z - mins.z)
-        local localPos = Vector(mins.x + 1, 0, mins.z + h * 0.32)
-        local pos = veh:LocalToWorld(localPos)
-        local normal = (veh:LocalToWorld(Vector(-1, 0, 0)) - veh:GetPos()):GetNormalized()
-        local up = veh:GetUp()
-
-        return { pos = pos, normal = normal, up = up }
+        local front, rear = PL.MountEnds(veh)
+        if wantFront == true then return front or rear end
+        if wantFront == false then return rear or front end
+        if nearPos and front and rear then
+            if nearPos:DistToSqr(front.pos) < nearPos:DistToSqr(rear.pos) then return front end
+            return rear
+        end
+        return rear or front
     end
 
     --- Повесить знак на задний борт машины по её габаритам.
@@ -1591,6 +1666,21 @@ if SERVER then
         return out
     end
 
+    local function factionList()
+        local out = {}
+        for name, f in pairs(istable(Factions) and Factions or {}) do
+            if istable(f) then
+                out[#out + 1] = {
+                    key = tostring(name),
+                    name = tostring(f.DisplayName or f.displayName or name),
+                    tag = tostring(f.Tag or ""),
+                }
+            end
+        end
+        table.sort(out, function(a, b) return tostring(a.name) < tostring(b.name) end)
+        return out
+    end
+
     local function packRec(rec)
         if not istable(rec) then return nil end
         return {
@@ -1612,7 +1702,8 @@ if SERVER then
          подряд схлопывается в одну отправку (GRM.Perf.Coalesce). ]]
     local function buildSnapshot(ply, found)
         local mine = {}
-        for _, rec in ipairs(PL.ListFor(charKey(ply))) do mine[#mine + 1] = packRec(rec) end
+        local facName = ply:GetNWString("GRM_Faction", "")
+        for _, rec in ipairs(PL.ListVisibleFor(charKey(ply), facName)) do mine[#mine + 1] = packRec(rec) end
         local officer, why = PL.IssueReason(ply)
         return {
             mine = mine,
@@ -1620,7 +1711,9 @@ if SERVER then
             officerReason = tostring(why or ""),
             youKey = charKey(ply),
             youName = ply:GetNWString("GRM_RPName", ply:Nick()),
+            youFaction = facName,
             online = officer and onlineList() or {},
+            factions = officer and factionList() or {},
             found = found and { packRec(found) } or {},
         }
     end
@@ -1747,7 +1840,9 @@ if SERVER then
             local rec = PL.Get(data.number)
             if not rec then notify(ply, "Номер не найден.") return end
             local mine = tostring(rec.ownerKey) == charKey(ply)
-            if not (mine or PL.CanIssue(ply)) then notify(ply, "Это чужой номер.") return end
+            local fac = ply:GetNWString("GRM_Faction", "")
+            local org = fac ~= "" and tostring(rec.ownerKey) == PL.FactionOwnerKey(fac)
+            if not (mine or org or PL.CanIssue(ply)) then notify(ply, "Это чужой номер.") return end
             if rec.status ~= "active" then
                 notify(ply, ("Номер %s: %s — бланк не выдаётся."):format(
                     PL.FormatNumber(rec.number, rec.type), PL.Statuses[rec.status] or rec.status))
@@ -2113,7 +2208,8 @@ if CLIENT then
     PL.Colors = C
 
     PL.Mine, PL.Online, PL.Found, PL.IsOfficer = {}, {}, {}, false
-    PL.OfficerReason, PL.YouKey, PL.YouName = "", "", ""
+    PL.OfficerReason, PL.YouKey, PL.YouName, PL.YouFaction = "", "", "", ""
+    PL.Factions = PL.Factions or {}
 
     local function act(name, data)
         net.Start(PL.Net.ACT)
@@ -2405,42 +2501,89 @@ if CLIENT then
             -- ── выдача (только служба) ──────────────────────────────
             if PL.IsOfficer then
                 local issue = vgui.Create("DPanel", content)
-                issue:Dock(TOP) issue:SetTall(150) issue:DockMargin(0, 8, 4, 8)
+                issue:Dock(TOP) issue:SetTall(196) issue:DockMargin(0, 8, 4, 8)
                 issue.Paint = function(_, w, h)
                     draw.RoundedBox(8, 0, 0, w, h, C.card)
                     draw.SimpleText("РЕГИСТРАЦИЯ НОВОГО ЗНАКА", "GRMPlate_Body", 14, 12, C.green, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    draw.SimpleText("Номер можно оставить пустым — система выдаст свободный по серии типа",
+                    draw.SimpleText("Кому: себе, игроку или организации. Фракционные знаки не занимают личный лимит.",
                         "GRMPlate_Small", 14, 32, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                 end
 
+                local ownerKind = tostring(PL.Form.issue_kind or "player")
+                local kindWho = combo(issue)
+                kindWho:SetPos(14, 54) kindWho:SetSize(180, 30)
+                kindWho:AddChoice("Игроку", "player", ownerKind ~= "faction")
+                kindWho:AddChoice("Организации", "faction", ownerKind == "faction")
+
                 local who = combo(issue)
-                who:SetPos(14, 54) who:SetSize(250, 30)
-                local pickedKey = ""
-                for _, p in ipairs(PL.Online) do
-                    local mineOne = (p.key == PL.YouKey)
-                    who:AddChoice(("%s [%s]"):format(tostring(p.name),
-                        tostring(p.faction ~= "" and p.faction or "без организации")), p.key, mineOne)
-                    if mineOne then pickedKey = p.key end
+                who:SetPos(202, 54) who:SetSize(250, 30)
+                local pickedKey = tostring(PL.Form.issue_owner or "")
+                local pickedFac = tostring(PL.Form.issue_faction or PL.YouFaction or "")
+
+                local function refillWho()
+                    who:Clear()
+                    if ownerKind == "faction" then
+                        who:SetValue("Организация...")
+                        for _, f in ipairs(PL.Factions or {}) do
+                            local mineOrg = (f.key == PL.YouFaction)
+                            who:AddChoice(("%s%s"):format(f.name, f.tag ~= "" and (" [" .. f.tag .. "]") or ""),
+                                f.key, mineOrg or f.key == pickedFac)
+                            if mineOrg and pickedFac == "" then pickedFac = f.key end
+                        end
+                    else
+                        who:SetValue("Кому выдать...")
+                        for _, p in ipairs(PL.Online) do
+                            local mineOne = (p.key == PL.YouKey)
+                            who:AddChoice(("%s [%s]"):format(tostring(p.name),
+                                tostring(p.faction ~= "" and p.faction or "без организации")), p.key, mineOne or p.key == pickedKey)
+                            if mineOne and pickedKey == "" then pickedKey = p.key end
+                        end
+                    end
                 end
-                if pickedKey == "" then who:SetValue("Кому выдать...") end
+                refillWho()
+                kindWho.OnSelect = function(_, _, _, val)
+                    ownerKind = tostring(val or "player")
+                    PL.Form.issue_kind = ownerKind
+                    refillWho()
+                end
                 who.OnSelect = function(_, _, _, val)
-                    pickedKey = tostring(val or "")
-                    PL.Form.issue_owner = pickedKey
-                end
-                if PL.Form.issue_owner and PL.Form.issue_owner ~= "" then
-                    pickedKey = PL.Form.issue_owner
+                    if ownerKind == "faction" then
+                        pickedFac = tostring(val or "")
+                        PL.Form.issue_faction = pickedFac
+                    else
+                        pickedKey = tostring(val or "")
+                        PL.Form.issue_owner = pickedKey
+                    end
                 end
 
-                -- Быстрый путь: зарегистрировать номер на себя.
                 local selfBtn = button(issue, "СЕБЕ", C.cardHov, function()
+                    ownerKind = "player"
+                    PL.Form.issue_kind = "player"
+                    kindWho:SetValue("Игроку")
+                    refillWho()
                     if PL.YouKey == "" then return end
                     pickedKey = PL.YouKey
                     who:SetValue(PL.YouName ~= "" and PL.YouName or "Вы")
                 end)
-                selfBtn:SetPos(270, 54) selfBtn:SetSize(74, 30)
+                selfBtn:SetPos(460, 54) selfBtn:SetSize(74, 30)
+
+                local orgBtn = button(issue, "МОЕЙ ОРГ.", C.cardHov, function()
+                    if (PL.YouFaction or "") == "" then
+                        notification.AddLegacy("Вы не в организации", NOTIFY_ERROR, 3)
+                        return
+                    end
+                    ownerKind = "faction"
+                    PL.Form.issue_kind = "faction"
+                    kindWho:SetValue("Организации")
+                    pickedFac = PL.YouFaction
+                    PL.Form.issue_faction = pickedFac
+                    refillWho()
+                    who:SetValue(PL.YouFaction)
+                end)
+                orgBtn:SetPos(540, 54) orgBtn:SetSize(110, 30)
 
                 local kind = combo(issue)
-                kind:SetPos(354, 54) kind:SetSize(200, 30)
+                kind:SetPos(14, 94) kind:SetSize(250, 30)
                 local pickedType = "civil"
                 for _, t in ipairs(PL.TypeList()) do
                     kind:AddChoice(t.name .. "  (" .. t.pattern .. ")", t.key, t.key == "civil")
@@ -2452,22 +2595,33 @@ if CLIENT then
                 if PL.Form.issue_type then pickedType = PL.Form.issue_type end
 
                 local numEntry = entry(issue, "Номер вручную (не обязательно)", "issue_number")
-                numEntry:SetPos(564, 54) numEntry:SetSize(220, 30)
+                numEntry:SetPos(272, 94) numEntry:SetSize(220, 30)
 
                 local vehEntry = entry(issue, "Транспорт: марка / класс (для картотеки)", "issue_vehicle")
-                vehEntry:SetPos(14, 94) vehEntry:SetSize(540, 30)
+                vehEntry:SetPos(14, 136) vehEntry:SetSize(478, 30)
 
                 local giveBtn = button(issue, "ЗАРЕГИСТРИРОВАТЬ", C.green, function()
-                    if pickedKey == "" then
-                        notification.AddLegacy("Выберите владельца", NOTIFY_ERROR, 3)
-                        return
+                    if ownerKind == "faction" then
+                        if pickedFac == "" then
+                            notification.AddLegacy("Выберите организацию", NOTIFY_ERROR, 3)
+                            return
+                        end
+                        act("issue", {
+                            ownerKind = "faction", faction = pickedFac, type = pickedType,
+                            number = numEntry:GetValue() or "", vehicle = vehEntry:GetValue() or "",
+                        })
+                    else
+                        if pickedKey == "" then
+                            notification.AddLegacy("Выберите владельца", NOTIFY_ERROR, 3)
+                            return
+                        end
+                        act("issue", {
+                            ownerKind = "player", ownerKey = pickedKey, type = pickedType,
+                            number = numEntry:GetValue() or "", vehicle = vehEntry:GetValue() or "",
+                        })
                     end
-                    act("issue", {
-                        ownerKey = pickedKey, type = pickedType,
-                        number = numEntry:GetValue() or "", vehicle = vehEntry:GetValue() or "",
-                    })
                 end)
-                giveBtn:SetPos(564, 94) giveBtn:SetSize(220, 30)
+                giveBtn:SetPos(500, 136) giveBtn:SetSize(220, 30)
 
             end
         end
@@ -2631,6 +2785,37 @@ if CLIENT then
         if number == "" then return end
 
         local origin = ent:GetPos()
+        local dist = lp:GetPos():Distance(origin)
+        if dist > 400 then return end
+
+        local kind = ent:GetNWString("GRM_PlateType", "civil")
+        local status = ent:GetNWString("GRM_PlateStatus", "active")
+        local def = PL.TypeDef(kind)
+        local text = PL.FormatNumber(number, kind)
+
+        local ang = (lp:EyePos() - origin):Angle()
+        ang:RotateAroundAxis(ang:Right(), -90)
+        ang:RotateAroundAxis(ang:Up(), -90)
+
+        surface.SetFont("GRMPlate_Hud")
+        local tw, th = surface.GetTextSize(text)
+        local w, h = tw + 46, th + 16
+
+        cam.Start3D2D(origin + Vector(0, 0, 14), ang, 0.12)
+            draw.RoundedBox(6, -w / 2, -h / 2, w, h, Color(12, 16, 24, 225))
+            draw.RoundedBox(6, -w / 2, -h / 2, 10, h, Color(def.band[1], def.band[2], def.band[3]))
+            draw.SimpleText(text, "GRMPlate_Hud", 6, 0, Color(def.plate[1], def.plate[2], def.plate[3]),
+                TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            if status ~= "active" then
+                draw.SimpleText(string.upper(PL.Statuses[status] or status), "GRMPlate_Small",
+                    0, h / 2 + 8, Color(215, 75, 75), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            end
+        cam.End3D2D()
+    end)
+end
+
+print("[GRM Plates] v" .. PL.Version .. " loaded (" .. (SERVER and "Server" or "Client") .. ")")
+s()
         local dist = lp:GetPos():Distance(origin)
         if dist > 400 then return end
 
