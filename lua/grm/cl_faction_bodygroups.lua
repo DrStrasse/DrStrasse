@@ -414,3 +414,12 @@ end
 
 net.Receive(FB.NetOpen, openEditor)
 concommand.Add("grm_faction_bg_editor", function() net.Start(FB.NetOpen) net.SendToServer() end)
+
+concommand.Add("grm_fbg_resolve", function()
+    local lp = LocalPlayer()
+    print("=== FB Resolve ===")
+    print("Faction:", lp:GetNWString("GRM_Faction",""))
+    print("Role:   ", lp:GetNWString("GRM_Role",""))
+    print("Rules keys:")
+    for k in pairs(FB.Rules or {}) do print("  ", k) end
+end)

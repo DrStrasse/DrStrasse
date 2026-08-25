@@ -38,11 +38,14 @@ function FB.Resolve(ply, model)
     if fac == "" then return out end
     local rules = FB.Rules or {}
     -- порядок: generic роль → конкретная роль (конкретная перекрывает)
+    local m = string.lower(model)
     local layers = {
         rules[key(fac, "all", "*")],
+        rules[key(fac, "faction", "*")],
         rules[key(fac, role, "*")],
-        rules[key(fac, "all", string.lower(model))],
-        rules[key(fac, role, string.lower(model))],
+        rules[key(fac, "all", m)],
+        rules[key(fac, "faction", m)],
+        rules[key(fac, role, m)],
     }
     for _, set in ipairs(layers) do
         if istable(set) then
@@ -162,6 +165,12 @@ if SERVER then
     end)
 
     print("[GRM FactionBodygroups] server v" .. FB.Version .. " loaded")
+
+    -- отладка: grm_fbg_dump в консоль
+    concommand.Add("grm_fbg_dump", function(ply)
+        if IsValid(ply) and not ply:IsSuperAdmin() then return end
+        PrintTable(FB.Rules or {})
+    end)
 end
 
 if CLIENT then
