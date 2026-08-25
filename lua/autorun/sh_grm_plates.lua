@@ -2605,41 +2605,6 @@ if CLIENT then
                 end
             end
 
-            -- ── поиск по номеру ─�ступы» («Регистрация номерных знаков») или в /admin → «Привилегии» (plates.issue).",
-                        "GRMPlate_Small", 14, 56, C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                end
-            end
-
-            if #PL.Mine == 0 then
-                local empty = vgui.Create("DPanel", content)
-                empty:Dock(TOP) empty:SetTall(60) empty:DockMargin(0, 0, 4, 8)
-                empty.Paint = function(_, w, h)
-                    draw.RoundedBox(8, 0, 0, w, h, C.card)
-                    draw.SimpleText("Номеров на вас не зарегистрировано. Обратитесь в Полицию или Автоинспекцию.",
-                        "GRMPlate_Body", w / 2, h / 2, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                end
-            end
-
-            if #PL.Mine > 0 then
-                local mineGrid = plateGrid(content)
-                for _, rec in ipairs(PL.Mine) do
-                    plateCard(mineGrid, rec, {
-                        buttons = {
-                            { label = "ПОЛУЧИТЬ БЛАНК", color = C.green,
-                              enabled = rec.status == "active",
-                              fn = function() act("spawn", { number = rec.number }) end },
-                            { label = "ЗАЯВИТЬ ОБ УТЕРЕ", color = C.cardHov,
-                              enabled = rec.status == "active",
-                              fn = function()
-                                  Derma_Query("Заявить об утере номера " .. PL.FormatNumber(rec.number, rec.type) .. "?",
-                                      "Номерные знаки", "Заявить",
-                                      function() act("lost", { number = rec.number }) end, "Отмена")
-                              end },
-                        },
-                    })
-                end
-            end
-
             -- ── поиск по номеру ─────────────────────────────────────
             local findCard = vgui.Create("DPanel", content)
             findCard:Dock(TOP) findCard:SetTall(84) findCard:DockMargin(0, 8, 4, 8)
