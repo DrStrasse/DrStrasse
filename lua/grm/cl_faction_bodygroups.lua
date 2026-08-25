@@ -122,8 +122,9 @@ local function rebuildEdit()
 
     if not IsValid(previewMdl) then
         previewMdl = vgui.Create("DModelPanel", editPanel)
-        previewMdl:Dock(TOP) previewMdl:SetTall(220) previewMdl:DockMargin(0, 0, 0, 8)
-        previewMdl.LayoutEntity = function() end
+        previewMdl:Dock(TOP) previewMdl:SetTall(280) previewMdl:DockMargin(0, 0, 0, 8)
+        -- крутим модель мышкой
+        previewMdl:SetAnimated(true)
         function previewMdl:ApplyModel()
             if state.model == "*" then return end
             local ok = pcall(function() self:SetModel(state.model) end)
@@ -132,11 +133,52 @@ local function rebuildEdit()
                 if IsValid(ent) then
                     ent:SetSkin(0)
                     for i = 0, (ent:GetNumBodyGroups() or 1) - 1 do ent:SetBodygroup(i, 0) end
+                    -- применить уже сохранённые форсы
+                    for gi = 0, (ent:GetNumBodyGroups() or 1) - 1 do
+                        local r = getRule(gi)
+                        if r and r.force ~= nil then ent:SetBodygroup(gi, r.force) end
+                    end
+                    -- поставить камеру по росту модели
                     local mn, mx = ent:GetRenderBounds()
-                    self:SetLookAt((mn + mx) * 0.5)
-                    self:SetCamPos((mn + mx) * 0.5 + Vector(90, 0, 10))
+                    local center = (mn + mx) * 0.5
+                    local height = math.max(16, mx.z - mn.z)
+                    local width  = math.max(16, math.max(mx.x - mn.x, mx.y - mn.y))
+                    local fov = 30
+                    local need = math.max(height, width * 1.4)
+                    local dist = (need / math.tan(math.rad(fov / 2))) * 0.9
+                    self:SetFOV(fov)
+                    self:SetLookAt(center + Vector(0, 0, height * 0.04))
+                    self:SetCamPos(center + Vector(dist * 0.55, dist * 0.85, height * 0.02))
                 end
             end
+        end
+        -- вращение ЛКМ и зум колесом
+        previewMdl.OnMousePressed = function(s) s:MouseCapture(true) s._drag = true end
+        previewMdl.OnMouseReleased = function(s) s:MouseCapture(false) s._drag = false end
+        previewMdl.OnCursorMoved = function(s, x, y)
+            if not s._drag then return end
+            local ang = s:GetAngles() or Angle(0, 0, 0)
+            ang.y = ang.y - (gui.MouseX() - (s._lx or gui.MouseX())) * 0.4
+            s:SetAngles(Angle(0, ang.y, 0))
+            s._lx, s._ly = gui.MouseX(), gui.MouseY()
+        end
+        previewMdl._yaw = 0
+        previewMdl.LayoutEntity = function(self, ent)
+            if not IsValid(ent) then return end
+            -- поворот модели мышью
+            ent:SetAngles(Angle(0, (self._yaw or 0), 0))
+        end
+        previewMdl.OnCursorMoved = function(s, x, y)
+            if not s._drag then return end
+            s._yaw = (s._yaw or 0) - (x - (s._lx or x)) * 0.5
+            s._lx, s._ly = x, y
+        end
+        previewMdl.OnMouseWheeled = function(s, delta)
+            local cp = s:GetCamPos()
+            local la = s:GetLookAt()
+            local d = cp - la
+            d = d * (1 - delta * 0.08)
+            s:SetCamPos(la + d)
         end
     else
         previewMdl:SetParent(editPanel) previewMdl:Dock(TOP)
