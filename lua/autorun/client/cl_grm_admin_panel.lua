@@ -1042,7 +1042,7 @@ local function buildChars(pnl)
     head.Paint = function(_, w, h)
         draw.RoundedBox(8, 0, 0, w, h, C.card)
         draw.SimpleText("КОНТРОЛЬ ПЕРСОНАЖЕЙ", "GRMAdm_Sub", 14, 10, C.gold)
-        draw.SimpleText("Поиск по SteamID64, нику или РП-имени. Удаление слота снимает имя и фракционное место.",
+        draw.SimpleText("Поиск по SteamID64, нику или РП-имени. Пустой запрос — все персонажи.",
             "GRMAdm_Small", 14, 32, C.dim)
     end
 
@@ -1055,8 +1055,23 @@ local function buildChars(pnl)
     end)
     find:SetPos(442, 50) find:SetSize(110, 28)
 
+    -- Колонки: имя/фракция/модель занимают левую часть, кнопки справа.
+    local COL_NAME, COL_FAC, COL_MODEL = 240, 150, 220
+    local BTN = 62
+
     local scroll = vgui.Create("DScrollPanel", pnl)
     scroll:Dock(FILL)
+
+    local function headerRow(parent)
+        local bar = vgui.Create("DPanel", parent)
+        bar:Dock(TOP) bar:SetTall(22) bar:DockMargin(0, 0, 6, 4)
+        bar.Paint = function(_, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, Color(28, 36, 50))
+            draw.SimpleText("СЛОТ / ИМЯ", "GRMAdm_Small", 10, 4, C.dim)
+            draw.SimpleText("ФРАКЦИЯ", "GRMAdm_Small", COL_NAME + 10, 4, C.dim)
+            draw.SimpleText("МОДЕЛЬ", "GRMAdm_Small", COL_NAME + COL_FAC + 10, 4, C.dim)
+        end
+    end
 
     local function paintRoster()
         if not IsValid(scroll) then return end
@@ -1072,52 +1087,66 @@ local function buildChars(pnl)
             end
             return
         end
+
         for _, acc in ipairs(accounts) do
             local card = vgui.Create("DPanel", scroll)
-            card:Dock(TOP) card:SetTall(188) card:DockMargin(0, 0, 6, 8)
+            card:Dock(TOP) card:DockMargin(0, 0, 6, 8)
+            local rows = 0
+            for _ in ipairs(acc.slots or {}) do rows = rows + 1 end
+            card:SetTall(34 + rows * 42)
             card.Paint = function(_, w, h)
                 draw.RoundedBox(8, 0, 0, w, h, C.card)
                 local title = (acc.nick ~= "" and acc.nick or acc.sid) .. (acc.online and "  ·  в сети" or "  ·  офлайн")
-                draw.SimpleText(title, "GRMAdm_Sub", 14, 10, C.text)
-                draw.SimpleText("SteamID64: " .. tostring(acc.sid), "GRMAdm_Small", 14, 32, C.dim)
+                draw.SimpleText(title, "GRMAdm_Sub", 14, 8, C.text)
+                draw.SimpleText("SteamID64: " .. tostring(acc.sid), "GRMAdm_Small", 14, 26, C.dim)
             end
+
+            if rows > 0 then headerRow(card) end
+
             for i, sl in ipairs(acc.slots or {}) do
                 local line = vgui.Create("DPanel", card)
-                line:SetPos(12, 52 + (i - 1) * 42) line:SetSize(980, 38)
+                line:SetPos(12, 34 + 22 + (i - 1) * 42)
+                line:SetSize(980, 38)
                 line.Paint = function(_, w, h)
                     draw.RoundedBox(6, 0, 0, w, h, C.cardLight)
                     local nm = sl.exists and (sl.name ~= "" and sl.name or ("Слот " .. i)) or ("Пустой слот " .. i)
-                    draw.SimpleText(nm, "GRMAdm_Body", 10, 8, sl.exists and C.text or C.dim)
-                    local extra = sl.exists and ((sl.factionName ~= "" and sl.factionName or "гражданин")
-                        .. (sl.active and "  ·  активен" or "")) or "—"
-                    draw.SimpleText(extra, "GRMAdm_Small", 10, 24, sl.active and C.gold or C.dim)
+                    draw.SimpleText(nm, "GRMAdm_Body", 10, 10, sl.exists and C.text or C.dim)
+                    local fac = sl.exists and ((sl.factionName ~= "" and sl.factionName) or "гражданин") or "—"
+                    draw.SimpleText(fac, "GRMAdm_Small", COL_NAME + 10, 12,
+                        (sl.factionName ~= "") and C.gold or C.dim)
+                    local model = sl.exists and (sl.model ~= "" and string.match(sl.model, "[^/]+$") or "по умолчанию") or "—"
+                    draw.SimpleText(model, "GRMAdm_Small", COL_NAME + COL_FAC + 10, 12, C.dim)
+                    if sl.active then
+                        draw.SimpleText("● активен", "GRMAdm_Small", w - 10, 12, C.green, TEXT_ALIGN_RIGHT)
+                    end
                 end
+
                 if sl.exists then
                     local function q() return search:GetValue() end
+                    local x = COL_NAME + COL_FAC + COL_MODEL
                     local rename = btn(line, "ИМЯ", C.accent, function()
                         Derma_StringRequest("РП-имя", "Новое имя и фамилия для " .. tostring(sl.id),
                             sl.name or "", function(text)
                                 act("char_rename", "", { sid = acc.sid, slot = sl.id, name = text, query = q() })
                             end)
                     end)
-                    rename:SetPos(430, 5) rename:SetSize(70, 28)
+                    rename:SetPos(x + 6, 5) rename:SetSize(BTN, 28)
                     local mdl = btn(line, "МОДЕЛЬ", C.cardHov, function()
                         Derma_StringRequest("Модель персонажа",
                             "Путь к модели (.mdl). Оставьте пустым, чтобы снять принудительную.",
                             tostring(sl.model or ""), function(text)
-                                local m = string.Trim(text or "")
-                                act("char_model", "", { sid = acc.sid, slot = sl.id, model = m, query = q() })
+                                act("char_model", "", { sid = acc.sid, slot = sl.id, model = string.Trim(text or ""), query = q() })
                             end)
                     end)
-                    mdl:SetPos(506, 5) mdl:SetSize(82, 28)
+                    mdl:SetPos(x + 6 + BTN + 4, 5) mdl:SetSize(BTN, 28)
                     local fac = btn(line, "ФРАКЦИЯ", C.cardHov, function()
                         Derma_StringRequest("Фракция",
-                            "Ключ фракции (как в /factions). Пусто = сделать гражданским (без фракции, права сохраняются).",
+                            "Ключ фракции (как в /factions). Пусто = гражданский (без сброса прав).",
                             tostring(sl.factionName or ""), function(text)
                                 act("char_faction", "", { sid = acc.sid, slot = sl.id, faction = string.Trim(text or ""), query = q() })
                             end)
                     end)
-                    fac:SetPos(594, 5) fac:SetSize(82, 28)
+                    fac:SetPos(x + 6 + (BTN + 4) * 2, 5) fac:SetSize(BTN, 28)
                     local accb = btn(line, "ДОСТУП", C.cardHov, function()
                         Derma_StringRequest("Персональный доступ",
                             "Capability (например wanted.civil.edit). Префикс «-» снимает право.",
@@ -1128,15 +1157,15 @@ local function buildChars(pnl)
                                 act("char_access", "", { sid = acc.sid, slot = sl.id, capability = cap, allow = allow, query = q() })
                             end)
                     end)
-                    accb:SetPos(682, 5) accb:SetSize(82, 28)
+                    accb:SetPos(x + 6 + (BTN + 4) * 3, 5) accb:SetSize(BTN, 28)
                     local del = btn(line, "УДАЛИТЬ", C.red, function()
-                        Derma_Query(("Удалить персонажа «%s» (%s) у %s?\nИмя, модель, фракция и персональные права будут очищены.")
+                        Derma_Query(("Удалить персонажа «%s» (%s) у %s?\nИмя, модель, фракция и персональные права очищены.")
                             :format(sl.name ~= "" and sl.name or sl.id, sl.id, acc.sid),
                             "Удаление персонажа", "Удалить", function()
                                 act("char_delete", "", { sid = acc.sid, slot = sl.id, query = q() })
                             end, "Отмена")
                     end)
-                    del:SetPos(770, 5) del:SetSize(106, 28)
+                    del:SetPos(x + 6 + (BTN + 4) * 4, 5) del:SetSize(76, 28)
                 end
             end
         end
@@ -1151,6 +1180,7 @@ local function buildChars(pnl)
         paintRoster()
     end)
     scroll.OnRemove = function() hook.Remove("GRM_AdminCharsUpdated", "GRM_AdminPanel_Chars") end
+    -- сразу запрашиваем список (пустой запрос — все персонажи)
     act("char_search", "", { query = search:GetValue() })
 end
 

@@ -389,6 +389,7 @@ if SERVER then
     util.AddNetworkString(NET_REQUEST)
     util.AddNetworkString(NET_CLOSE)
     util.AddNetworkString(NET_CANCEL)
+    util.AddNetworkString("GRM_Char_AdminRoster")
 
     local function jsonT(txt)
         local ok, t = pcall(util.JSONToTable, txt, false, true)

@@ -3399,7 +3399,7 @@ if CLIENT then
         closeEditor()
         local f = vgui.Create("DFrame")
         editor = f
-        f:SetSize(360, 330) f:Center() f:MakePopup()
+        f:SetSize(370, 390) f:Center() f:MakePopup()
         f:SetTitle("") f:ShowCloseButton(false)
         f.Paint = function(_, w, h)
             draw.RoundedBox(8, 0, 0, w, h, C.bg)
