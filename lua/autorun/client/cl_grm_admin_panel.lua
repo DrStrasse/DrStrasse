@@ -1237,6 +1237,7 @@ function AD.OpenPanel()
     end
 
     addTab("players", "Игроки", "menu.open", buildPlayers)
+    addTab("chars", "Персонажи", "char.manage", buildChars)
     addTab("privs", "Привилегии", "acl.groups", buildPrivileges)
     addTab("assign", "Назначения", "acl.assign", buildAssignments)
     addTab("persist", "Сохранения и карта", "server.persistence", buildPersistence)
