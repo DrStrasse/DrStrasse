@@ -1129,6 +1129,7 @@ if SERVER then
         return out, key
     end
 
+    local mirrorFactionBudget
     -- Поднять казну из зеркала Factions.Budget / разъехавшихся ключей JSON.
     local function foldFactionBudget(name)
         local aliases, key = factionAliases(name)
@@ -1161,7 +1162,7 @@ if SERVER then
         return e.budget, key
     end
 
-    local function mirrorFactionBudget(key, amount)
+    mirrorFactionBudget = function(key, amount)
         amount = math.max(0, math.floor(tonumber(amount) or 0))
         if istable(Factions) and istable(Factions[key]) then
             Factions[key].Budget = amount

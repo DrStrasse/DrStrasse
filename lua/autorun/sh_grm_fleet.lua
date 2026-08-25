@@ -417,9 +417,105 @@ if SERVER then
         if FactionsAPI and FactionsAPI.GetRegistrationName then
             return tostring(FactionsAPI.GetRegistrationName(raw) or raw)
         end
-        return raw
+        return factionKey(raw)
     end
     FL.FactionOf = factionOf
+
+    -- Живая казна: не верим одному ключу. Берём max по NW, витрине, тегу,
+    -- eco JSON и карточке Factions — иначе 150 млн висят в factions.json,
+    -- а закупка смотрит пустую запись экономики.
+    local function harvestBudget(key)
+        key = tostring(key or "")
+        local best = 0
+        local function add(v)
+            v = math.floor(tonumber(v) or 0)
+            if v > best then best = v end
+        end
+        if key == "" then return 0 end
+        if GRM.FactionBudgetGet then add(GRM.FactionBudgetGet(key)) end
+        local f = istable(Factions) and Factions[key]
+        if istable(f) then add(f.Budget) add(f.budget) end
+        local eco = GRM.Economy and GRM.Economy.Data and GRM.Economy.Data.factions
+        if istable(eco) then
+            local e = eco[key]
+            if istable(e) then add(e.budget) add(e.Budget) end
+            local low = string.lower(key)
+            for n, rec in pairs(eco) do
+                if string.lower(tostring(n)) == low and istable(rec) then add(rec.budget) add(rec.Budget) end
+            end
+        end
+        if istable(Factions) then
+            local low = string.lower(key)
+            for n, rec in pairs(Factions) do
+                if istable(rec) then
+                    local dn = string.lower(tostring(rec.DisplayName or rec.displayName or ""))
+                    local tg = string.lower(tostring(rec.Tag or ""))
+                    if string.lower(tostring(n)) == low or dn == low or tg == low then
+                        add(rec.Budget) add(rec.budget)
+                    end
+                end
+            end
+        end
+        return best
+    end
+
+    local function matchFactionKey(hint)
+        hint = tostring(hint or "")
+        if hint == "" then return "" end
+        if istable(Factions) and istable(Factions[hint]) then return hint end
+        if GRM.Economy and GRM.Economy.ResolveFactionKey then
+            local k = GRM.Economy.ResolveFactionKey(hint)
+            if isstring(k) and k ~= "" then return k end
+        end
+        return factionKey(hint)
+    end
+
+    function FL.Treasury(ply, hint)
+        local keys, seen = {}, {}
+        local function push(s)
+            s = tostring(s or "")
+            if s == "" or seen[s] then return end
+            seen[s] = true
+            keys[#keys + 1] = s
+            local mk = matchFactionKey(s)
+            if mk ~= "" and not seen[mk] then seen[mk] = true keys[#keys + 1] = mk end
+        end
+        push(hint)
+        push(factionOf(ply))
+        if IsValid(ply) then
+            push(ply:GetNWString("GRM_Faction", ""))
+            push(ply:GetNWString("GRM_FactionDisplay", ""))
+            push(ply:GetNWString("GRM_FactionTag", ""))
+            if FactionsAPI and FactionsAPI.GetFactionOf then
+                push(FactionsAPI.GetFactionOf(ply))
+            end
+            for fname, f in pairs(istable(Factions) and Factions or {}) do
+                if istable(f) and istable(f.Members) then
+                    local hit = false
+                    if FactionsAPI and FactionsAPI.IsMember then
+                        hit = FactionsAPI.IsMember(fname, ply) == true
+                    end
+                    if hit then
+                        push(fname)
+                        push(f.DisplayName)
+                        push(f.Tag)
+                    end
+                end
+            end
+        end
+        local best, bestKey = 0, tostring(hint or "")
+        for _, key in ipairs(keys) do
+            local n = harvestBudget(key)
+            if n > best then best, bestKey = n, key end
+        end
+        if best <= 0 then
+            print(("[GRM Fleet] казна 0 · hint=%s · keys=%s · factions=%s"):format(
+                tostring(hint), table.concat(keys, ","),
+                tostring(istable(Factions) and table.Count(Factions) or 0)))
+        end
+        return best, bestKey
+    end
+
 
     -- Автопарк не использует городской/чужой гараж. Служебная единица
     -- привязывается только к ведомственному гаражу ТОЙ ЖЕ организации.
@@ -959,13 +1055,8 @@ if SERVER then
 
         local total, unitPrice = FL.OrderPrice(entry, count)
         if total > 0 then
-            if GRM.Economy and GRM.Economy.ResolveFactionKey then
-                faction = tostring(GRM.Economy.ResolveFactionKey(faction) or faction)
-            end
-            local budget = 0
-            if GRM.FactionBudgetGet then budget = math.floor(tonumber(GRM.FactionBudgetGet(faction)) or 0) end
-            local fac = istable(Factions) and Factions[faction]
-            if istable(fac) then budget = math.max(budget, math.floor(tonumber(fac.Budget) or 0)) end
+            local budget, treasKey = FL.Treasury(ply, faction)
+            if treasKey ~= "" then faction = treasKey end
             if budget < total then
                 return nil, ("Не хватает бюджета: нужно %s, в казне организации %s"):format(
                     GRM.Format and GRM.Format(total) or total, GRM.Format and GRM.Format(budget) or budget)
@@ -1325,12 +1416,7 @@ if SERVER then
 
         return {
             faction = faction,
-            budget = (function()
-                local b = math.floor(tonumber(GRM.FactionBudgetGet and GRM.FactionBudgetGet(faction)) or 0)
-                local fac = istable(Factions) and Factions[faction]
-                if istable(fac) then b = math.max(b, math.floor(tonumber(fac.Budget) or 0)) end
-                return math.max(0, b)
-            end)(),
+            budget = math.max(0, math.floor(tonumber((select(1, FL.Treasury(ply, faction)))) or 0)),
             canBuy = select(1, FL.CanBuy(ply, faction)) == true,
             canManage = FL.CanManage(ply, faction) == true,
             isAdmin = isAdmin,
