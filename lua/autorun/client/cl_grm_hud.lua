@@ -156,6 +156,7 @@ end
 surface.CreateFont("GRM_HUD_Name", { font = "Roboto", size = 16, weight = 700, extended = true, antialias = true })
 surface.CreateFont("GRM_HUD_Meta", { font = "Roboto", size = 12, weight = 500, extended = true, antialias = true })
 surface.CreateFont("GRM_HUD_TimeBig", { font = "Roboto", size = 26, weight = 800, extended = true, antialias = true })
+surface.CreateFont("GRM_HUD_TimeDate", { font = "Roboto", size = 15, weight = 700, extended = true, antialias = true })
 
 -- БАЛАНС
 GRM.PlayerBalance = GRM.PlayerBalance or 0
@@ -599,12 +600,12 @@ local function DrawMainHUD()
         end
         surface.SetFont("GRM_HUD_TimeBig")
         local tw = surface.GetTextSize(clock)
-        local bx, by, bw, bh = sw - 16 - (tw + 28), 16, tw + 28, 56
+        local bx, by, bw, bh = sw - 16 - (tw + 28), 16, tw + 28, 64
         draw.RoundedBox(8, bx, by, bw, bh, Color(8, 14, 23, 170))
         surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, 95)
         surface.DrawOutlinedRect(bx, by, bw, bh, 1)
         draw.SimpleText(clock, "GRM_HUD_TimeBig", bx + bw / 2, by + 17, Color(240, 200, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        draw.SimpleText(date, "GRM_HUD_Label", bx + bw / 2, by + 40, Color(210, 190, 150), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText(date, "GRM_HUD_TimeDate", bx + bw / 2, by + 47, Color(210, 190, 150), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end
 
     local pw = 320

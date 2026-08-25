@@ -648,6 +648,12 @@ local function openStudio()
     end
     seq.OnSelect = function(_, _, _, v) sendAct("seq", v or "") end
 
+    local statusL = vgui.Create("DLabel", left)
+    statusL:SetPos(10, 150) statusL:SetSize(260, 18)
+    statusL:SetFont("GRMSocEd_Small") statusL:SetTextColor(Color(110, 200, 130))
+    statusL:SetText("")
+    function ST.setStatus(txt) if IsValid(statusL) then statusL:SetText(txt or "") end end
+
     local list = vgui.Create("DListView", left)
     list:SetPos(10, 170) list:SetSize(260, 118)
     list:AddColumn("Сохранённые позы")
@@ -667,6 +673,9 @@ local function openStudio()
                 local line = list:AddLine((p.players ~= false and "● " or "○ ") .. (p.name or p.id) .. "  [" .. tostring(cat) .. "]")
                 line._id = p.id
                 line._cat = p.cat or "general"
+                if p.id == ST.selectedID then
+                    list:SelectItem(line)
+                end
             end
         end
     end
@@ -674,7 +683,10 @@ local function openStudio()
 
     -- ЛКМ — загрузить позу, ПКМ — меню.
     list.OnRowSelected = function(_, _, line)
-        if line and line._id then loadPose(line._id) end
+        if line and line._id then
+            ST.selectedID = line._id
+            loadPose(line._id)
+        end
     end
     -- контекстное меню позы: загрузить / переместить / удалить
     list.OnRowRightClick = function(_, _, line)
@@ -689,7 +701,11 @@ local function openStudio()
         end
         menu:AddOption("Удалить", function()
             Derma_Query("Удалить позу «" .. tostring(line._id) .. "»?", "Удаление",
-                "Удалить", function() sendAct("delete", line._id) end, "Отмена", function() end)
+                "Удалить", function()
+                    ST.selectedID = nil
+                    sendAct("delete", line._id)
+                    notification.AddLegacy("Поза удалена", NOTIFY_UNDO, 3)
+                end, "Отмена", function() end)
         end)
         menu:Open()
     end
@@ -710,6 +726,8 @@ local function openStudio()
                         if d == (p.cat or "general") then catBox:ChooseOptionID(i) break end
                     end
                 end
+                ST.selectedID = id
+                if ST.setStatus then ST.setStatus("Загружено: " .. tostring(p.name or id)) end
                 ST.bones = {}
                 for bn, rec in pairs(p.bones or {}) do
                     if isangle(rec) then
@@ -728,7 +746,10 @@ local function openStudio()
         end
     end
     list.OnRowSelected = function(_, _, line)
-        if line and line._id then loadPose(line._id) end
+        if line and line._id then
+            ST.selectedID = line._id
+            loadPose(line._id)
+        end
     end
 
     local bonesc = vgui.Create("DScrollPanel", left)
@@ -835,6 +856,7 @@ local function openStudio()
             cat = catId,
             catName = catName,
         })
+        if ST.setStatus then ST.setStatus("Сохранено") end
     end)
     mk("УДАЛИТЬ ВЫБРАННУЮ", Color(180, 70, 70), yy + 124, function()
         local _, line = list:GetSelectedLine()
