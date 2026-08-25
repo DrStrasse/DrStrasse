@@ -1332,7 +1332,10 @@ if SERVER then
             end
             local chosenSkin = tonumber(d.skin) or 0
             if wardrobeRule and wardrobeRule.allowSkin == false then chosenSkin = 0 end
-            local ok, err = CH.ApplyAppearance(ply, { path = d.model, skin = chosenSkin, bodygroups = bg })
+            -- фракционные ограничения бодигрупп (роль/модель)
+            local appearancePayload = { path = d.model, skin = chosenSkin, bodygroups = bg }
+            hook.Run("GRM_CharacterBeforeSaveAppearance", ply, appearancePayload)
+            local ok, err = CH.ApplyAppearance(ply, appearancePayload)
             if not ok and GRM.Notify then GRM.Notify(ply, tostring(err or "Не удалось применить внешность"), 255, 100, 100) end
             if ok and GRM.Notify then GRM.Notify(ply, "Внешность персонажа сохранена.", 100, 220, 100) end
         end
@@ -2235,23 +2238,39 @@ if CLIENT then
             end
 
             local rule = draft.wardrobeRule or {}
+            -- фракционные ограничения бодигрупп для моей фракции/роли
+            local factionRules = (GRM.FactionBodygroups and GRM.FactionBodygroups.Resolve)
+                and GRM.FactionBodygroups.Resolve(LocalPlayer(), draft.model) or {}
             local added = 0
             for i = 0, (ent:GetNumBodyGroups() or 0) - 1 do
                 local total = ent:GetBodygroupCount(i) or 1
                 local groupRule = rule.bodygroups and (rule.bodygroups[i] or rule.bodygroups[tostring(i)])
                 local allowed = (payload.allowBodygroups ~= false)
                     and (not isWardrobe or groupRule == nil or groupRule == true or istable(groupRule))
+                local fr = factionRules[i]
+                if fr and fr.force ~= nil then
+                    draft.bodygroups = draft.bodygroups or {}
+                    CH.BodygroupSet(draft.bodygroups, i, fr.force)
+                end
+                local locked = fr ~= nil and (fr.lock == true or fr.force ~= nil)
                 if total > 1 and allowed then
                     added = added + 1
                     local name = ent:GetBodygroupName(i)
                     if name == "" then name = "Группа " .. i end
-                    stepperRow(bodyScroll, name,
+                    local lbl = locked and (name .. "  🔒") or name
+                    local row = stepperRow(bodyScroll, lbl,
                         function() return CH.BodygroupGet(draft.bodygroups, i) end,
                         function(v)
+                            if locked then return end
                             draft.bodygroups = draft.bodygroups or {}
                             CH.BodygroupSet(draft.bodygroups, i, v)
                         end,
                         function() return total end)
+                    if locked then
+                        for _, ch in ipairs(row:GetChildren()) do
+                            if IsValid(ch) and ch.SetEnabled then ch:SetEnabled(false) end
+                        end
+                    end
                 end
             end
             if added == 0 then
