@@ -999,6 +999,67 @@ if SERVER then
         return unit, fid
     end
 
+    --[[ ПАМЯТЬ ПОЗИЦИИ ПО КОНКРЕТНОЙ МАШИНЕ.
+
+         Отредактированное положение знака должно жить и после снятия:
+         когда игрок вешает номер обратно на ТУ ЖЕ машину, он встаёт в
+         запомненную точку, а не сбрасывается в авто. Храним локальные
+         pos/ang в записи гаража (plateMemory) и в единице автопарка
+         (unit.plateMemory), поэтому память переживает рестарт и выдачу
+         из гаража. class-layout применяется с бóльшим приоритетом. ]]
+    local function vehicleMemoryRecord(veh)
+        local g = garageRecordOf(veh)
+        if istable(g) then return g end
+        local u = fleetRecordOf(veh)
+        if istable(u) then return u end
+        return nil
+    end
+
+    --- Сохранить локальные pos/ang знака в память конкретной машины.
+    local function saveVehicleMemory(veh, lp, la)
+        local rec = vehicleMemoryRecord(veh)
+        if not istable(rec) then return false end
+        rec.plateMemory = {
+            pos = { x = lp.x, y = lp.y, z = lp.z },
+            ang = { p = la.p, y = la.y, r = la.r },
+        }
+        local g = garageRecordOf(veh)
+        if istable(g) and GRM.VehicleDealer and GRM.VehicleDealer.SaveGarages then
+            GRM.VehicleDealer.SaveGarages(); return true
+        end
+        local u, fid = fleetRecordOf(veh)
+        if istable(u) and GRM.Fleet and GRM.Fleet.SaveFleet then
+            GRM.Fleet.SaveFleet("plate memory " .. fid); return true
+        end
+        return false
+    end
+    PL._saveVehicleMemory = saveVehicleMemory
+
+    --- Прочитать память машины как {pos=Vector, ang=Angle} или nil.
+    local function readVehicleMemory(veh)
+        local rec = vehicleMemoryRecord(veh)
+        local m = istable(rec) and rec.plateMemory or nil
+        if not (istable(m) and istable(m.pos) and istable(m.ang)) then return nil end
+        return {
+            pos = Vector(tonumber(m.pos.x) or 0, tonumber(m.pos.y) or 0, tonumber(m.pos.z) or 0),
+            ang = Angle(tonumber(m.ang.p) or 0, tonumber(m.ang.y) or 0, tonumber(m.ang.r) or 0),
+        }
+    end
+    PL._readVehicleMemory = readVehicleMemory
+
+    --- Стереть память машины (кнопка «Авто»).
+    local function clearVehicleMemory(veh)
+        local rec = vehicleMemoryRecord(veh)
+        if not istable(rec) or rec.plateMemory == nil then return false end
+        rec.plateMemory = nil
+        local g = garageRecordOf(veh)
+        if istable(g) and GRM.VehicleDealer and GRM.VehicleDealer.SaveGarages then GRM.VehicleDealer.SaveGarages(); return true end
+        local u, fid = fleetRecordOf(veh)
+        if istable(u) and GRM.Fleet and GRM.Fleet.SaveFleet then GRM.Fleet.SaveFleet("plate memory reset " .. fid); return true end
+        return false
+    end
+    PL._clearVehicleMemory = clearVehicleMemory
+
     --- Запомнить раскладку знаков машины в записи гаража или единицы парка.
     --  Раньше знаки возвращались «на место» только у личного транспорта:
     --  у служебного запись не писалась, и после уборки в гараж/рестарта
@@ -1129,6 +1190,11 @@ if SERVER then
             end
         end
         rememberLayout(veh)
+        -- Запоминаем позицию по конкретной машине: после снятия и повторной
+        -- установки знак встанет ровно сюда, а не в авто-точку.
+        local _lp = veh:WorldToLocal(plate:GetPos())
+        local _la = veh:WorldToLocalAngles(plate:GetAngles())
+        saveVehicleMemory(veh, _lp, _la)
         hook.Run("GRM_PlateAttached", plate, veh, actor)
         return true
     end
@@ -1622,6 +1688,7 @@ if SERVER then
     function PL.MountPointFor(veh, wantFront, nearPos)
         if not IsValid(veh) then return nil, "Транспорт не найден" end
 
+        -- 1) раскладка КЛАССА (сохранённая кнопкой «для всех таких»)
         local layout = PL.LayoutFor and PL.LayoutFor(veh)
         if istable(layout) and layout.enabled ~= false and isfunction(veh.LocalToWorld) then
             local p = Vector(layout.pos.x, layout.pos.y, layout.pos.z)
@@ -1631,6 +1698,17 @@ if SERVER then
             return { pos = world, normal = nrm, up = up, layout = layout }
         end
 
+        -- 2) ПАМЯТЬ КОНКРЕТНОЙ МАШИНЫ (после редактирования/снятия)
+        local mem = readVehicleMemory(veh)
+        if mem and isfunction(veh.LocalToWorld) then
+            local world = veh:LocalToWorld(mem.pos)
+            local nrm = veh:LocalToWorldAngles(mem.ang):Forward()
+            return { pos = world, normal = nrm, up = veh:GetUp(),
+                exact = true,
+                setPlate = function(plate) plate:SetPos(world); plate:SetAngles(veh:LocalToWorldAngles(mem.ang)) end }
+        end
+
+        -- 3) авто-точка
         local front, rear = PL.MountEnds(veh)
         if wantFront == true then return front or rear end
         if wantFront == false then return rear or front end
@@ -1648,6 +1726,13 @@ if SERVER then
         if not mount then
             -- у нестандартных сущностей габаритов может не быть: тогда просто
             -- крепим как есть, без вычисления борта
+            return PL.Attach(plate, veh, actor)
+        end
+        --[[ ПАМЯТЬ/КЛАСС: если позиция задана вручную (редактор или кнопка
+             «для всех таких»), ставим знак ТОЧНО в сохранённые pos/ang —
+             без автонормали и валидации, иначе ручная подгонка собьётся. ]]
+        if mount.exact and isfunction(mount.setPlate) then
+            mount.setPlate(plate)
             return PL.Attach(plate, veh, actor)
         end
         --[[ ВАЛИДАЦИЯ. Если авто-точка села ниже уровня кузова или мимо
@@ -1695,6 +1780,11 @@ if SERVER then
         plate:SetLocalPos(Vector(moved.pos.x, moved.pos.y, moved.pos.z))
         plate:SetLocalAngles(Angle(moved.ang.p, moved.ang.y, moved.ang.r))
         rememberLayout(veh)
+        -- Каждое движение пишется в память КОНКРЕТНОЙ машины — после
+        -- снятия/повторной установки позиция не забудется.
+        saveVehicleMemory(veh,
+            Vector(moved.pos.x, moved.pos.y, moved.pos.z),
+            Angle(moved.ang.p, moved.ang.y, moved.ang.r))
         local number = PL.NormalizeNumber(plate:GetNWString("GRM_Plate", ""))
         local rec = PL.Get(number)
         if rec then
@@ -1703,30 +1793,42 @@ if SERVER then
             rec.mount.ang = { p = moved.ang.p, y = moved.ang.y, r = moved.ang.r }
             PL.Save("правка положения знака")
         end
-        if forClass == true then
-            local class = tostring(veh:GetClass() or "")
-            local n = (veh:LocalToWorld(Vector(0, 0, 0)) - veh:GetPos()):GetNormalized()
-            PL.SetLayout(class, {
-                pos = { x = moved.pos.x, y = moved.pos.y, z = moved.pos.z },
-                normal = { x = -1, y = 0, z = 0 },
-                upHint = { x = 0, y = 0, z = 1 },
-                enabled = true,
-            })
-        end
         return true
+    end
+
+    --[[ Сохранить текущее положение знака как РАСКЛАДКУ КЛАССА машины.
+         Тогда любая установка на транспорт этого класса (например
+         simfphys_mafia2_jeep) будет использовать ту же позицию. ]]
+    function PL.SaveClassLayoutFromPlate(plate)
+        if not IsValid(plate) then return false, "Знак не найден" end
+        local veh = plate:GetParent()
+        if not IsValid(veh) then return false, "Знак не закреплён" end
+        local lp = veh:WorldToLocal(plate:GetPos())
+        local la = veh:WorldToLocalAngles(plate:GetAngles())
+        saveVehicleMemory(veh, lp, la)
+        local class = tostring(veh:GetClass() or "")
+        PL.SetLayout(class, {
+            pos = { x = lp.x, y = lp.y, z = lp.z },
+            normal = { x = -1, y = 0, z = 0 },
+            upHint = { x = 0, y = 0, z = 1 },
+            enabled = true,
+        })
+        return true, class
     end
 
     --- Сбросить знак на авто-точку борта (срабатывает и для ручного layout).
     function PL.ReattachAuto(plate, veh, actor)
         if not (IsValid(plate) and IsValid(veh)) then return false end
         local class = tostring(veh:GetClass() or "")
-        -- временно убираем class-layout, чтобы взять чистую авто-точку
+        -- временно убираем class-layout И память машины, чтобы взять чистую авто-точку
         local savedLayout = PL.Layouts and PL.Layouts[class] or nil
         if PL.Layouts then PL.Layouts[class] = nil end
+        clearVehicleMemory(veh)
         local mount = PL.MountPointFor(veh)
         if savedLayout and PL.Layouts then PL.Layouts[class] = savedLayout end
         if mount then
-            PL.PlaceOnSurface(plate, mount.pos, mount.normal, mount.up)
+            if mount.exact and isfunction(mount.setPlate) then mount.setPlate(plate)
+            else PL.PlaceOnSurface(plate, mount.pos, mount.normal, mount.up) end
             rememberLayout(veh)
             local number = PL.NormalizeNumber(plate:GetNWString("GRM_Plate", ""))
             local rec = PL.Get(number)
@@ -1738,6 +1840,10 @@ if SERVER then
                 rec.mount.ang = { p = la.p, y = la.y, r = la.r }
                 PL.Save("авто-крепление знака")
             end
+            -- авто-крепление тоже запоминаем по этой машине
+            local _lp = veh:WorldToLocal(plate:GetPos())
+            local _la = veh:WorldToLocalAngles(plate:GetAngles())
+            saveVehicleMemory(veh, _lp, _la)
             return true
         end
         return false
@@ -2202,6 +2308,26 @@ if SERVER then
                 notify(ply, "Знак не найден.") return
             end
             if PL.CanHandle(ply, plate) then PL.HandlePlateUse(ply, plate) end
+
+        --[[ Сохранить положение знака как РАСКЛАДКУ КЛАССА: все машины
+             того же класса (например simfphys_mafia2_jeep) будут крепить
+             номер в это место. ]]
+        elseif act == "save_class" then
+            local plate = Entity(tonumber(data.ent) or -1)
+            if not (IsValid(plate) and plate:GetClass() == "grm_plate") then
+                notify(ply, "Знак не найден.") return
+            end
+            if not PL.CanHandle(ply, plate) then notify(ply, "Чужой знак.") return end
+            -- сохранять раскладку класса может только служба/суперадмин
+            if not (ply:IsSuperAdmin() or PL.CanIssue(ply)) then
+                notify(ply, "Сохранять для всего класса может только служба.") return
+            end
+            local okC, class = PL.SaveClassLayoutFromPlate(plate)
+            if okC then
+                notify(ply, ("Позиция сохранена для всех машин класса «%s»."):format(tostring(class)), true)
+            else
+                notify(ply, tostring(class or "Не удалось сохранить"))
+            end
         end
     end)
 
@@ -3251,20 +3377,36 @@ if CLIENT then
         stepBtn(body, "R↶", 266, 196, 44, 30, function() nudge(plate, "turn", "r", -step) end)
 
         -- действия
-        local auto = button(body, "АВТО-ПОЗИЦИЯ", C.green, function()
+        local auto = button(body, "АВТО", C.green, function()
             net.Start(PL.Net.ACT) net.WriteString("attach_auto")
                 net.WriteTable({ ent = plate:EntIndex() }) net.SendToServer()
         end)
-        auto:SetPos(10, 236) auto:SetSize(160, 30)
-        local detach = button(body, "СНЯТЬ ЗНАК", C.red, function()
+        auto:SetPos(10, 236) auto:SetSize(104, 30)
+
+        --[[ Сохранить положение для ВСЕХ машин этого класса
+             (simfphys_mafia2_jeep и т.п.). Требует права регистрации
+             номеров или суперадмина — проверяет сервер. ]]
+        local allClass = button(body, "ДЛЯ ВСЕХ ТАКИХ", C.gold, function()
+            Derma_Query("Сохранить это положение для всех машин этого класса?\n"
+                .. "Любой знак на такой модели будет вставать сюда.",
+                "Раскладка класса",
+                "Сохранить", function()
+                    net.Start(PL.Net.ACT) net.WriteString("save_class")
+                        net.WriteTable({ ent = plate:EntIndex() }) net.SendToServer()
+                end,
+                "Отмена", function() end)
+        end)
+        allClass:SetPos(120, 236) allClass:SetSize(120, 30)
+
+        local detach = button(body, "СНЯТЬ", C.red, function()
             net.Start(PL.Net.ACT) net.WriteString("detach")
                 net.WriteTable({ ent = plate:EntIndex() }) net.SendToServer()
             closeEditor()
         end)
-        detach:SetPos(178, 236) detach:SetSize(162, 30)
+        detach:SetPos(246, 236) detach:SetSize(94, 30)
         local hint = vgui.Create("DLabel", body); hint:SetPos(10, 272); hint:SetSize(330, 18)
         hint:SetFont("GRMPlate_Small"); hint:SetTextColor(C.dim)
-        hint:SetText("F=вперёд R=назад. Сохраняется на эту машину.")
+        hint:SetText("F=вперёд R=назад. Позиция запоминается на этой машине.")
     end
     PL.OpenEditor = openEditor
 
