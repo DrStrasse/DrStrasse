@@ -2247,30 +2247,27 @@ if CLIENT then
                 local groupRule = rule.bodygroups and (rule.bodygroups[i] or rule.bodygroups[tostring(i)])
                 local allowed = (payload.allowBodygroups ~= false)
                     and (not isWardrobe or groupRule == nil or groupRule == true or istable(groupRule))
-                local fr = factionRules[i]
-                if fr and fr.force ~= nil then
-                    draft.bodygroups = draft.bodygroups or {}
-                    CH.BodygroupSet(draft.bodygroups, i, fr.force)
-                end
+                local fr = factionRules[i] or factionRules[tostring(i)]
                 local locked = fr ~= nil and (fr.lock == true or fr.force ~= nil)
-                if total > 1 and allowed then
+                if locked then
+                    -- заблокированную группу прячем из меню и сбрасываем
+                    -- (force перезапишет нужным значением, иначе 0)
+                    draft.bodygroups = draft.bodygroups or {}
+                    CH.BodygroupSet(draft.bodygroups, i, (fr and fr.force ~= nil) and fr.force or 0)
+                    -- сразу применить к превью
+                    ent:SetBodygroup(i, (fr and fr.force ~= nil) and tonumber(fr.force) or 0)
+                end
+                if total > 1 and allowed and not locked then
                     added = added + 1
                     local name = ent:GetBodygroupName(i)
                     if name == "" then name = "Группа " .. i end
-                    local lbl = locked and (name .. "  🔒") or name
-                    local row = stepperRow(bodyScroll, lbl,
+                    local row = stepperRow(bodyScroll, name,
                         function() return CH.BodygroupGet(draft.bodygroups, i) end,
                         function(v)
-                            if locked then return end
                             draft.bodygroups = draft.bodygroups or {}
                             CH.BodygroupSet(draft.bodygroups, i, v)
                         end,
                         function() return total end)
-                    if locked then
-                        for _, ch in ipairs(row:GetChildren()) do
-                            if IsValid(ch) and ch.SetEnabled then ch:SetEnabled(false) end
-                        end
-                    end
                 end
             end
             if added == 0 then
@@ -2460,6 +2457,10 @@ if CLIENT then
         CH._nextOpenRequest = RealTime() + .5
         local slot = CH._previewSlot or (IsValid(lp) and lp:GetNWString("GRM_CharacterID", "char1")) or "char1"
         net.Start(NET_REQUEST); net.WriteString(slot); net.SendToServer()
+        -- подтянуть свежие правила бодигрупп
+        if GRM.FactionBodygroups and GRM.FactionBodygroups.NetRequest then
+            net.Start(GRM.FactionBodygroups.NetRequest); net.SendToServer()
+        end
     end
     concommand.Add("grm_character", CH.OpenMenu)
 

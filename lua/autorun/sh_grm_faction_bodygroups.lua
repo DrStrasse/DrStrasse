@@ -21,6 +21,7 @@ FB.Version = "1.0.0"
 FB.NetOpen   = "GRM_FBg_Open"
 FB.NetSync   = "GRM_FBg_Sync"
 FB.NetSave   = "GRM_FBg_Save"
+FB.NetRequest= "GRM_FBg_Request"
 FB.File      = "grm_faction_bodygroups.json"
 
 ------------------------------------------------------------------ утилиты
@@ -85,6 +86,8 @@ if SERVER then
     util.AddNetworkString(FB.NetOpen)
     util.AddNetworkString(FB.NetSync)
     util.AddNetworkString(FB.NetSave)
+    util.AddNetworkString(FB.NetRequest)
+    net.Receive(FB.NetRequest, function(_, ply) if IsValid(ply) then FB.SendTo(ply) end end)
 
     local function load()
         if not file.Exists(FB.File, "DATA") then FB.Rules = {} return end
