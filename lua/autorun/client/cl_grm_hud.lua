@@ -155,6 +155,7 @@ if not GRM.HUD._fontsCreated then
 end
 surface.CreateFont("GRM_HUD_Name", { font = "Roboto", size = 16, weight = 700, extended = true, antialias = true })
 surface.CreateFont("GRM_HUD_Meta", { font = "Roboto", size = 12, weight = 500, extended = true, antialias = true })
+surface.CreateFont("GRM_HUD_TimeBig", { font = "Roboto", size = 26, weight = 800, extended = true, antialias = true })
 
 -- БАЛАНС
 GRM.PlayerBalance = GRM.PlayerBalance or 0
@@ -546,7 +547,7 @@ local function DrawMainHUD()
         and ((GRM.Format and GRM.Format(math.Round(anim.bank))) or ("$" .. string.Comma(math.Round(anim.bank))))
         or "—"
 
-    local hx, hy, hw, hh = 16, 16, 356, 150
+    local hx, hy, hw, hh = 16, 16, 356, 112
     draw.RoundedBox(8, hx, hy, hw, hh, Color(8, 14, 23, 150))
     surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, 85)
     surface.DrawOutlinedRect(hx, hy, hw, hh, 1)
@@ -579,23 +580,25 @@ local function DrawMainHUD()
     draw.SimpleText("ID: " .. tostring(cid), "GRM_HUD_Label", hx + 64, hy + 50,
         cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
 
-    draw.SimpleText("НАЛИЧНЫЕ", "GRM_HUD_Label", hx + 12, hy + 74, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-    draw.SimpleText(cashTxt, "GRM_HUD_Money", hx + 12, hy + 94, cfg.moneyColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-    draw.SimpleText("СЧЁТ", "GRM_HUD_Label", hx + hw - 12, hy + 74, cfg.labelColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
-    draw.SimpleText(bankTxt, "GRM_HUD_Money", hx + hw - 12, hy + 94, cfg.bankColor or cfg.moneyColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+    draw.SimpleText("НАЛИЧНЫЕ", "GRM_HUD_Label", hx + 12, hy + 70, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    draw.SimpleText(cashTxt, "GRM_HUD_Money", hx + 12, hy + 90, cfg.moneyColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    draw.SimpleText("СЧЁТ", "GRM_HUD_Label", hx + hw - 12, hy + 70, cfg.labelColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+    draw.SimpleText(bankTxt, "GRM_HUD_Money", hx + hw - 12, hy + 90, cfg.bankColor or cfg.moneyColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
 
-    -- Таймер игровой сессии (локально от спавна клиента)
-    if not GRM.HUD._sessionStart then GRM.HUD._sessionStart = CurTime() end
-    local function fmt(s)
-        s = math.floor(s)
-        local h = math.floor(s / 3600)
-        local m = math.floor((s % 3600) / 60)
-        local sec = s % 60
-        return string.format("%02d:%02d:%02d", h, m, sec)
+    -- Реальное время: отдельная плашка в правом верхнем углу
+    do
+        local rt = os.date("*t")
+        local clock = string.format("%02d:%02d:%02d", rt.hour, rt.min, rt.sec)
+        local date = string.format("%02d.%02d.%d", rt.day, rt.month, rt.year)
+        surface.SetFont("GRM_HUD_TimeBig")
+        local tw = surface.GetTextSize(clock)
+        local bx, by, bw, bh = sw - 16 - (tw + 28), 16, tw + 28, 56
+        draw.RoundedBox(8, bx, by, bw, bh, Color(8, 14, 23, 170))
+        surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, 95)
+        surface.DrawOutlinedRect(bx, by, bw, bh, 1)
+        draw.SimpleText(clock, "GRM_HUD_TimeBig", bx + bw / 2, by + 17, Color(240, 200, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText(date, "GRM_HUD_Label", bx + bw / 2, by + 40, Color(210, 190, 150), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end
-    draw.SimpleText("В ИГРЕ", "GRM_HUD_Label", hx + 12, hy + 112, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-    draw.SimpleText(fmt(CurTime() - (GRM.HUD._sessionStart or 0)),
-        "GRM_HUD_Money", hx + 12, hy + 128, cfg.textColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
 
     local pw = 320
     local pad, rowH, gap = 10, 24, 4
