@@ -11,7 +11,7 @@
         заблокированные игроком изменения отбрасываются).
     Админ-редактор:  grm_faction_bg_editor  (F4 → можно добавить ярлык).
 ----------------------------------------------------------------------]]
-if SERVER then AddCSLuaFile() AddCSLuaFile("cl_grm_faction_bodygroups.lua") end
+if SERVER then AddCSLuaFile() AddCSLuaFile("grm/cl_faction_bodygroups.lua") end
 
 GRM = GRM or {}
 GRM.FactionBodygroups = GRM.FactionBodygroups or {}
@@ -163,7 +163,7 @@ end
 
 if CLIENT then
     -- редактор правил (окно)
-    include("cl_grm_faction_bodygroups.lua")
+    include("grm/cl_faction_bodygroups.lua")
     FB.Rules = FB.Rules or {}
     net.Receive(FB.NetSync, function()
         FB.Rules = net.ReadTable() or {}
