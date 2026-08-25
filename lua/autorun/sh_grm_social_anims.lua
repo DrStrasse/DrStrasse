@@ -301,6 +301,12 @@ local function resetBones(ply)
     end
     if ply.InvalidateBoneCache then ply:InvalidateBoneCache() end
     applied[ply] = nil
+    if frozen and frozen[ply] then
+        frozen[ply] = nil
+        if IsValid(ply) and ply.Freeze then ply:Freeze(false) end
+        ply._grmSocFrozen = nil
+    end
+    hook.Run("GRM_SocPoseCleared", ply)
 end
 
 local function applyPose(ply, def)

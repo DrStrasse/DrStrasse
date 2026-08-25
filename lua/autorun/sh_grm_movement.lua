@@ -29,11 +29,11 @@ GRM.Movement.Config = {
     StaminaMax      = 100,
     StaminaMaxMin   = 80,
     StaminaMaxCap   = 160,
-    StaminaTrain    = 0.045,
-    StaminaDecay    = 0.004,
-    StaminaDrain    = 16,
-    StaminaJumpCost = 15,
-    StaminaRegen    = 8,
+    StaminaTrain    = 0.085,
+    StaminaDecay    = 0.002,
+    StaminaDrain    = 9,
+    StaminaJumpCost = 10,
+    StaminaRegen    = 11,
     -- Сидя в транспорте человек отдыхает: восстановление идёт и чуть быстрее
     -- обычного (заказ владельца 22.08 — «в машине выносливость не растёт»).
     StaminaRegenSeated = 12,
@@ -180,7 +180,7 @@ if SERVER then
                         data.stamina = math.max(0, data.stamina - cfg.StaminaDrain * dt)
                         if data.stamina > 12 then
                             local before = data.max
-                            data.max = clampMax(data.max + (cfg.StaminaTrain or 0.045) * dt)
+                            data.max = clampMax(data.max + (cfg.StaminaTrain or 0.085) * dt)
                             data.lastTrain = os.time()
                             if math.abs(data.max - before) > 0.2 then persistMax(ply, data) end
                         end

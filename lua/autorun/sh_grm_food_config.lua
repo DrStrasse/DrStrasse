@@ -28,13 +28,13 @@ GRM.Food = GRM.Food or {}
 GRM.Food.Config = {
     -- Голод
     HungerMax = 100,
-    HungerDrainPerSecond = 0.02,
+    HungerDrainPerSecond = 0.008,
     HungerDamageInterval = 10,
     HungerDamageAmount = 2,
     HungerWarningThreshold = 20,
 
     ThirstMax = 100,
-    ThirstDrainPerSecond = 0.035,
+    ThirstDrainPerSecond = 0.014,
     ThirstDamageInterval = 8,
     ThirstDamageAmount = 2,
     ThirstWarningThreshold = 20,

@@ -16,17 +16,43 @@ GRM = GRM or {}
 GRM.Time = GRM.Time or {}
 local T = GRM.Time
 
-T.Version = "2.0.0"
-T.DefaultOffsetMinutes = 180
+T.Version = "2.1.0"
+-- 0 = локальное время системы (часовой пояс ПК/сервера).
+-- Можно переопределить конваром grm_time_utc_offset_minutes (в минутах от UTC).
+T.DefaultOffsetMinutes = 0
 T.SyncInterval = 5
 
+-- Локальный UTC-оффсет системы (с учётом DST) в минутах.
+function T.LocalOffsetMinutes()
+    local utc = os.time(os.date("!*t"))
+    local loc = os.time(os.date("*t"))
+    return os.difftime(loc, utc) / 60
+end
+
 function T.FormatOffset(timestamp, offsetMinutes)
-    local shifted = (tonumber(timestamp) or os.time()) + (tonumber(offsetMinutes) or T.DefaultOffsetMinutes) * 60
-    local row = os.date("!*t", shifted)
+    local off = tonumber(offsetMinutes)
+    if off == nil then off = T.DefaultOffsetMinutes end
+    -- off == 0 → локальное время (без сдвига к UTC)
+    local shifted = (tonumber(timestamp) or os.time()) + off * 60
+    local row
+    if off == 0 then
+        row = os.date("*t", shifted)
+    else
+        row = os.date("!*t", shifted)
+    end
     return string.format("%02d:%02d:%02d", row.hour, row.min, row.sec)
 end
 
+function T.FormatDate(timestamp, offsetMinutes, fmt)
+    local off = tonumber(offsetMinutes)
+    if off == nil then off = T.DefaultOffsetMinutes end
+    local shifted = (tonumber(timestamp) or os.time()) + off * 60
+    return off == 0 and os.date(fmt or "%d.%m.%Y", shifted)
+        or os.date("!" .. (fmt or "%d.%m.%Y"), shifted)
+end
+
 -- Смещение реплицируется конваром, эпоха — глобалом.
+-- Значение по умолчанию 0 означает ЛОКАЛЬНОЕ время.
 function T.Offset()
     local cv = GetConVar("grm_time_utc_offset_minutes")
     local v = cv and cv:GetInt() or T.DefaultOffsetMinutes
@@ -64,7 +90,8 @@ function T.Clock(fmt)
     local sec = math.floor(T.Epoch())
     local slot = T._fmtCache[fmt]
     if slot and slot.sec == sec then return slot.text end
-    local text = os.date(fmt, sec + T.Offset() * 60)
+    local off = T.Offset()
+    local text = (off == 0) and os.date(fmt, sec) or os.date("!"..fmt, sec + off*60)
     T._fmtCache[fmt] = { sec = sec, text = text }
     return text
 end

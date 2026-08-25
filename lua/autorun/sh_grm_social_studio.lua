@@ -118,6 +118,8 @@ if SERVER then
             rec.sequence = tostring(rec.sequence or "")
             rec.bones = istable(rec.bones) and rec.bones or {}
             rec.prop = tostring(rec.prop or "")
+            rec.freeze = rec.freeze == true
+            rec.nomove = rec.nomove == true
             rec.cat = slug(rec.cat or rec.catName or "general")
             rec.catName = string.sub(string.Trim(tostring(rec.catName or rec.cat)), 1, 32)
             S.CatList = S.CatList or {}
@@ -572,8 +574,13 @@ local function openStudio()
     local chkW = vgui.Create("DCheckBoxLabel", left)
     chkW:SetPos(200, 40) chkW:SetText("Ходьба") chkW:SetValue(1) chkW:SetTextColor(color_white)
 
+    -- «Заморозка»: при проигрывании этой анимации игрок не может двигаться.
+    local chkFreeze = vgui.Create("DCheckBoxLabel", left)
+    chkFreeze:SetPos(10, 58) chkFreeze:SetText("Заморозить при проигрывании") chkFreeze:SetValue(0)
+    chkFreeze:SetTextColor(color_white) chkFreeze:SetTooltip("Игрок не сможет двигаться, пока активна эта анимация (можно крутить камерой)")
+
     local catBox = vgui.Create("DComboBox", left)
-    catBox:SetPos(10, 68) catBox:SetSize(168, 24)
+    catBox:SetPos(10, 86) catBox:SetSize(168, 24)
     catBox:SetValue("Общее")
     catBox.OnSelect = function() if ST.rebuildList then ST.rebuildList() end end
     function ST.rebuildCats()
@@ -594,7 +601,7 @@ local function openStudio()
     end
     ST.rebuildCats()
     local catNew = vgui.Create("DButton", left)
-    catNew:SetPos(182, 68) catNew:SetSize(88, 24) catNew:SetText("")
+    catNew:SetPos(182, 86) catNew:SetSize(88, 24) catNew:SetText("")
     catNew.Paint = function(s, w, h)
         draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(60, 150, 90) or Color(46, 110, 70))
         draw.SimpleText("+ КАТЕГОРИЯ", "GRMSocEd_B", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
@@ -607,7 +614,7 @@ local function openStudio()
     end
 
     local catDel = vgui.Create("DButton", left)
-    catDel:SetPos(10, 126) catDel:SetSize(260, 20) catDel:SetText("")
+    catDel:SetPos(10, 144) catDel:SetSize(260, 20) catDel:SetText("")
     catDel.Paint = function(s, w, h)
         draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(150, 60, 60) or Color(90, 50, 50))
         draw.SimpleText("Удалить текущую категорию", "GRMSocEd_B", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
@@ -620,14 +627,14 @@ local function openStudio()
     end
 
     local stance = vgui.Create("DComboBox", left)
-    stance:SetPos(10, 96) stance:SetSize(126, 24)
+    stance:SetPos(10, 114) stance:SetSize(126, 24)
     stance:AddChoice("T-pose", "tpose", true)
     stance:AddChoice("Стойка", "idle")
     stance:AddChoice("Присед", "crouch")
     stance.OnSelect = function(_, _, _, v) sendAct("stance", v or "tpose") end
 
     local seq = vgui.Create("DComboBox", left)
-    seq:SetPos(142, 96) seq:SetSize(128, 24)
+    seq:SetPos(142, 114) seq:SetSize(128, 24)
     seq:SetValue("sequence")
     seq:AddChoice("(нет)", "", true)
     if IsValid(lp) and lp.GetSequenceList then
@@ -642,7 +649,7 @@ local function openStudio()
     seq.OnSelect = function(_, _, _, v) sendAct("seq", v or "") end
 
     local list = vgui.Create("DListView", left)
-    list:SetPos(10, 152) list:SetSize(260, 136)
+    list:SetPos(10, 170) list:SetSize(260, 118)
     list:AddColumn("Сохранённые позы")
     list:SetMultiSelect(false)
     function ST.rebuildList()
@@ -695,6 +702,7 @@ local function openStudio()
                 chkP:SetValue(p.players ~= false)
                 chkC:SetValue(p.crouch == true)
                 chkW:SetValue(p.walk ~= false)
+                if chkFreeze then chkFreeze:SetValue(p.freeze == true or p.nomove == true) end
                 if IsValid(catBox) then
                     for i = 1, 48 do
                         local d = catBox:GetOptionData(i)
@@ -819,6 +827,7 @@ local function openStudio()
             players = chkP:GetChecked(),
             crouch = chkC:GetChecked(),
             walk = chkW:GetChecked(),
+            freeze = chkFreeze:GetChecked(),
             hold = true,
             stance = stance:GetOptionData(stance:GetSelectedID()) or "idle",
             sequence = seq:GetOptionData(seq:GetSelectedID()) or "",
