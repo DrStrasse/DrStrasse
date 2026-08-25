@@ -2280,6 +2280,12 @@ if CLIENT then
             end
         end
 
+        -- Правила бодигрупп обновились в редакторе — сразу перестроить список
+        hook.Add("GRM_FactionBodygroupsUpdated", "GRM_Char_BodygroupsLive", function()
+            if IsValid(f) and f:IsVisible() then rebuildBodygroups() end
+        end)
+        f.OnRemove = function() hook.Remove("GRM_FactionBodygroupsUpdated", "GRM_Char_BodygroupsLive") end
+
         -- Вкладка «Имя и описание».
         local infoPad = vgui.Create("DPanel", pageInfo)
         infoPad:Dock(FILL) infoPad:SetPaintBackground(false)

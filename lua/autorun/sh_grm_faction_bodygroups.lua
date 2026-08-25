@@ -168,6 +168,8 @@ if CLIENT then
     net.Receive(FB.NetSync, function()
         FB.Rules = net.ReadTable() or {}
         if FB.OnRulesUpdated then FB.OnRulesUpdated() end
+        -- открытое меню персонажа должно немедленно скрыть/заблокировать группы
+        hook.Run("GRM_FactionBodygroupsUpdated")
     end)
     concommand.Add("grm_faction_bg_editor", function()
         net.Start(FB.NetOpen) net.SendToServer()

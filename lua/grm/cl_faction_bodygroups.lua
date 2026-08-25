@@ -407,5 +407,10 @@ hook.Add("GRM_FactionUIRefreshed", "GRMFB_DataRefresh", function()
     if IsValid(frame) then rebuildTree() rebuildModels() rebuildEdit() end
 end)
 
+-- при получении обновлённых правил с сервера — обновить и это окно
+FB.OnRulesUpdated = function()
+    if IsValid(frame) then rebuildTree() rebuildModels() rebuildEdit() end
+end
+
 net.Receive(FB.NetOpen, openEditor)
 concommand.Add("grm_faction_bg_editor", function() net.Start(FB.NetOpen) net.SendToServer() end)
