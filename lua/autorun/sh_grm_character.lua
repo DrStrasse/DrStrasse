@@ -2241,7 +2241,7 @@ if CLIENT then
             -- фракционные ограничения бодигрупп для моей фракции/роли
             local factionRules = (GRM.FactionBodygroups and GRM.FactionBodygroups.Resolve)
                 and GRM.FactionBodygroups.Resolve(LocalPlayer(), draft.model) or {}
-            local added = 0
+            local added, lockedCount = 0, 0
             for i = 0, (ent:GetNumBodyGroups() or 0) - 1 do
                 local total = ent:GetBodygroupCount(i) or 1
                 local groupRule = rule.bodygroups and (rule.bodygroups[i] or rule.bodygroups[tostring(i)])
@@ -2250,6 +2250,7 @@ if CLIENT then
                 local fr = factionRules[i] or factionRules[tostring(i)]
                 local locked = fr ~= nil and (fr.lock == true or fr.force ~= nil)
                 if locked then
+                    lockedCount = lockedCount + 1
                     -- заблокированную группу прячем из меню и сбрасываем
                     -- (force перезапишет нужным значением, иначе 0)
                     draft.bodygroups = draft.bodygroups or {}
@@ -2269,6 +2270,13 @@ if CLIENT then
                         end,
                         function() return total end)
                 end
+            end
+            -- счётчик скрытых правилом фракции
+            if lockedCount > 0 then
+                local l = vgui.Create("DLabel", bodyScroll)
+                l:Dock(TOP) l:DockMargin(0, 4, 0, 0)
+                l:SetText("🔒 Скрыто правилом фракции: " .. lockedCount)
+                l:SetFont("GRMChar_Small") l:SetTextColor(Color(240, 190, 90))
             end
             if added == 0 then
                 local none = vgui.Create("DLabel", bodyScroll)
