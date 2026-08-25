@@ -918,6 +918,64 @@ if SERVER then
         return PL.SetStatus(number, "revoked", whoName)
     end
 
+    --- Полностью удалить номер из реестра (служба). Снимает все живые бланки
+    --  и чистит привязку к гаражу/автопарку.
+    function PL.Delete(number, whoName)
+        local rec = PL.Get(number)
+        if not rec then return false, "Номер не найден" end
+        number = PL.NormalizeNumber(number)
+        -- снимаем физические бланки
+        for _, ent in ipairs(PL.EntitiesOf(number)) do
+            if IsValid(ent) then
+                local veh = ent:GetParent()
+                if IsValid(veh) then
+                    -- помечаем, что это удаление, а не обычное снятие:
+                    -- Detach подчистит UID гаража/автопарка
+                    ent:Remove()
+                else
+                    ent:Remove()
+                end
+            end
+        end
+        -- если номер был привязан к машине — запомним UID до удаления записи
+        local uid = tostring(rec.vehicleUID or (rec.mount and rec.mount.parentKey) or "")
+        PL.Data.plates[number] = nil
+        PL.Save("удаление номера")
+        hook.Run("GRM_PlateDeleted", number, rec, whoName)
+        if GRM.Audit and GRM.Audit.Write then
+            GRM.Audit.Write("plates", "delete", nil, { number = number, by = whoName }, {})
+        end
+        local VD = GRM.VehicleDealer
+        if VD and VD.Garages then
+            for ownerKey, rows in pairs(VD.Garages) do
+                if istable(rows) then
+                    for rid, g in pairs(rows) do
+                        if istable(g) and (tostring(g.vehicleUID or "") == uid
+                                or tostring(g.plate or "") == number) then
+                            g.vehicleUID = nil
+                            g.plate = nil
+                            g.plates = nil
+                        end
+                    end
+                end
+            end
+            if VD.SaveGarages then pcall(VD.SaveGarages) end
+        end
+        local FL = GRM.Fleet
+        if FL and FL.Units then
+            for id, unit in pairs(FL.Units) do
+                if istable(unit) and (tostring(unit.vehicleUID or "") == uid
+                        or tostring(unit.plate or "") == number) then
+                    unit.vehicleUID = nil
+                    unit.plate = nil
+                    unit.plates = {}
+                end
+            end
+            if FL.SaveFleet then pcall(FL.SaveFleet, "delete plate " .. number) end
+        end
+        return true, "Номер удалён из реестра"
+    end
+
     -- ── физические знаки ────────────────────────────────────────────
 
     --[[ Какой номер закреплён за машиной с этим UID. Нужен окнам дилера,
@@ -2242,6 +2300,13 @@ if SERVER then
             if not IsValid(ent) then notify(ply, tostring(err or "Не удалось выдать бланк")) return end
             notify(ply, "Бланк знака выдан. Поставьте его физганом и нажмите [E], чтобы закрепить.", true)
 
+        elseif act == "delete" then
+            if not PL.CanIssue(ply) then notify(ply, "Удалять номера может только служба.") return end
+            local del, errD = PL.Delete(data.number, ply:Nick())
+            notify(ply, del and ("Номер %s удалён из реестра."):format(PL.FormatNumber(data.number))
+                or tostring(errD), del == true)
+            PL.PushSoon(ply)
+
         elseif act == "status" then
             if not PL.CanIssue(ply) then notify(ply, "Недостаточно прав.") return end
             local okSet, err = PL.SetStatus(data.number, data.status, ply:Nick())
@@ -2839,7 +2904,8 @@ if CLIENT then
         local buttons = istable(opts.buttons) and opts.buttons or {}
 
         local card = vgui.Create("DPanel", parent)
-        card:SetSize(262, 168 + math.min(2, #buttons) * 32)
+        local rows = math.min(3, #buttons)
+        card:SetSize(262, 168 + rows * 32)
 
         card.Paint = function(self, w, h)
             draw.RoundedBox(8, 0, 0, w, h, self:IsHovered() and C.cardHov or C.card)
@@ -2880,13 +2946,15 @@ if CLIENT then
             end
         end
 
-        local y = 168 - 32
-        for i = 1, math.min(2, #buttons) do
+        local y = 168 - (opts.showOwner and 0 or 32)
+        for i = 1, rows do
             local defBtn = buttons[i]
-            local b = button(card, tostring(defBtn.label or ""), defBtn.color, defBtn.fn)
-            b:SetPos(12, y) b:SetSize(238, 26)
-            b:SetEnabled(defBtn.enabled ~= false)
-            y = y + 32
+            if defBtn then
+                local b = button(card, tostring(defBtn.label or ""), defBtn.color, defBtn.fn)
+                b:SetPos(12, y) b:SetSize(238, 26)
+                b:SetEnabled(defBtn.enabled ~= false)
+                y = y + 32
+            end
         end
         return card
     end
@@ -3014,6 +3082,16 @@ if CLIENT then
                             fn = function()
                                 act("status", { number = rec.number,
                                     status = rec.status == "revoked" and "active" or "revoked" })
+                            end }
+                        buttons[#buttons + 1] = { label = "УНИЧТОЖИТЬ НОМЕР", color = C.red,
+                            fn = function()
+                                Derma_Query("Полностью удалить номер " .. PL.FormatNumber(rec.number, rec.type)
+                                    .. " из реестра? Физические бланки будут сняты.",
+                                    "Удаление номера",
+                                    "Удалить", function()
+                                        act("delete", { number = rec.number })
+                                    end,
+                                    "Отмена", function() end)
                             end }
                     end
                     plateCard(foundGrid, rec, { showOwner = true, buttons = buttons })
@@ -3220,7 +3298,11 @@ if CLIENT then
         PL.OfficerReason = tostring(data.officerReason or "")
         PL.YouKey = tostring(data.youKey or "")
         PL.YouName = tostring(data.youName or "")
+        PL.YouFaction = tostring(data.youFaction or "")
         PL.Online = istable(data.online) and data.online or {}
+        -- список организаций приходит с сервера: без него комбобокс
+        -- «Кому выдать» пустой и организацию выбрать нельзя.
+        PL.Factions = istable(data.factions) and data.factions or PL.Factions
         if istable(data.found) and #data.found > 0 then PL.Found = data.found end
 
         local sig = snapshotSignature(data)
