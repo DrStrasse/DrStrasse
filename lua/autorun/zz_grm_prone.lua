@@ -6,14 +6,52 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Prone = GRM.Prone or {}
 
+--[[ Детект Prone Mod.
+
+     Prone объявляет пустую таблицу `prone` в prone_init.lua, а функции
+     (prone.Handle, PLAYER:IsProne) добавляет только в хуке Initialize —
+     ПОЗЖЕ загрузки autorun. Поэтому одна проверка в момент загрузки моста
+     может наврать «аддон не установлен». Повторяем проверку до первого
+     успеха и кэшируем результат; дополнительно признаём мод по конвару
+     и факту существования метода IsProne (вдруг API другой версии). ]]
+local _proneReady = nil
+local function detectProne()
+    if _proneReady ~= nil then return _proneReady end
+    local hasIsProne = false
+    if FindMetaTable then
+        local ok, mt = pcall(FindMetaTable, "Player")
+        hasIsProne = ok and istable(mt) and isfunction(mt.IsProne)
+    end
+    local ok = (istable(prone) and isfunction(prone.Handle))
+        or hasIsProne
+        or (isfunction(prone) and isfunction(prone.Request))
+    if ok then _proneReady = true end
+    return ok == true
+end
+
 function GRM.Prone.ModLoaded()
-    return istable(prone) and isfunction(prone.Handle)
+    -- даём моду до 5 секунд на инициализацию, потом считаем, что его нет
+    if _proneReady == nil and CurTime() > (GRM._proneProbeUntil or (CurTime() + 5)) then
+        if not detectProne() then _proneReady = false end
+    end
+    return detectProne()
 end
 
 function GRM.Prone.Is(ply)
     if not IsValid(ply) then return false end
     if ply.IsProne and ply:IsProne() then return true end
     return ply:GetNWBool("GRM_Prone", false)
+end
+
+-- Мост мог загрузиться раньше Prone: как только тот объявит готовность,
+-- проставляем флаг (хук вызывает сам Prone Mod в конце инициализации).
+hook.Add("prone.Initialized", "GRM_Prone_Detected", function()
+    _proneReady = true
+end)
+if SERVER then
+    hook.Add("InitPostEntity", "GRM_Prone_Detect", function()
+        timer.Simple(1, function() detectProne() end)
+    end)
 end
 
 hook.Add("Think", "GRM_Prone_Mirror", function()

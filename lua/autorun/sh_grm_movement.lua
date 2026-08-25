@@ -172,9 +172,11 @@ if SERVER then
                 else
                     local isRunning = ply:KeyDown(IN_SPEED) and ply:GetVelocity():Length2D() > 50
                     local isOnGround = ply:IsOnGround()
-                    local prone = ply:GetNWBool("GRM_Prone", false)
+                    local isProne = (GRM.Prone and GRM.Prone.Is) and GRM.Prone.Is(ply)
+                        or ply:GetNWBool("GRM_Prone", false)
 
-                    if isRunning and isOnGround and not prone then
+                    -- лёжа стамина не тратится бегом и не качается отжиманиями
+                    if isRunning and isOnGround and not isProne then
                         data.stamina = math.max(0, data.stamina - cfg.StaminaDrain * dt)
                         if data.stamina > 12 then
                             local before = data.max
@@ -199,7 +201,12 @@ if SERVER then
         if not IsValid(ply) then return end
         -- В транспорте стамина не влияет на скорость
         if ply:InVehicle() then return end
-        
+        --[[ PRONE: пока игрок лежит (Prone Mod/system_prone), его скоростью
+             управляет сам мод через SetupMove (по умолчанию 50). Наш
+             ограничитель зажимал её до Walk/Run (160/220) и ломал ползание.
+             Поэтому лёжа стамина не трогает скорость. ]]
+        if GRM.Prone and GRM.Prone.Is and GRM.Prone.Is(ply) then return end
+
         local data = getPlayerData(ply)
         local isOnGround = ply:IsOnGround()
         local isRunning = ply:KeyDown(IN_SPEED)
