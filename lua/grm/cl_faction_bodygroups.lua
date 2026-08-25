@@ -75,12 +75,15 @@ local function modelListForScope()
     if not istable(f) then return out end
     if state.scopeKind == "faction" then
         add(f.Models); add(f.model); add(f.DefaultModels)
-        for _, r in ipairs(f.Roles or {}) do add(f["RoleModels_" .. r]) end
+        for _, r in ipairs(f.Roles or {}) do
+            if istable(f.RoleModels) then add(f.RoleModels[r]) end
+        end
     elseif state.scopeKind == "role" then
-        add(f["RoleModels_" .. state.scopeKey])
+        if istable(f.RoleModels) then add(f.RoleModels[state.scopeKey]) end
     elseif state.scopeKind == "department" then
         local d = f.Departments and f.Departments[state.scopeKey]
         if istable(d) then add(d.Models); add(d.model) end
+        if istable(f.DepartmentModels) then add(f.DepartmentModels[state.scopeKey]) end
     elseif state.scopeKind == "subdepartment" then
         local parent, sub = state.scopeKey:match("^(.-)/(.+)$")
         local d = f.Departments and f.Departments[parent]
@@ -237,10 +240,19 @@ local function rebuildModels()
     for _, p in ipairs(list) do addRow(p, p == "*" and "ВСЕ модели (*)" or p) end
 end
 
+
+local function allFactions()
+    local out = {}
+    for _, src in ipairs({ FactionsData, Factions, GRM.Factions and GRM.Factions.Data }) do
+        if istable(src) then for k, v in pairs(src) do if istable(v) then out[k] = v end end end
+    end
+    return out
+end
+
 local function rebuildTree()
     if not IsValid(treePanel) then return end
     treePanel:Clear()
-    local data = FactionsData or Factions or {}
+    local data = allFactions()
     local keys = {}
     for k in pairs(data) do keys[#keys + 1] = k end
     table.sort(keys)
@@ -294,7 +306,7 @@ end
 local function openEditor()
     if IsValid(frame) then frame:Remove() end
     frame = vgui.Create("DFrame")
-    frame:SetSize(1180, 720) frame:Center() frame:MakePopup()
+    frame:SetSize(math.max(1280, ScrW()*0.92), math.max(820, ScrH()*0.92)) frame:Center() frame:MakePopup()
     frame:SetTitle("") frame:ShowCloseButton(false)
     frame.Paint = function(_, w, h)
         draw.RoundedBox(8, 0, 0, w, h, COL.bg)
@@ -304,6 +316,14 @@ local function openEditor()
     local close = vgui.Create("DButton", frame) close:SetPos(1140, 10) close:SetSize(30, 26) close:SetText("X")
     close:SetTextColor(COL.text) close.Paint = function(s, w, h) draw.RoundedBox(4,0,0,w,h,s:IsHovered() and COL.red or Color(45,52,68)) end
     close.DoClick = function() frame:Close() end
+
+    local refresh = vgui.Create("DButton", frame) refresh:SetPos(770, 10) refresh:SetSize(120, 26) refresh:SetText("ОБНОВИТЬ")
+    refresh:SetTextColor(COL.text) refresh:SetFont("GRMFB_Body")
+    refresh.Paint = function(s,w,h) draw.RoundedBox(4,0,0,w,h,s:IsHovered() and Color(60,110,160) or Color(40,70,110)) end
+    refresh.DoClick = function()
+        net.Start("Factions_GetData") net.SendToServer()
+        rebuildTree() rebuildModels() rebuildEdit()
+    end
 
     local save = vgui.Create("DButton", frame) save:SetPos(900, 10) save:SetSize(120, 26) save:SetText("СОХРАНИТЬ")
     save:SetTextColor(COL.text) save:SetFont("GRMFB_Body")
@@ -329,12 +349,21 @@ local function openEditor()
     editPanel = vgui.Create("DPanel", body)
     editPanel:Dock(FILL) editPanel:SetPaintBackground(false)
 
+    -- запросить актуальные данные фракций, если локально пусто
+    if table.Count(allFactions()) == 0 then
+        net.Start("Factions_GetData") net.SendToServer()
+    end
+
     -- выбрать первую фракцию по умолчанию
     if not state.faction then
         for k in pairs(FactionsData or Factions or {}) do state.faction = k state.scopeKind = "faction" state.scopeKey = "all" break end
     end
     rebuildTree() rebuildModels() rebuildEdit()
 end
+
+hook.Add("GRM_FactionUIRefreshed", "GRMFB_DataRefresh", function()
+    if IsValid(frame) then rebuildTree() rebuildModels() rebuildEdit() end
+end)
 
 net.Receive(FB.NetOpen, openEditor)
 concommand.Add("grm_faction_bg_editor", function() net.Start(FB.NetOpen) net.SendToServer() end)
