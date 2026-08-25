@@ -271,9 +271,14 @@ surface.CreateFont("GRMSocEd_B", { font = "Roboto", size = 13, weight = 500, ext
 local ST = { on = false, yaw = 160, pitch = 6, dist = 90, bone = "ValveBiped.Bip01_R_UpperArm", bones = {}, mode = "rotate" }
 
 net.Receive("GRM_SocStudio_Sync", function()
-    local list = net.ReadTable() or {}
-    if GRM.Social and GRM.Social.ApplyCatalog then GRM.Social.ApplyCatalog(list) end
-    ST.catalog = list
+    local payload = net.ReadTable() or {}
+    local poses = istable(payload.poses) and payload.poses or (istable(payload) and payload or {})
+    local cats  = istable(payload.cats)  and payload.cats  or {}
+    if #cats == 0 then cats = { { id = "general", name = "Общее" }, { id = "docs", name = "Документы" } } end
+    ST.catalog = poses
+    ST.cats = cats
+    if GRM.Social and GRM.Social.ApplyCatalog then GRM.Social.ApplyCatalog(poses, cats) end
+    if ST.rebuildCats then ST.rebuildCats() end
     if ST.rebuildList then ST.rebuildList() end
 end)
 
@@ -570,10 +575,13 @@ local function openStudio()
     local catBox = vgui.Create("DComboBox", left)
     catBox:SetPos(10, 68) catBox:SetSize(168, 24)
     catBox:SetValue("Общее")
+    catBox.OnSelect = function() if ST.rebuildList then ST.rebuildList() end end
     function ST.rebuildCats()
         if not IsValid(catBox) then return end
         local keep = catBox:GetOptionData(catBox:GetSelectedID() or 0) or "general"
         catBox:Clear()
+        -- 0 = все категории
+        catBox:AddChoice("Все категории", "all", keep == "all")
         local cats = ST.cats or (GRM.Social and GRM.Social.CatList) or {}
         if #cats == 0 then cats = { { id = "general", name = "Общее" } } end
         local sel = false
@@ -657,6 +665,10 @@ local function openStudio()
     end
     ST.rebuildList()
 
+    -- ЛКМ — загрузить позу, ПКМ — меню.
+    list.OnRowSelected = function(_, _, line)
+        if line and line._id then loadPose(line._id) end
+    end
     -- контекстное меню позы: загрузить / переместить / удалить
     list.OnRowRightClick = function(_, _, line)
         if not (line and line._id) then return end
@@ -823,6 +835,17 @@ local function openStudio()
 end
 
 net.Receive("GRM_SocStudio_Open", function() openStudio() end)
+
+-- Клиентская команда для каталога админки / F4: серверный concommand
+-- grm_anim_studio есть только на сервере, поэтому здесь открываем студией локально.
+concommand.Add("grm_anim_studio", function()
+    -- сначала просим сервер открыть студию (заморозка, синк каталога)
+    net.Start("GRM_SocStudio_Act")
+        net.WriteString("open")
+    net.SendToServer()
+    -- и открываем окно у себя
+    openStudio()
+end)
 timer.Create("GRM_SocStudio_Ping", 2, 0, function()
     if ST.on then sendAct("ping") applyLocal() end
 end)
