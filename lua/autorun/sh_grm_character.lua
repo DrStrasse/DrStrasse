@@ -2238,31 +2238,17 @@ if CLIENT then
             end
 
             local rule = draft.wardrobeRule or {}
-            -- фракционные ограничения бодигрупп для моей фракции/роли
-            local factionRules = (GRM.FactionBodygroups and GRM.FactionBodygroups.Resolve)
-                and GRM.FactionBodygroups.Resolve(LocalPlayer(), draft.model) or {}
-            local added, lockedCount = 0, 0
+            local added = 0
             for i = 0, (ent:GetNumBodyGroups() or 0) - 1 do
                 local total = ent:GetBodygroupCount(i) or 1
                 local groupRule = rule.bodygroups and (rule.bodygroups[i] or rule.bodygroups[tostring(i)])
                 local allowed = (payload.allowBodygroups ~= false)
                     and (not isWardrobe or groupRule == nil or groupRule == true or istable(groupRule))
-                local fr = factionRules[i] or factionRules[tostring(i)]
-                local locked = fr ~= nil and (fr.lock == true or fr.force ~= nil)
-                if locked then
-                    lockedCount = lockedCount + 1
-                    -- заблокированную группу прячем из меню и сбрасываем
-                    -- (force перезапишет нужным значением, иначе 0)
-                    draft.bodygroups = draft.bodygroups or {}
-                    CH.BodygroupSet(draft.bodygroups, i, (fr and fr.force ~= nil) and fr.force or 0)
-                    -- сразу применить к превью
-                    ent:SetBodygroup(i, (fr and fr.force ~= nil) and tonumber(fr.force) or 0)
-                end
-                if total > 1 and allowed and not locked then
+                if total > 1 and allowed then
                     added = added + 1
                     local name = ent:GetBodygroupName(i)
                     if name == "" then name = "Группа " .. i end
-                    local row = stepperRow(bodyScroll, name,
+                    stepperRow(bodyScroll, name,
                         function() return CH.BodygroupGet(draft.bodygroups, i) end,
                         function(v)
                             draft.bodygroups = draft.bodygroups or {}
@@ -2271,13 +2257,6 @@ if CLIENT then
                         function() return total end)
                 end
             end
-            -- счётчик скрытых правилом фракции
-            if lockedCount > 0 then
-                local l = vgui.Create("DLabel", bodyScroll)
-                l:Dock(TOP) l:DockMargin(0, 4, 0, 0)
-                l:SetText("🔒 Скрыто правилом фракции: " .. lockedCount)
-                l:SetFont("GRMChar_Small") l:SetTextColor(Color(240, 190, 90))
-            end
             if added == 0 then
                 local none = vgui.Create("DLabel", bodyScroll)
                 none:Dock(TOP) none:SetText("У этой модели нет настраиваемых частей.")
@@ -2285,11 +2264,6 @@ if CLIENT then
             end
         end
 
-        -- Правила бодигрупп обновились в редакторе — сразу перестроить список
-        hook.Add("GRM_FactionBodygroupsUpdated", "GRM_Char_BodygroupsLive", function()
-            if IsValid(f) and f:IsVisible() then rebuildBodygroups() end
-        end)
-        f.OnRemove = function() hook.Remove("GRM_FactionBodygroupsUpdated", "GRM_Char_BodygroupsLive") end
 
         -- Вкладка «Имя и описание».
         local infoPad = vgui.Create("DPanel", pageInfo)
@@ -2465,10 +2439,6 @@ if CLIENT then
         CH._nextOpenRequest = RealTime() + .5
         local slot = CH._previewSlot or (IsValid(lp) and lp:GetNWString("GRM_CharacterID", "char1")) or "char1"
         net.Start(NET_REQUEST); net.WriteString(slot); net.SendToServer()
-        -- подтянуть свежие правила бодигрупп
-        if GRM.FactionBodygroups and GRM.FactionBodygroups.NetRequest then
-            net.Start(GRM.FactionBodygroups.NetRequest); net.SendToServer()
-        end
     end
     concommand.Add("grm_character", CH.OpenMenu)
 
