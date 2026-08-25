@@ -1149,8 +1149,18 @@ if SERVER then
 
         local number = PL.NormalizeNumber(plate:GetNWString("GRM_Plate", ""))
         local rec = PL.Get(number)
+        -- запомним машину, с которой снимаем, чтобы почистить её UID в
+        -- гараже/автопарке (rememberLayout ниже обнулит только список plates)
+        local detachVeh = IsValid(veh) and veh or nil
         if rec then
             rec.mount = nil
+            --[[ СНИМАЕМ ПРИВЯЗКУ К МАШИНЕ ПОЛНОСТЬЮ.
+                 Раньше чистился только rec.mount, а rec.vehicleUID оставался —
+                 и окна гаража/автопарка продолжали показывать номер как
+                 закреплённый (жалоба владельца: «не вижу чтобы запоминало
+                 снятие»). Теперь при снятии номер полностью отвязывается
+                 от конкретного транспорта. ]]
+            rec.vehicleUID = nil
             addHistory(rec, seize and "изъят сотрудником" or "снят с транспорта",
                 IsValid(actor) and actor:Nick() or "владелец")
             if seize then rec.status = "seized" end
@@ -1160,6 +1170,29 @@ if SERVER then
             local rest = PL.VehiclePlates(veh)
             veh:SetNWString("GRM_PlateNumber", #rest > 0 and rest[1]:GetNWString("GRM_Plate", "") or "")
             rememberLayout(veh)
+            -- если знаков на машине не осталось — снимаем UID-привязку
+            -- и с записи гаража, и с единицы автопарка
+            if #rest == 0 and detachVeh then
+                local VD = GRM.VehicleDealer
+                if IsValid(veh.GRMGarageOwner) and veh.GRMGarageID and VD and VD.FindRecord then
+                    local gr = VD.FindRecord(veh.GRMGarageOwner, tostring(veh.GRMGarageID))
+                    if istable(gr) then
+                        gr.vehicleUID = nil
+                        gr.plate = nil
+                        if VD.SaveGarages then VD.SaveGarages() end
+                    end
+                end
+                local FL = GRM.Fleet
+                local fid = tostring(veh.GRMFleetID or veh.GRMFleetUnit or "")
+                if FL and FL.Unit and fid ~= "" then
+                    local unit = FL.Unit(fid)
+                    if istable(unit) then
+                        unit.vehicleUID = nil
+                        unit.plate = nil
+                        if FL.SaveFleet then FL.SaveFleet("снятие знака") end
+                    end
+                end
+            end
         end
         hook.Run("GRM_PlateDetached", plate, veh, actor)
         return true
