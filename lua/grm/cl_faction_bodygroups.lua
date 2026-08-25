@@ -2,7 +2,8 @@
 ------------------------------------------------------------------
 -- КЛИЕНТСКИЙ РЕДАКТОР ПРАВИЛ БОДИГРУПП
 ------------------------------------------------------------------
-if CLIENT then
+local FB = FB or GRM.FactionBodygroups
+if CLIENT and FB then
     local function combo(parent, items, get, onsel)
         local cb = vgui.Create("DComboBox", parent)
         cb:SetValue("—")

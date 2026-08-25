@@ -15,7 +15,7 @@ if SERVER then AddCSLuaFile() AddCSLuaFile("grm/cl_faction_bodygroups.lua") end
 
 GRM = GRM or {}
 GRM.FactionBodygroups = GRM.FactionBodygroups or {}
-local FB = GRM.FactionBodygroups
+FB = GRM.FactionBodygroups  -- global: needed for include()-d client editor
 
 FB.Version = "1.0.0"
 FB.NetOpen   = "GRM_FBg_Open"
