@@ -3235,10 +3235,53 @@ if CLIENT then
     end
     PL.OpenEditor = openEditor
 
-    concommand.Add("grm_plate_edit", function()
-        local tr = LocalPlayer():GetEyeTrace()
+    --[[ Какой знак редактировать.
+
+         У закреплённого знака коллизия выключена (MOVETYPE_NONE /
+         SOLID_NONE), поэтому EyeTrace по нему НЕ попадает — луч проходит
+         сквозь табличку и бьёт в машину. Из-за этого /номер_ред и ПКМ
+         работали только по снятому знаку. Ищем:
+           1) знак напрямую (снятый, у него есть коллизия);
+           2) знаки, припаркованные к транспорту, в который смотрим;
+           3) ближайший незакреплённый знак в радиусе. ]]
+    local function targetPlate()
+        local lp = LocalPlayer()
+        if not IsValid(lp) then return nil end
+        local tr = (GRM.Perf and GRM.Perf.EyeTrace) and GRM.Perf.EyeTrace(lp) or lp:GetEyeTrace()
         local ent = tr and tr.Entity
-        if IsValid(ent) and ent:GetClass() == "grm_plate" then openEditor(ent) end
+        if IsValid(ent) and ent:GetClass() == "grm_plate" then return ent end
+
+        -- смотрим на транспорт — берём его знаки
+        if IsValid(ent) and PL.VehicleBase and PL.VehicleBase(ent) then
+            local base = PL.VehicleBase(ent)
+            if IsValid(base) and base.GetChildren then
+                local best, bestD
+                for _, ch in ipairs(base:GetChildren() or {}) do
+                    if IsValid(ch) and ch:GetClass() == "grm_plate" and canEditPlate(ch) then
+                        -- ближайший к точке попадания лучом знак
+                        local d = ch:GetPos():Distance(tr.HitPos or ch:GetPos())
+                        if not bestD or d < bestD then best, bestD = ch, d end
+                    end
+                end
+                if IsValid(best) then return best end
+            end
+        end
+
+        -- фолбэк: ближайший свободный/закреплённый знак в пределах 180 юн.
+        local best, bestD
+        for _, ch in ipairs(ents.FindByClass("grm_plate")) do
+            if IsValid(ch) and canEditPlate(ch) then
+                local d = lp:GetPos():Distance(ch:GetPos())
+                if d < 180 and (not bestD or d < bestD) then best, bestD = ch, d end
+            end
+        end
+        return best
+    end
+    PL.TargetPlate = targetPlate
+
+    concommand.Add("grm_plate_edit", function()
+        local plate = targetPlate()
+        if IsValid(plate) then openEditor(plate) end
     end)
 
     hook.Add("PlayerSayTransform", "GRM_Plates_EditorChat", function(ply, pack)
@@ -3253,10 +3296,9 @@ if CLIENT then
     -- клик правой кнопкой по 3D2D-плашке над знаком — открыть редактор
     hook.Add("GUIMousePressed", "GRM_Plates_EditorClick", function(mc)
         if mc ~= MOUSE_RIGHT then return end
-        local tr = LocalPlayer():GetEyeTrace()
-        local ent = tr and tr.Entity
-        if IsValid(ent) and ent:GetClass() == "grm_plate" and canEditPlate(ent) then
-            openEditor(ent)
+        local plate = targetPlate()
+        if IsValid(plate) and canEditPlate(plate) then
+            openEditor(plate)
         end
     end)
 
