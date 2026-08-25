@@ -546,7 +546,7 @@ local function DrawMainHUD()
         and ((GRM.Format and GRM.Format(math.Round(anim.bank))) or ("$" .. string.Comma(math.Round(anim.bank))))
         or "—"
 
-    local hx, hy, hw, hh = 16, 16, 312, 134
+    local hx, hy, hw, hh = 16, 16, 356, 150
     draw.RoundedBox(8, hx, hy, hw, hh, Color(8, 14, 23, 150))
     surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, 85)
     surface.DrawOutlinedRect(hx, hy, hw, hh, 1)

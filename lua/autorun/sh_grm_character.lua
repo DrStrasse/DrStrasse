@@ -1029,21 +1029,16 @@ if SERVER then
     end
 
     hook.Add("PlayerInitialSpawn", "GRM_Char_OnJoin", function(ply)
+        -- Каждая сессия начинается «неподтверждённой»: даже если у игрока
+        -- есть сохранённый персонаж, до явного входа (кнопка «Начать играть»)
+        -- он обязан сидеть в лимбо и видеть меню, а не спавниться в мире.
         ply.GRMCharConfirmed = nil
-        --[[ ФИКС ПОТОКА СПАВНА (25.08): до правки блокировка ставилась
-             только через 0.2 с, а движок уже спавнил игрока в мире за
-             эти 0.2 с — он видел карту и персонажа до выбора. Теперь при
-             самом первом появлении, если персонаж ещё не подтверждён,
-             хук PlayerSpawn сразу уносит в лимбо, и на экране висит
-             загрузка → «Начать играть» → меню персонажа → только потом
-             реальный спавн с моделью и оружием. ]]
         normalizePlayerData(ply)
-        -- ставим блокировку немедленно (без таймера), чтобы первый же
-        -- PlayerSpawn ушёл в лимбо
         local rec = normalizePlayerData(ply)
         local slot = tostring(rec and rec.active or "char1")
         ensureChar(ply, slot)
-        setCharacterLock(ply, not hasCharacter(ply, slot), true)
+        -- Блокируем ВСЕГДА до подтверждения, независимо от наличия персонажа.
+        setCharacterLock(ply, true, true)
 
         menuAfterLoading(ply, 1.5)
         timer.Simple(60, function()
@@ -1068,12 +1063,35 @@ if SERVER then
         if not IsValid(ply) then return end
         -- уже подтвердил персонажа — обычный спавн, не вмешиваемся
         if ply.GRMCharConfirmed == true then return end
+        -- НЕМЕДЛЕННО в лимбо: до любых таймеров и отрисовки кадра,
+        -- чтобы игрок не успел увидеть мир/модель до выбора персонажа.
+        CH.SendToLimbo(ply)
         timer.Simple(0, function()
             if not IsValid(ply) or ply.GRMCharConfirmed == true then return end
-            if CH.PendingSelection[sid64(ply)] then
-                CH.SendToLimbo(ply)
-            end
+            if CH.PendingSelection[sid64(ply)] then CH.SendToLimbo(ply) end
         end)
+        timer.Simple(0.1, function()
+            if IsValid(ply) and ply.GRMCharConfirmed ~= true then CH.SendToLimbo(ply) end
+        end)
+    end)
+
+    -- Запрещаем любую точку спавна, пока персонаж не подтверждён:
+    -- движок не поставит игрока в мире, даже если лимбо-хук опоздал.
+    hook.Add("IsSpawnpointAllowed", "GRM_Char_NoSpawn", function(ply)
+        if IsValid(ply) and ply.GRMCharConfirmed ~= true then return false end
+    end)
+    hook.Add("PlayerSelectSpawn", "GRM_Char_NoSpawn", function(ply)
+        if IsValid(ply) and ply.GRMCharConfirmed ~= true then
+            -- отдаём фиктивную точку в лимбо, чтобы игрок не появлялся у info_*
+            local ent = ents.Create("info_target")
+            if IsValid(ent) then
+                ent:SetPos(CH.LimboPos)
+                ent:Spawn()
+                -- одноразовая точка
+                timer.Simple(0, function() if IsValid(ent) then ent:Remove() end end)
+                return ent
+            end
+        end
     end)
 
     hook.Add("PlayerSpawn", "GRM_Char_BlockUnselectedSpawn", function(ply)

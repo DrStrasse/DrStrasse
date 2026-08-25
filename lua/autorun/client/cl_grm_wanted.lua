@@ -40,5 +40,5 @@ net.Receive(DATA,function()open(net.ReadBool(),net.ReadTable()or{},net.ReadTable
 net.Receive(SYNC,function()W.LocalLevel=net.ReadUInt(4);net.ReadString();hook.Run("GRM_WantedLevelChanged",W.LocalLevel)end)
 net.Receive(INFO,function()notification.AddLegacy(net.ReadString(),NOTIFY_GENERIC,4)end)
 function W.OpenMenu()net.Start(OPEN)net.SendToServer()end;concommand.Add("grm_wanted",W.OpenMenu)
-hook.Add("HUDPaint","GRM_Wanted_BadgeV2",function()local l=tonumber(W.LocalLevel)or LocalPlayer():GetNW2Int("GRM_WantedLevel",0);if l<=0 then return end;local _,i=W.GetLevelInfo(l);local bx,by,bw,bh=340,124,134,26;draw.RoundedBox(6,bx,by,bw,bh,i.color);draw.SimpleText((i.short or"").." "..i.name,"GRMW2_Body",bx+bw/2,by+bh/2,Color(255,255,255),TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)end)
+hook.Add("HUDPaint","GRM_Wanted_BadgeV2",function()local l=tonumber(W.LocalLevel)or LocalPlayer():GetNW2Int("GRM_WantedLevel",0);if l<=0 then return end;local _,i=W.GetLevelInfo(l);local bx,by,bw,bh=384,124,150,26;draw.RoundedBox(6,bx,by,bw,bh,i.color);draw.SimpleText((i.short or"").." "..i.name,"GRMW2_Body",bx+bw/2,by+bh/2,Color(255,255,255),TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)end)
 print("[GRM Wanted] client v2.0 loaded")
