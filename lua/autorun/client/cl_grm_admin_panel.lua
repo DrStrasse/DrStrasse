@@ -1055,11 +1055,6 @@ local function buildChars(pnl)
     end)
     find:SetPos(442, 50) find:SetSize(110, 28)
 
-<<<<<<< HEAD
-    -- Колонки: имя/фракция/модель занимают левую часть, кнопки справа.
-    local COL_NAME, COL_FAC, COL_MODEL = 240, 150, 220
-    local BTN = 62
-=======
     local hint = vgui.Create("DLabel", head)
     hint:SetFont("GRMAdm_Small"); hint:SetTextColor(C.dim)
     hint:SetText("В колонке «МОДЕЛЬ» — только имя файла; полный путь открывается кнопкой.")
@@ -1070,22 +1065,10 @@ local function buildChars(pnl)
     local BTN_BLOCK = BTN_W * 5 + BTN_GAP * 4
     local COL_FAC, COL_MODEL = 210, 230
     local ROW_H = 40
->>>>>>> 692bb00 (HUD card: add player ID and session timer under avatar; move wanted badge to top; anim studio categories)
 
     local scroll = vgui.Create("DScrollPanel", pnl)
     scroll:Dock(FILL)
 
-<<<<<<< HEAD
-    local function headerRow(parent)
-        local bar = vgui.Create("DPanel", parent)
-        bar:Dock(TOP) bar:SetTall(22) bar:DockMargin(0, 0, 6, 4)
-        bar.Paint = function(_, w, h)
-            draw.RoundedBox(6, 0, 0, w, h, Color(28, 36, 50))
-            draw.SimpleText("СЛОТ / ИМЯ", "GRMAdm_Small", 10, 4, C.dim)
-            draw.SimpleText("ФРАКЦИЯ", "GRMAdm_Small", COL_NAME + 10, 4, C.dim)
-            draw.SimpleText("МОДЕЛЬ", "GRMAdm_Small", COL_NAME + COL_FAC + 10, 4, C.dim)
-        end
-=======
     local function slotRow(parent, acc, sl, i, total)
         local row = vgui.Create("DPanel", parent)
         row:Dock(TOP) row:DockMargin(12, 0, 12, i == total and 6 or 4) row:SetTall(ROW_H)
@@ -1165,7 +1148,6 @@ local function buildChars(pnl)
 
         row.PerformLayout = placeButtons
         return row
->>>>>>> 692bb00 (HUD card: add player ID and session timer under avatar; move wanted badge to top; anim studio categories)
     end
 
     local function paintRoster()
@@ -1191,84 +1173,6 @@ local function buildChars(pnl)
 
             local card = vgui.Create("DPanel", scroll)
             card:Dock(TOP) card:DockMargin(0, 0, 6, 8)
-<<<<<<< HEAD
-            local rows = 0
-            for _ in ipairs(acc.slots or {}) do rows = rows + 1 end
-            card:SetTall(34 + rows * 42)
-            card.Paint = function(_, w, h)
-                draw.RoundedBox(8, 0, 0, w, h, C.card)
-                local title = (acc.nick ~= "" and acc.nick or acc.sid) .. (acc.online and "  ·  в сети" or "  ·  офлайн")
-                draw.SimpleText(title, "GRMAdm_Sub", 14, 8, C.text)
-                draw.SimpleText("SteamID64: " .. tostring(acc.sid), "GRMAdm_Small", 14, 26, C.dim)
-            end
-
-            if rows > 0 then headerRow(card) end
-
-            for i, sl in ipairs(acc.slots or {}) do
-                local line = vgui.Create("DPanel", card)
-                line:SetPos(12, 34 + 22 + (i - 1) * 42)
-                line:SetSize(980, 38)
-                line.Paint = function(_, w, h)
-                    draw.RoundedBox(6, 0, 0, w, h, C.cardLight)
-                    local nm = sl.exists and (sl.name ~= "" and sl.name or ("Слот " .. i)) or ("Пустой слот " .. i)
-                    draw.SimpleText(nm, "GRMAdm_Body", 10, 10, sl.exists and C.text or C.dim)
-                    local fac = sl.exists and ((sl.factionName ~= "" and sl.factionName) or "гражданин") or "—"
-                    draw.SimpleText(fac, "GRMAdm_Small", COL_NAME + 10, 12,
-                        (sl.factionName ~= "") and C.gold or C.dim)
-                    local model = sl.exists and (sl.model ~= "" and string.match(sl.model, "[^/]+$") or "по умолчанию") or "—"
-                    draw.SimpleText(model, "GRMAdm_Small", COL_NAME + COL_FAC + 10, 12, C.dim)
-                    if sl.active then
-                        draw.SimpleText("● активен", "GRMAdm_Small", w - 10, 12, C.green, TEXT_ALIGN_RIGHT)
-                    end
-                end
-
-                if sl.exists then
-                    local function q() return search:GetValue() end
-                    local x = COL_NAME + COL_FAC + COL_MODEL
-                    local rename = btn(line, "ИМЯ", C.accent, function()
-                        Derma_StringRequest("РП-имя", "Новое имя и фамилия для " .. tostring(sl.id),
-                            sl.name or "", function(text)
-                                act("char_rename", "", { sid = acc.sid, slot = sl.id, name = text, query = q() })
-                            end)
-                    end)
-                    rename:SetPos(x + 6, 5) rename:SetSize(BTN, 28)
-                    local mdl = btn(line, "МОДЕЛЬ", C.cardHov, function()
-                        Derma_StringRequest("Модель персонажа",
-                            "Путь к модели (.mdl). Оставьте пустым, чтобы снять принудительную.",
-                            tostring(sl.model or ""), function(text)
-                                act("char_model", "", { sid = acc.sid, slot = sl.id, model = string.Trim(text or ""), query = q() })
-                            end)
-                    end)
-                    mdl:SetPos(x + 6 + BTN + 4, 5) mdl:SetSize(BTN, 28)
-                    local fac = btn(line, "ФРАКЦИЯ", C.cardHov, function()
-                        Derma_StringRequest("Фракция",
-                            "Ключ фракции (как в /factions). Пусто = гражданский (без сброса прав).",
-                            tostring(sl.factionName or ""), function(text)
-                                act("char_faction", "", { sid = acc.sid, slot = sl.id, faction = string.Trim(text or ""), query = q() })
-                            end)
-                    end)
-                    fac:SetPos(x + 6 + (BTN + 4) * 2, 5) fac:SetSize(BTN, 28)
-                    local accb = btn(line, "ДОСТУП", C.cardHov, function()
-                        Derma_StringRequest("Персональный доступ",
-                            "Capability (например wanted.civil.edit). Префикс «-» снимает право.",
-                            "", function(text)
-                                local v = string.Trim(text or "")
-                                local allow = not string.StartWith(v, "-")
-                                local cap = allow and v or string.sub(v, 2)
-                                act("char_access", "", { sid = acc.sid, slot = sl.id, capability = cap, allow = allow, query = q() })
-                            end)
-                    end)
-                    accb:SetPos(x + 6 + (BTN + 4) * 3, 5) accb:SetSize(BTN, 28)
-                    local del = btn(line, "УДАЛИТЬ", C.red, function()
-                        Derma_Query(("Удалить персонажа «%s» (%s) у %s?\nИмя, модель, фракция и персональные права очищены.")
-                            :format(sl.name ~= "" and sl.name or sl.id, sl.id, acc.sid),
-                            "Удаление персонажа", "Удалить", function()
-                                act("char_delete", "", { sid = acc.sid, slot = sl.id, query = q() })
-                            end, "Отмена")
-                    end)
-                    del:SetPos(x + 6 + (BTN + 4) * 4, 5) del:SetSize(76, 28)
-                end
-=======
             card:SetTall(36 + (rows > 0 and (22 + 4) or 0) + rows * (ROW_H + 4) + 6)
             card.Paint = function(_, w, h)
                 draw.RoundedBox(8, 0, 0, w, h, C.card)
@@ -1290,7 +1194,6 @@ local function buildChars(pnl)
                     w - BTN_BLOCK - COL_FAC - COL_MODEL, 3, C.dim)
                 draw.SimpleText("МОДЕЛЬ", "GRMAdm_Small",
                     w - BTN_BLOCK - COL_MODEL, 3, C.dim)
->>>>>>> 692bb00 (HUD card: add player ID and session timer under avatar; move wanted badge to top; anim studio categories)
             end
 
             for i, sl in ipairs(slots) do
