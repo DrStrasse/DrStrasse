@@ -33,7 +33,7 @@ AS.Config = AS.Config or {
     -- Сколько секунд после выхода игрок временно не сталкивается с машиной.
     NoCollideTime = 1.25,
     -- Сколько секунд после выхода проверять, не застрял ли игрок.
-    PostExitCheckTime = 1.8,
+    PostExitCheckTime = 0.8,
     -- Как часто проверять только игроков, которые недавно вышли из транспорта.
     ThinkInterval = 0.25,
     -- Насколько далеко от края машины искать безопасную точку.
@@ -80,7 +80,7 @@ if AS.Config.ProfileVersion < 3 then
     AS.Config.OnlyAfterVehicleExit = true
     AS.Config.ForceMoveOnExit = false
     AS.Config.NoCollideTime = 1.25
-    AS.Config.PostExitCheckTime = 1.8
+    AS.Config.PostExitCheckTime = 0.8
     AS.Config.ThinkInterval = 0.25
     AS.Config.ExitExtraDistance = 26
     AS.Config.VehicleChildSearchRadius = 420
@@ -104,7 +104,7 @@ AS.Config.Enabled = AS.Config.Enabled ~= false
 AS.Config.OnlyAfterVehicleExit = AS.Config.OnlyAfterVehicleExit ~= false
 AS.Config.ForceMoveOnExit = AS.Config.ForceMoveOnExit == true
 AS.Config.NoCollideTime = AS.Config.NoCollideTime or 1.25
-AS.Config.PostExitCheckTime = AS.Config.PostExitCheckTime or 1.8
+AS.Config.PostExitCheckTime = AS.Config.PostExitCheckTime or 0.8
 AS.Config.ThinkInterval = AS.Config.ThinkInterval or 0.25
 AS.Config.ExitExtraDistance = AS.Config.ExitExtraDistance or 26
 AS.Config.VehicleChildSearchRadius = AS.Config.VehicleChildSearchRadius or 420
@@ -474,29 +474,38 @@ end
 local function playerLooksStuckInVehicle(ply, ent)
     if not IsValid(ply) or not IsValid(ent) then return false end
 
-    local expand = tonumber(cfg().InsideOBBExpand) or 2
-    local pos = ply:GetPos()
-    local pelvis = pos + Vector(0, 0, 24)
-    local chest = pos + Vector(0, 0, 48)
+    --[[ Раньше срабатывало по попаданию центра тела в OBB машины. Удлинённый
+         корпус внедорожника даёт ОГРОМНЫЙ бокс: игрок отошёл назад вдоль
+         борта, его грудь всё ещё внутри бокса — и антистак телепортировал его
+         обратно в машину (жалоба владельца: «двинулся — тянет в машину»).
 
-    -- Срабатываем только если тело реально внутри OBB машины.
-    -- Маленький expand предотвращает срабатывание, когда игрок просто подошёл к машине.
-    if isPointInsideVehicleOBB(pelvis, ent, expand) or isPointInsideVehicleOBB(chest, ent, expand) then
+         Теперь «застрял» = реальное пересечение хитбокса игрока с СОЛИДНОЙ
+         геометрией машины (TraceHull с фильтром только по машине и её
+         детям), плюс дистанция до ближайшей точки корпуса маленькая. ]]
+    local mins, maxs = ply:OBBMins(), ply:OBBMaxs()
+    local from = ply:GetPos()
+    local filter = collectRelatedEntities(ent, ent)
+    filter[#filter + 1] = ply
+
+    local hull = util.TraceHull({
+        start = from,
+        endpos = from,
+        mins = mins,
+        maxs = maxs,
+        filter = filter,
+        mask = MASK_PLAYERSOLID,
+    })
+    if hull.StartSolid and IsValid(hull.Entity) and isVehicleLike(hull.Entity) then
         return true
     end
 
-    -- Старую hull-проверку оставляем опциональной. Она часто ловит "рядом с машиной"
-    -- как StartSolid и поэтому по умолчанию отключена.
-    if cfg().UseHullStartSolidCheck then
-        local hull = util.TraceHull({
-            start = ply:GetPos(),
-            endpos = ply:GetPos(),
-            mins = PLAYER_MINS,
-            maxs = PLAYER_MAXS,
-            filter = ply,
-            mask = MASK_PLAYERSOLID,
-        })
-        if hull.StartSolid and IsValid(hull.Entity) and isVehicleLike(hull.Entity) then
+    -- Запасной случай: если трасса в этом тике не увидела корпус, но игрок
+    -- глубоко внутри БЛИЖАЙШЕЙ точки корпуса (<12 юнитов) и в пределах OBB.
+    local base = ent.NearestPoint and ent or nil
+    if base then
+        local near = ent:NearestPoint(ply:GetPos() + Vector(0,0,40))
+        local d2 = near:DistToSqr(ply:GetPos() + Vector(0,0,40))
+        if d2 < 14*14 and isPointInsideVehicleOBB(ply:GetPos() + Vector(0,0,40), ent, 1) then
             return true
         end
     end
@@ -514,7 +523,7 @@ if SERVER then
 
         ply.GRM_AntiStuck_LastVehicle = base
         ply.GRM_AntiStuck_LastSeat = vehicle
-        ply.GRM_AntiStuck_PostExitUntil = CurTime() + (cfg().PostExitCheckTime or 3.0)
+        ply.GRM_AntiStuck_PostExitUntil = CurTime() + (cfg().PostExitCheckTime or 0.8)
 
         -- Временно отключаем столкновение с машиной сразу после выхода,
         -- но НЕ переносим игрока, если он нормально вышел.
@@ -543,17 +552,22 @@ if SERVER then
             end)
         end
 
-        for i, delay in ipairs({ 0.12, 0.28, 0.55, 0.95, 1.45 }) do
-            timer.Simple(delay, function()
-                if not IsValid(ply) then return end
-                local last = IsValid(ply.GRM_AntiStuck_LastVehicle) and ply.GRM_AntiStuck_LastVehicle or vehicle
-                if not IsValid(last) then return end
-                if ply:InVehicle() then return end
-                if playerLooksStuckInVehicle(ply, last) then
-                    AS.MovePlayerOutOfVehicle(ply, last, "post_exit_check")
-                end
-            end)
-        end
+        -- Поздние повторные проверки убраны: они тянули игрока обратно в
+        -- машину, когда он сам отошёл (корпус длинной машины попадал в OBB).
+        -- Достаточно одной ранней проверки, пока игрок ещё не двигался.
+        timer.Simple(0.15, function()
+            if not IsValid(ply) then return end
+            local last = IsValid(ply.GRM_AntiStuck_LastVehicle) and ply.GRM_AntiStuck_LastVehicle or vehicle
+            if not IsValid(last) then return end
+            if ply:InVehicle() then return end
+            if cfg().IgnoreNoclip and ply:GetMoveType() == MOVETYPE_NOCLIP then return end
+            -- Если игрок уже сам отошёл от корпуса — не трогаем его вообще.
+            local near = last.NearestPoint and last:NearestPoint(ply:GetPos()) or nil
+            if near and near:DistToSqr(ply:GetPos()) > (52 * 52) then return end
+            if playerLooksStuckInVehicle(ply, last) then
+                AS.MovePlayerOutOfVehicle(ply, last, "post_exit_check")
+            end
+        end)
     end)
 
     -- Если игрок умер/отключился, возвращаем collision group.
@@ -588,8 +602,17 @@ if SERVER then
                     -- Игроков, которые просто подошли к машине, не трогаем.
                     if ply.GRM_AntiStuck_PostExitUntil and CurTime() <= ply.GRM_AntiStuck_PostExitUntil then
                         local ent = IsValid(ply.GRM_AntiStuck_LastVehicle) and ply.GRM_AntiStuck_LastVehicle or nil
-                        if IsValid(ent) and playerLooksStuckInVehicle(ply, ent) then
-                            AS.MovePlayerOutOfVehicle(ply, ent, "post_exit_think")
+                        if IsValid(ent) then
+                            -- Если игрок сам идёт и уже оторвался от корпуса на
+                            -- шаг — он не застрял, не тянем его обратно.
+                            local near = ent.NearestPoint and ent:NearestPoint(ply:GetPos()) or nil
+                            local vel = ply:GetVelocity():Length2D()
+                            if near and near:DistToSqr(ply:GetPos()) > (56*56) and vel > 20 then
+                                -- считаем, что он благополучно вышел
+                                ply.GRM_AntiStuck_PostExitUntil = nil
+                            elseif playerLooksStuckInVehicle(ply, ent) then
+                                AS.MovePlayerOutOfVehicle(ply, ent, "post_exit_think")
+                            end
                         end
                     end
                 end
