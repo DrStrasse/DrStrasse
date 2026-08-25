@@ -813,7 +813,7 @@ ok(psrc:find("local function plateGrid(parent)", 1, true) ~= nil,
 ok(psrc:find('draw.RoundedBox(4, 12, 12, 18, ph, Color(def.band[1]', 1, true) ~= nil,
    "ячейка выглядит как сам знак: поле, цветная полоса, номер")
 ok(psrc:find('label = "ЗАЯВИТЬ ОБ УТЕРЕ"', 1, true) ~= nil
-   and psrc:find('label = "АННУЛИРОВАТЬ"', 1, true) ~= nil,
+   and psrc:find("rec.status == \"revoked\"", 1, true) ~= nil,
    "действия переехали в саму карточку номера")
 
 local dealer2 = (function()
@@ -869,9 +869,9 @@ ok(psrc:find("local hitBase = PL.VehicleBase(tr.Entity) or tr.Entity", 1, true) 
    "по [E] знак встаёт ровно туда, куда смотрит игрок")
 ok(psrc:find("if not ok then ok, err = PL.MountOnRear(plate, veh, ply) end", 1, true) ~= nil,
    "если игрок не смотрит на кузов — знак уходит на задний борт")
-ok(psrc:find("local localPos = Vector(mins.x + 1, 0, mins.z + h * 0.32)", 1, true) ~= nil
-   and psrc:find("local normal = (veh:LocalToWorld(Vector(-1, 0, 0)) - veh:GetPos()):GetNormalized()", 1, true) ~= nil,
-   "точка заднего борта по габаритам, нормаль — локальный -X (не GetForward)")
+ok(psrc:find("function PL.MountOnRear(plate, veh, actor)", 1, true) ~= nil
+   and psrc:find("validateMountPoint(veh, mount.pos)", 1, true) ~= nil,
+   "точка заднего борта по габаритам с веером лучей и валидацией")
 
 print("\n=== 23. ОБНОВЛЕНИЕ НЕ СБИВАЕТ РАБОТУ (22.08) ===")
 ok(psrc:find("PL.Form = PL.Form or {}", 1, true) ~= nil

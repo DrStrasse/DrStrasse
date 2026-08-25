@@ -658,6 +658,33 @@ A.char_delete = { perm = "char.manage", target = false, label = "Удалить 
         return ok, msg
     end }
 
+A.char_model = { perm = "char.manage", target = false, label = "Сменить модель",
+    fn = function(actor, _, args)
+        if not (GRM.Char and GRM.Char.AdminSetAppearance) then return false, "Ядро персонажей не загружено" end
+        local ok, msg = GRM.Char.AdminSetAppearance(args and args.sid, args and args.slot,
+            { model = args and args.model, skin = args and args.skin, bodygroups = args and args.bodygroups })
+        if ok and GRM.Char.AdminSendRoster then GRM.Char.AdminSendRoster(actor, args and args.query or "") end
+        return ok, msg
+    end }
+
+A.char_faction = { perm = "char.manage", target = false, label = "Сменить фракцию",
+    fn = function(actor, _, args)
+        if not (GRM.Char and GRM.Char.AdminSetFaction) then return false, "Ядро персонажей не загружено" end
+        local ok, msg = GRM.Char.AdminSetFaction(args and args.sid, args and args.slot,
+            args and args.faction or "", args and args.role, args and args.department)
+        if ok and GRM.Char.AdminSendRoster then GRM.Char.AdminSendRoster(actor, args and args.query or "") end
+        return ok, msg
+    end }
+
+A.char_access = { perm = "char.manage", target = false, label = "Персональный доступ",
+    fn = function(actor, _, args)
+        if not (GRM.Char and GRM.Char.AdminSetAccess) then return false, "Ядро персонажей не загружено" end
+        local ok, msg = GRM.Char.AdminSetAccess(args and args.sid, args and args.slot,
+            args and args.capability, args and args.allow ~= false)
+        if ok and GRM.Char.AdminSendRoster then GRM.Char.AdminSendRoster(actor, args and args.query or "") end
+        return ok, msg
+    end }
+
 A.docs_wipe = { perm = "docs.wipe", target = true, label = "Стереть документы",
     fn = function(actor, target, args)
         local DOC = GRM.Documents

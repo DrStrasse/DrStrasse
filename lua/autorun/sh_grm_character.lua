@@ -1008,6 +1008,11 @@ if SERVER then
         net.Send(ply)
     end
 
+    -- Форвард-декларация: удаление персонажа вызывает снятие места во
+    -- фракции, а сама dropFactionSeat объявлена ниже по файлу. Без этого
+    -- замыкание прочитает глобал и упадёт в бою (ловит sim_forward_locals).
+    local dropFactionSeat
+
     -- вход: меню при КАЖДОМ заходе -------------------------------
     --[[ Меню персонажа больше не всплывает само сразу после входа: сперва
          игрок видит загрузочный экран GROENNERLAND2036 и жмёт «НАЧАТЬ
@@ -1024,22 +1029,49 @@ if SERVER then
 
     hook.Add("PlayerInitialSpawn", "GRM_Char_OnJoin", function(ply)
         ply.GRMCharConfirmed = nil
+        --[[ ФИКС ПОТОКА СПАВНА (25.08): до правки блокировка ставилась
+             только через 0.2 с, а движок уже спавнил игрока в мире за
+             эти 0.2 с — он видел карту и персонажа до выбора. Теперь при
+             самом первом появлении, если персонаж ещё не подтверждён,
+             хук PlayerSpawn сразу уносит в лимбо, и на экране висит
+             загрузка → «Начать играть» → меню персонажа → только потом
+             реальный спавн с моделью и оружием. ]]
+        normalizePlayerData(ply)
+        -- ставим блокировку немедленно (без таймера), чтобы первый же
+        -- PlayerSpawn ушёл в лимбо
+        local rec = normalizePlayerData(ply)
+        local slot = tostring(rec and rec.active or "char1")
+        ensureChar(ply, slot)
+        setCharacterLock(ply, not hasCharacter(ply, slot), true)
+
         menuAfterLoading(ply, 1.5)
         timer.Simple(60, function()
             -- страховка: экран загрузки завис у клиента — всё равно даём выбрать
             if IsValid(ply) and not ply.GRMCharConfirmed and CH.PendingSelection[sid64(ply)] then sendMenu(ply) end
-        end)
-        timer.Simple(0.2, function()
-            if not IsValid(ply) or ply.GRMCharConfirmed then return end
-            normalizePlayerData(ply)
-            -- При каждом входе игрок обязан явно подтвердить персонажа.
-            setCharacterLock(ply, true, true)
         end)
         timer.Simple(2.2, function()
             if not IsValid(ply) or ply.GRMCharConfirmed then return end
             normalizePlayerData(ply)
             applyActiveCharacter(ply)
             setCharacterLock(ply, true, true)
+        end)
+    end)
+
+    --[[ ПЕРВЫЙ СПАВН ДО ВЫБОРА — В ЛИМБО.
+         PlayerInitialSpawn в GMod всегда следует за первым PlayerSpawn
+         движка (порядок не гарантирован), поэтому блокируем и там: пока
+         персонаж не подтверждён, любое появление уносит игрока за карту.
+         Как только он подтверждает слот, ReleaseFromLimbo вызывает
+         осознанный Spawn уже с моделью и ставит на точку. ]]
+    hook.Add("PlayerSpawn", "GRM_Char_EarlyLock", function(ply)
+        if not IsValid(ply) then return end
+        -- уже подтвердил персонажа — обычный спавн, не вмешиваемся
+        if ply.GRMCharConfirmed == true then return end
+        timer.Simple(0, function()
+            if not IsValid(ply) or ply.GRMCharConfirmed == true then return end
+            if CH.PendingSelection[sid64(ply)] then
+                CH.SendToLimbo(ply)
+            end
         end)
     end)
 
@@ -1151,6 +1183,67 @@ if SERVER then
             return
         end
         local d = net.ReadTable() or {}
+
+        --[[ УДАЛЕНИЕ СВОЕГО ПЕРСОНАЖА (заказ 25.08).
+             Игрок сам чистит слот: имя, внешность, описание, место во
+             фракции и выданные права персонажа. Деньги/инвентарь привязаны
+             к аккаунту и сохраняются (по выбору владельца — «слот целиком»).
+             Сервер повторно проверяет, что это СВОЙ слот и он пуст/не активен
+             для игры, чтобы пакетом нельзя было стереть чужого. ]]
+        if d.action == "delete_self" then
+            local slot = tostring(d.slot or activeSlot(ply))
+            if not slot:match("^char[123]$") then return end
+            if CH.PendingMandatory[sid64(ply)] == true then
+                if GRM.Notify then GRM.Notify(ply, "Сначала выберите персонажа, удалять потом.", 255, 180, 80) end
+                return
+            end
+            local rec = normalizePlayerData(ply)
+            local c = rec and rec.slots and rec.slots[slot]
+            if not (istable(c) and tostring(c.name or "") ~= "") then
+                if GRM.Notify then GRM.Notify(ply, "Этот слот уже пуст.", 255, 180, 80) end
+                sendMenu(ply)
+                return
+            end
+            local key = sid64(ply) .. ":" .. slot
+            -- снимаем место во фракции
+            dropFactionSeat(key)
+            -- отзываем персональные capability этого персонажа, если
+            -- слой доступа хранит гранты (subjectType = character)
+            if GRM.Access and istable(GRM.Access.Grants) then
+                local kept, changed = {}, false
+                for _, g in ipairs(GRM.Access.Grants) do
+                    if not (istable(g) and tostring(g.subjectType) == "character"
+                            and tostring(g.subject or "") == key) then
+                        kept[#kept + 1] = g
+                    else changed = true end
+                end
+                if changed then
+                    GRM.Access.Grants = kept
+                    if GRM.Access.Save then pcall(GRM.Access.Save) end
+                end
+            end
+            rec.slots[slot] = nil
+            local leftover
+            for i = 1, CH.MaxSlots or 3 do
+                local id = "char" .. i
+                if istable(rec.slots[id]) and tostring(rec.slots[id].name or "") ~= "" then leftover = leftover or id end
+            end
+            rec.active = leftover or "char1"
+            saveChars("self-delete")
+            if IsValid(ply) then
+                ply.GRMCharConfirmed = nil
+                if leftover then
+                    CH.SetActiveSlot(ply, leftover, true)
+                else
+                    ply:SetNWString("GRM_RPName", "")
+                    setCharacterLock(ply, true, true)
+                end
+            end
+            if GRM.Notify then GRM.Notify(ply, "Персонаж удалён, слот свободен.", 100, 220, 100) end
+            sendMenu(ply)
+            return
+        end
+
         if d.action == "select_slot" then
             local slot = tostring(d.slot or "char1")
             if not slot:match("^char[123]$") then return end
@@ -1271,7 +1364,7 @@ if SERVER then
     -- автосохранение уже не нужно (каждый Save пишет сразу), но подстрахуемся на выключении
     hook.Add("ShutDown", "GRM_Char_Save", function() saveChars("shutdown") end)
 
-    local function dropFactionSeat(characterKey)
+    function dropFactionSeat(characterKey)
         characterKey = tostring(characterKey or "")
         if characterKey == "" then return end
         for _, f in pairs(Factions or {}) do
@@ -1304,6 +1397,8 @@ if SERVER then
                 exists = istable(c) and tostring(c.name or "") ~= "",
                 name = istable(c) and tostring(c.name or "") or "",
                 model = istable(c) and tostring(c.model or "") or "",
+                skin = istable(c) and tonumber(c.skin) or 0,
+                gender = istable(c) and CH.NormalizeGender(c.gender or CH.GenderFromModel(c.model)) or "",
                 key = key,
                 factionName = fac or "",
                 active = tostring(rec.active or "char1") == id,
@@ -1423,6 +1518,145 @@ if SERVER then
             end
         end
         return true, leftover and ("Удалён " .. slot .. ", активен " .. leftover) or ("Удалён " .. slot .. ", слотов не осталось")
+    end
+
+    --[[ АДМИН: ПРАВКА ПЕРСОНАЖЕЙ (заказ 25.08).
+         Поиск по sid+slot уже есть (AdminSearch/AdminAccountSlots).
+         Здесь — прицельные мутации: внешность, фракция, персональные
+         права. Все изменения пишутся в файл и применяются к игроку в
+         сети сразу. ]]
+
+    --- Найти запись sid/slot или вернуть nil + причину.
+    local function adminFindSlot(sid, slot)
+        sid = tostring(sid or ""); slot = tostring(slot or "char1")
+        if not sid:match("^%d+$") or not slot:match("^char[123]$") then return nil, "Некорректный аккаунт или слот" end
+        local rec = CH.Data and CH.Data[sid]
+        if not (istable(rec) and istable(rec.slots) and istable(rec.slots[slot])
+                and tostring(rec.slots[slot].name or "") ~= "") then
+            return nil, "Персонаж не найден"
+        end
+        return rec, rec.slots[slot]
+    end
+
+    local function adminOnline(sid)
+        for _, p in ipairs(player.GetAll()) do
+            if tostring(p:SteamID64() or "") == sid then return p end
+        end
+        return nil
+    end
+
+    --- Админ меняет модель/скин/бодигруппы персонажа.
+    --  data = { model, skin, bodygroups }
+    function CH.AdminSetAppearance(sid, slot, data)
+        data = istable(data) and data or {}
+        local rec, c = adminFindSlot(sid, slot)
+        if not rec then return false, c end
+        local model = isstring(data.model) and data.model ~= "" and string.lower(data.model) or nil
+        if model then
+            if util.IsValidModel and not util.IsValidModel(data.model) then
+                return false, "Модель не найдена на сервере"
+            end
+            c.model = data.model
+        end
+        if data.skin ~= nil then c.skin = math.Clamp(math.floor(tonumber(data.skin) or 0), 0, 31) end
+        if istable(data.bodygroups) then c.bodygroups = CH.NormalizeBodygroups(data.bodygroups) end
+        c.updated = os.time()
+        saveChars("admin-appearance")
+
+        local ply = adminOnline(sid)
+        if IsValid(ply) and tostring(CH.GetActiveID(ply)) == slot then
+            CH.ApplyAppearance(ply, { path = c.model, skin = c.skin, bodygroups = c.bodygroups })
+        end
+        return true, "Внешность обновлена"
+    end
+
+    --- Админ снимает/ставит фракцию персонажу. faction="" — сделать гражданским.
+    --  role/department опциональны. Без фракции персонаж не теряет выданные
+    --  персональные права (по требованию: «без фракции, но с доступами»).
+    function CH.AdminSetFaction(sid, slot, faction, role, department)
+        local rec, c = adminFindSlot(sid, slot)
+        if not rec then return false, c end
+        local key = sid .. ":" .. slot
+        faction = tostring(faction or "")
+        if faction ~= "" and not (istable(Factions) and istable(Factions[faction])) then
+            return false, "Фракция «" .. faction .. "» не найдена"
+        end
+        -- снимаем из старой фракции, если был
+        dropFactionSeat(key)
+        if faction ~= "" then
+            local f = Factions[faction]
+            f.Members = istable(f.Members) and f.Members or {}
+            f.Members[key] = {
+                Role = tostring(role or f.DefaultRole or "recruit"),
+                Department = tostring(department or ""),
+                Joined = os.time(),
+                ByAdmin = true,
+            }
+            if FactionsAPI and FactionsAPI.Save then pcall(FactionsAPI.Save) end
+        end
+        saveChars("admin-faction")
+        -- применить к игроку в сети
+        local ply = adminOnline(sid)
+        if IsValid(ply) and tostring(CH.GetActiveID(ply)) == slot then
+            if faction == "" then
+                ply:SetNWString("GRM_Faction", "")
+                ply:SetNWString("GRM_FactionRole", "")
+                ply:SetNWString("GRM_FactionDepartment", "")
+            end
+            timer.Simple(0.1, function()
+                if IsValid(ply) and tostring(CH.GetActiveID(ply)) == slot then
+                    applyActiveCharacter(ply)
+                    hook.Run("GRM_FactionChanged", ply)
+                    if ply.Spawn then ply:Spawn() end
+                end
+            end)
+        end
+        return true, faction == "" and "Персонаж выведен из фракции (права сохранены)"
+            or ("Персонаж принят во фракцию «" .. faction .. "»")
+    end
+
+    --- Админ выдаёт/снимает персональную capability (вне фракции).
+    function CH.AdminSetAccess(sid, slot, capability, allow)
+        local rec, c = adminFindSlot(sid, slot)
+        if not rec then return false, c end
+        if not (GRM.Access and GRM.Access.Capabilities and GRM.Access.Capabilities[capability]) then
+            return false, "Неизвестное право «" .. tostring(capability) .. "»"
+        end
+        if not istable(GRM.Access.Grants) then return false, "Слой доступа не готов" end
+        local key = sid .. ":" .. slot
+        local kept, changed = {}, false
+        for _, g in ipairs(GRM.Access.Grants) do
+            if istable(g) and tostring(g.subjectType) == "character"
+                and tostring(g.subject or "") == key
+                and tostring(g.capability or "") == capability then
+                changed = true
+            else kept[#kept + 1] = g end
+        end
+        if allow ~= false then
+            kept[#kept + 1] = { capability = capability, subjectType = "character",
+                subject = key, faction = "", allow = true, enabled = true }
+            changed = true
+        end
+        if changed then
+            GRM.Access.Grants = kept
+            if GRM.Access.Save then pcall(GRM.Access.Save) end
+            local ply = adminOnline(sid)
+            if IsValid(ply) and tostring(CH.GetActiveID(ply)) == slot then
+                hook.Run("GRM_AccessChanged", ply)
+            end
+        end
+        return true, allow == false and "Право отозвано" or "Право выдано"
+    end
+
+    --- Перманентная блокировка смены модели: админ жёстко задаёт модель,
+    --  и система удержания внешности будет её удерживать (FactionsExt).
+    function CH.AdminForceModel(sid, slot, model)
+        local ok, msg = CH.AdminSetAppearance(sid, slot, { model = model })
+        if not ok then return ok, msg end
+        local _, c = adminFindSlot(sid, slot)
+        if c then c.adminModel = (isstring(model) and model ~= "") and true or nil end
+        saveChars("admin-force-model")
+        return true, (model and "Перманентная модель установлена" or "Перманентная модель снята")
     end
 
     print("[GRM Char] Ядро персонажей v" .. CH.Version .. " загружено (сервер)")
@@ -1697,6 +1931,30 @@ if CLIENT then
                         local dist = (hgt * 0.55) / math.tan(math.rad(15))
                         sm:SetLookAt(Vector(0, 0, mid.z))
                         sm:SetCamPos(Vector(dist, dist * 0.16, mid.z + hgt * 0.04))
+                    end
+                end
+                -- Кнопка удаления существующего персонажа (с подтверждением).
+                if info.exists then
+                    local del = vgui.Create("DButton", b)
+                    del:SetText("") del:SetSize(24, 24) del:SetPos(340 - 30, 8)
+                    del:SetTooltip("Удалить персонажа — освободить слот")
+                    del.Paint = function(self, pw, ph)
+                        draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and Color(210, 60, 60) or Color(120, 40, 40, 230))
+                        draw.SimpleText("✕", "GRMChar_Sub", pw / 2, ph / 2 - 1,
+                            self:IsHovered() and color_white or Color(235, 200, 200), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    end
+                    del.DoClick = function()
+                        local nm = info.name ~= "" and info.name or ("Персонаж " .. i)
+                        Derma_Query(
+                            ("Удалить «%s» (слот %d)?\nИмя освободится, место во фракции и личные права будут сняты. Действие необратимо.")
+                                :format(nm, i),
+                            "Удаление персонажа",
+                            "Удалить", function()
+                                net.Start(NET_SAVE)
+                                    net.WriteTable({ action = "delete_self", slot = info.id })
+                                net.SendToServer()
+                            end,
+                            "Отмена", function() end)
                     end
                 end
                 b.Paint = function(self, pw, ph)

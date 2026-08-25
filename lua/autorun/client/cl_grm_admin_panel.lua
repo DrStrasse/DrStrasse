@@ -1093,21 +1093,50 @@ local function buildChars(pnl)
                     draw.SimpleText(extra, "GRMAdm_Small", 10, 24, sl.active and C.gold or C.dim)
                 end
                 if sl.exists then
+                    local function q() return search:GetValue() end
                     local rename = btn(line, "ИМЯ", C.accent, function()
                         Derma_StringRequest("РП-имя", "Новое имя и фамилия для " .. tostring(sl.id),
                             sl.name or "", function(text)
-                                act("char_rename", "", { sid = acc.sid, slot = sl.id, name = text, query = search:GetValue() })
+                                act("char_rename", "", { sid = acc.sid, slot = sl.id, name = text, query = q() })
                             end)
                     end)
-                    rename:SetPos(720, 5) rename:SetSize(90, 28)
+                    rename:SetPos(430, 5) rename:SetSize(70, 28)
+                    local mdl = btn(line, "МОДЕЛЬ", C.cardHov, function()
+                        Derma_StringRequest("Модель персонажа",
+                            "Путь к модели (.mdl). Оставьте пустым, чтобы снять принудительную.",
+                            tostring(sl.model or ""), function(text)
+                                local m = string.Trim(text or "")
+                                act("char_model", "", { sid = acc.sid, slot = sl.id, model = m, query = q() })
+                            end)
+                    end)
+                    mdl:SetPos(506, 5) mdl:SetSize(82, 28)
+                    local fac = btn(line, "ФРАКЦИЯ", C.cardHov, function()
+                        Derma_StringRequest("Фракция",
+                            "Ключ фракции (как в /factions). Пусто = сделать гражданским (без фракции, права сохраняются).",
+                            tostring(sl.factionName or ""), function(text)
+                                act("char_faction", "", { sid = acc.sid, slot = sl.id, faction = string.Trim(text or ""), query = q() })
+                            end)
+                    end)
+                    fac:SetPos(594, 5) fac:SetSize(82, 28)
+                    local accb = btn(line, "ДОСТУП", C.cardHov, function()
+                        Derma_StringRequest("Персональный доступ",
+                            "Capability (например wanted.civil.edit). Префикс «-» снимает право.",
+                            "", function(text)
+                                local v = string.Trim(text or "")
+                                local allow = not string.StartWith(v, "-")
+                                local cap = allow and v or string.sub(v, 2)
+                                act("char_access", "", { sid = acc.sid, slot = sl.id, capability = cap, allow = allow, query = q() })
+                            end)
+                    end)
+                    accb:SetPos(682, 5) accb:SetSize(82, 28)
                     local del = btn(line, "УДАЛИТЬ", C.red, function()
-                        Derma_Query(("Удалить персонажа «%s» (%s) у %s?\nРП-имя освободится, слот станет пустым.")
+                        Derma_Query(("Удалить персонажа «%s» (%s) у %s?\nИмя, модель, фракция и персональные права будут очищены.")
                             :format(sl.name ~= "" and sl.name or sl.id, sl.id, acc.sid),
                             "Удаление персонажа", "Удалить", function()
-                                act("char_delete", "", { sid = acc.sid, slot = sl.id, query = search:GetValue() })
+                                act("char_delete", "", { sid = acc.sid, slot = sl.id, query = q() })
                             end, "Отмена")
                     end)
-                    del:SetPos(818, 5) del:SetSize(110, 28)
+                    del:SetPos(770, 5) del:SetSize(106, 28)
                 end
             end
         end

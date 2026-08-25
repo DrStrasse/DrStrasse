@@ -1443,38 +1443,133 @@ if SERVER then
            • если у энтити есть WorldSpaceAABB — считаем по мировым
              габаритам, чтобы точка была на корме даже со смещённым
              origin. ]]
-    -- Точка на кузове: луч снаружи внутрь. OBB у simfphys часто врёт,
-    -- из-за этого знак оказывался на земле за машиной.
+    --[[ ТОЧКА НА КУЗОВЕ: ВЕРТИКАЛЬНЫЙ ВЕЕР ЛУЧЕЙ (фикс 25.08).
+
+         Прошлая версия стреляла ОДНИМ лучом по центру корпуса на высоте
+         30% габарита (≈14–42 юнита). У внедорожников и военной техники
+         центр кормы на этой высоте — это запасное колесо, рама или ниша
+         под бампером; луч бил в землю/скос и знак вставал вровень с
+         землёй под машиной (жалоба владельца: номер лежит на асфальте,
+         а система пишет «закреплён»).
+
+         Теперь по каждому борту пускаем НЕСКОЛЬКО лучей на разной высоте
+         (от верхней кромки габарита вниз, с лёгким боковым смещением) и
+         берём первый, который попал в сам корпус на разумной высоте.
+         Точка проходит валидацию: не ниже плоскости колёс и не дальше
+         габарита машины, иначе — фолбэк по OBB с высокой точкой. ]]
+    local function rearTraceFilter(veh)
+        return function(ent)
+            if not IsValid(ent) then return true end
+            if ent == veh then return false end
+            local par = ent.GetParent and ent:GetParent() or nil
+            if par == veh then return false end
+            -- пропускаем колёса/дочерние части simfphys — они и есть корпус
+            if looksLikeVehicle(ent) and vehicleBase(ent) == veh then return false end
+            return true
+        end
+    end
+
+    -- Один луч в точку боковой границы на заданной мировой высоте.
+    local function traceAtHeight(veh, dir, c, span, z)
+        if not (util and isfunction(util.TraceLine)) then return nil end
+        local from = Vector(c.x, c.y, z) + dir * span
+        local to   = Vector(c.x, c.y, z) - dir * 8
+        local tr = util.TraceLine({ start = from, endpos = to, filter = rearTraceFilter(veh), mask = MASK_SOLID })
+        if not (tr.Hit and IsValid(tr.Entity)) then return nil end
+        local hitUs = tr.Entity == veh or vehicleBase(tr.Entity) == veh
+        if not hitUs then return nil end
+        if tr.HitNormal:Length() < 0.2 then return nil end
+        -- нормаль должна смотреть ПРИМЕРНО наружу (против направления луча)
+        local n = Vector(tr.HitNormal.x, tr.HitNormal.y, tr.HitNormal.z)
+        n:Normalize()
+        if n:Dot(-dir) < 0.35 then return nil end
+        return { pos = tr.HitPos, normal = n }
+    end
+
     local function hullEndHit(veh, dir)
         if not IsValid(veh) then return nil end
-        local wmin, wmax = veh:WorldSpaceAABB()
+        -- WorldSpaceAABB есть в игре, но моки стендов его не дают —
+        -- в этом случае считаем по OBB относительно позиции энтити.
+        local wmin, wmax
+        if isfunction(veh.WorldSpaceAABB) then
+            wmin, wmax = veh:WorldSpaceAABB()
+        else
+            local obbMin, obbMax = veh:OBBMins(), veh:OBBMaxs()
+            local p = veh:GetPos()
+            wmin, wmax = p + obbMin, p + obbMax
+        end
+        if not (wmin and wmax) then return nil end
         local c = (wmin + wmax) * 0.5
         local h = math.max(8, wmax.z - wmin.z)
-        c.z = wmin.z + math.Clamp(h * 0.30, 14, 42)
+        -- плоскость «земли»: OBB.min.z + половина диаметра колеса (14) —
+        -- всё, что ниже, это дорога/рама, а не борт для таблички
+        local floorZ = wmin.z + math.Clamp(h * 0.18, 12, 24)
         dir = Vector(dir.x, dir.y, 0)
         if dir:Length() < 0.05 then return nil end
         dir:Normalize()
         local span = math.max(wmax.x - wmin.x, wmax.y - wmin.y) * 0.75 + 90
-        local tr = util.TraceLine({
-            start = c + dir * span,
-            endpos = c,
-            filter = function(ent)
-                if not IsValid(ent) then return true end
-                if ent == veh then return false end
-                local par = ent.GetParent and ent:GetParent() or nil
-                if par == veh then return false end
-                return true
-            end,
-        })
-        local hitUs = IsValid(tr.Entity) and (tr.Entity == veh or vehicleBase(tr.Entity) == veh)
-        if tr.Hit and hitUs and tr.HitNormal:Length() > 0.2 then
-            local n = Vector(tr.HitNormal.x, tr.HitNormal.y, tr.HitNormal.z)
-            n:Normalize()
-            return { pos = tr.HitPos, normal = n, up = veh:GetUp() }
+
+        -- веер высот: от 82% габарита вниз до floorZ. Верхние лучи чаще
+        -- попадают в сам борт/дверь багажника, а не в колесо и землю.
+        local fracs = { 0.82, 0.66, 0.52, 0.40, 0.30, 0.22 }
+        -- небольшое боковое смещение луча (левее/правее центра), чтобы
+        -- обойти запасное колесо по центру кормы
+        local side = Vector(-dir.y, dir.x, 0)
+        local offsets = { 0, 12, -12, 22, -22 }
+        local best
+        for _, frac in ipairs(fracs) do
+            local z = wmin.z + math.Clamp(h * frac, floorZ + 2, wmax.z - 4)
+            for _, off in ipairs(offsets) do
+                local cc = c + side * off
+                local hit = traceAtHeight(veh, dir, cc, span, z)
+                if hit and hit.pos.z >= floorZ then
+                    -- берём самый высокий и центральный из валидных
+                    if not best or hit.pos.z > best.pos.z
+                        or (math.abs(hit.pos.z - best.pos.z) < 2 and math.abs(off) < math.abs(best.off or 99)) then
+                        best = { pos = hit.pos, normal = hit.normal, up = veh:GetUp(), off = off }
+                    end
+                end
+            end
+            if best then break end
         end
-        local face = Vector(c.x, c.y, c.z) + dir * (math.max(wmax.x - wmin.x, wmax.y - wmin.y) * 0.48)
+
+        if best then
+            return { pos = best.pos, normal = best.normal, up = best.up }
+        end
+
+        -- фолбэк: точка по границе габарита на 55% высоты, нормаль — ось корпуса
+        local face = Vector(c.x, c.y, wmin.z + math.Clamp(h * 0.55, floorZ + 6, wmax.z - 6))
+            + dir * (math.max(wmax.x - wmin.x, wmax.y - wmin.y) * 0.48)
         return { pos = face, normal = -dir, up = veh:GetUp() }
     end
+
+    --[[ ВАЛИДАЦИЯ БУДУЩЕЙ ТОЧКИ КРЕПЛЕНИЯ.
+
+         Возвращает ok, reason. Не даёт Attach зафиксировать в базе позицию
+         «знак на земле под машиной»: если точка висит ниже колёс или дальше
+         корпуса на дистанцию таблички — это ошибка автокрепления, а не
+         нормальное место. ]]
+    local function validateMountPoint(veh, pos)
+        local isVec = isvector or function(v) return type(v) == "Vector" or (istable(v) and v.x ~= nil and v.y ~= nil and v.z ~= nil) end
+        if not (IsValid(veh) and isVec(pos)) then return false, "нет точки" end
+        local wmin, wmax
+        if isfunction(veh.WorldSpaceAABB) then wmin, wmax = veh:WorldSpaceAABB()
+        else local a,b = veh:OBBMins(), veh:OBBMaxs(); local p=veh:GetPos(); wmin,wmax=p+a,p+b end
+        if not (wmin and wmax) then return true end
+        local h = math.max(8, wmax.z - wmin.z)
+        local floorZ = wmin.z + math.Clamp(h * 0.18, 12, 24)
+        if pos.z < floorZ then
+            return false, "точка ниже уровня кузова"
+        end
+        -- расстояние до ближайшей точки корпуса
+        local base = vehicleBase(veh) or veh
+        local near = base.NearestPoint and base:NearestPoint(pos) or pos
+        if pos:Distance(near) > 16 then
+            return false, "точка не на кузове"
+        end
+        return true
+    end
+    PL.ValidateMountPoint = validateMountPoint
 
     function PL.MountEnds(veh)
         if not IsValid(veh) then return nil, nil end
@@ -1522,8 +1617,97 @@ if SERVER then
             -- крепим как есть, без вычисления борта
             return PL.Attach(plate, veh, actor)
         end
-        PL.PlaceOnSurface(plate, mount.pos, mount.normal, mount.up)
+        --[[ ВАЛИДАЦИЯ. Если авто-точка села ниже уровня кузова или мимо
+             корпуса (редкий баг геометрии модели), не крепим вслепую:
+             пробуем второй (передний) борт, и только если и он не валиден —
+             крепим по ручной позиции знака (игрок хотя бы видит, куда ставит).
+             Так в БД не уезжает «знак на земле под машиной». ]]
+        local ok = validateMountPoint(veh, mount.pos)
+        if not ok then
+            local alt = select(2, PL.MountEnds(veh))
+            if alt and validateMountPoint(veh, alt.pos) then
+                mount = alt
+            elseif plate:GetPos():Distance(plate:GetPos()) == 0 then
+                mount = nil
+            end
+        end
+        if mount then
+            PL.PlaceOnSurface(plate, mount.pos, mount.normal, mount.up)
+        end
         return PL.Attach(plate, veh, actor)
+    end
+
+    --[[ РЕДАКТОР ПОЛОЖЕНИЯ УЖЕ ЗАКРЕПЛЁННОГО ЗНАКА.
+
+         Игрок/сотрудник открывает меню знака и двигает его стрелками с
+         шагом 1/5/20 см либо поворачивает. Правки применяются к локальной
+         позиции внутри родителя и сразу пересохраняют раскладку: и в записи
+         гаража/автопарка, и в реестре (rec.mount), поэтому позиция
+         переживает рестарт и выдачу машины заново.
+
+         Вариант «сохранить для всех таких машин» пишет class-layout в
+         render.json (как /номер_layout), но уже из UI, а не командой. ]]
+    function PL.NudgeMounted(plate, kind, axis, delta, forClass)
+        if not IsValid(plate) then return false, "Знак не найден" end
+        local veh = plate:GetParent()
+        if not IsValid(veh) then return false, "Знак не закреплён" end
+        local lp = veh:WorldToLocal(plate:GetPos())
+        local la = veh:WorldToLocalAngles(plate:GetAngles())
+        local pos = { x = lp.x, y = lp.y, z = lp.z }
+        local ang = { p = la.p, y = la.y, r = la.r }
+        local cur = PL.BlankMount()
+        cur.pos, cur.ang = pos, ang
+        local moved, ok2 = PL.NudgeMount(cur, kind, axis, delta)
+        if not ok2 then return false, "Неизвестная ось" end
+        plate:SetLocalPos(Vector(moved.pos.x, moved.pos.y, moved.pos.z))
+        plate:SetLocalAngles(Angle(moved.ang.p, moved.ang.y, moved.ang.r))
+        rememberLayout(veh)
+        local number = PL.NormalizeNumber(plate:GetNWString("GRM_Plate", ""))
+        local rec = PL.Get(number)
+        if rec then
+            rec.mount = rec.mount or PL.BlankMount()
+            rec.mount.pos = { x = moved.pos.x, y = moved.pos.y, z = moved.pos.z }
+            rec.mount.ang = { p = moved.ang.p, y = moved.ang.y, r = moved.ang.r }
+            PL.Save("правка положения знака")
+        end
+        if forClass == true then
+            local class = tostring(veh:GetClass() or "")
+            local n = (veh:LocalToWorld(Vector(0, 0, 0)) - veh:GetPos()):GetNormalized()
+            PL.SetLayout(class, {
+                pos = { x = moved.pos.x, y = moved.pos.y, z = moved.pos.z },
+                normal = { x = -1, y = 0, z = 0 },
+                upHint = { x = 0, y = 0, z = 1 },
+                enabled = true,
+            })
+        end
+        return true
+    end
+
+    --- Сбросить знак на авто-точку борта (срабатывает и для ручного layout).
+    function PL.ReattachAuto(plate, veh, actor)
+        if not (IsValid(plate) and IsValid(veh)) then return false end
+        local class = tostring(veh:GetClass() or "")
+        -- временно убираем class-layout, чтобы взять чистую авто-точку
+        local savedLayout = PL.Layouts and PL.Layouts[class] or nil
+        if PL.Layouts then PL.Layouts[class] = nil end
+        local mount = PL.MountPointFor(veh)
+        if savedLayout and PL.Layouts then PL.Layouts[class] = savedLayout end
+        if mount then
+            PL.PlaceOnSurface(plate, mount.pos, mount.normal, mount.up)
+            rememberLayout(veh)
+            local number = PL.NormalizeNumber(plate:GetNWString("GRM_Plate", ""))
+            local rec = PL.Get(number)
+            if rec then
+                local lp = veh:WorldToLocal(plate:GetPos())
+                local la = veh:WorldToLocalAngles(plate:GetAngles())
+                rec.mount = rec.mount or PL.BlankMount()
+                rec.mount.pos = { x = lp.x, y = lp.y, z = lp.z }
+                rec.mount.ang = { p = la.p, y = la.y, r = la.r }
+                PL.Save("авто-крепление знака")
+            end
+            return true
+        end
+        return false
     end
 
     --- Выдать и повесить ведомственный номер, если его ещё нет.
@@ -1945,6 +2129,46 @@ if SERVER then
                 GRM.Audit.Write("plates", "check", ply, { number = rec.number }, {})
             end
             PL.Push(ply, rec)
+
+        --[[ РЕДАКТОР ПОЛОЖЕНИЯ. Клиент шлёт, какую именно живую пластину
+             двигать (по entindex), и ось/шаг. Сервер сам повторно проверяет
+             право (владелец знака или plates.issue) и родителя, чтобы
+             подделкой пакета нельзя было двигать чужие номера. ]]
+        elseif act == "nudge" then
+            local plate = Entity(tonumber(data.ent) or -1)
+            if not (IsValid(plate) and plate:GetClass() == "grm_plate") then
+                notify(ply, "Знак не найден.") return
+            end
+            local canH, whyH = PL.CanHandle(ply, plate)
+            if not canH then
+                notify(ply, "Чужой знак двигать нельзя.") return
+            end
+            local okN, errN = PL.NudgeMounted(plate,
+                tostring(data.kind or "move"), tostring(data.axis or "x"),
+                tonumber(data.delta) or 1, data.forClass == true)
+            if okN then notify(ply, "Положение знака обновлено.", true) else notify(ply, tostring(errN or "Не вышло")) end
+
+        elseif act == "attach_auto" then
+            local plate = Entity(tonumber(data.ent) or -1)
+            if not (IsValid(plate) and plate:GetClass() == "grm_plate") then
+                notify(ply, "Знак не найден.") return
+            end
+            local canH = PL.CanHandle(ply, plate)
+            if not canH then notify(ply, "Чужой знак трогать нельзя.") return end
+            local veh = plate:GetParent()
+            if not IsValid(veh) then notify(ply, "Знак не закреплён — сначала [E] по бамперу.") return end
+            if PL.ReattachAuto(plate, veh, ply) then
+                notify(ply, "Знак переставлен на авто-точку борта.", true)
+            else
+                notify(ply, "Авто-точка не найдена — двигайте стрелками.")
+            end
+
+        elseif act == "detach" then
+            local plate = Entity(tonumber(data.ent) or -1)
+            if not (IsValid(plate) and plate:GetClass() == "grm_plate") then
+                notify(ply, "Знак не найден.") return
+            end
+            if PL.CanHandle(ply, plate) then PL.HandlePlateUse(ply, plate) end
         end
     end)
 
@@ -2894,6 +3118,148 @@ if CLIENT then
         PL.BuildPanel(body)
     end)
 
+    --[[ РЕДАКТОР ПОЛОЖЕНИЯ ЗНАКА.
+
+         Смотришь на закреплённый знак, жмёшь кнопку в его 3D2D-плашке
+         (или команду /номер_ред) — открывается компактное окно со
+         стрелками: двигать на 1/5/20 см вдоль осей машины, крутить,
+         «Авто» и «Снять». Каждый шаг уходит на сервер с entindex
+         знака; сервер повторно проверяет право и родителя. Позиция
+         сохраняется и в гараже/автопарке, и в реестре. ]]
+    local editor
+
+    local function nudge(plate, kind, axis, delta)
+        if not (IsValid(plate) and plate:GetClass() == "grm_plate") then return end
+        net.Start(PL.Net.ACT)
+            net.WriteString("nudge")
+            net.WriteTable({ ent = plate:EntIndex(), kind = kind, axis = axis,
+                delta = delta, forClass = false })
+        net.SendToServer()
+    end
+
+    local function canEditPlate(plate)
+        if not (IsValid(plate) and plate:GetNWBool("GRM_PlateMounted", false)) then return false end
+        local lp = LocalPlayer()
+        if not IsValid(lp) then return false end
+        if lp:IsSuperAdmin() then return true end
+        if PL.IsOfficer then return true end
+        -- владелец знака проверяется сервером (CanHandle); клиенту достаточно
+        -- не показывать редактор на чужих знаках, точную проверку делает сервер
+        return true
+    end
+
+    local function closeEditor()
+        if IsValid(editor) then editor:Remove() end
+        editor = nil
+    end
+
+    local function openEditor(plate)
+        if not (IsValid(plate) and plate:GetClass() == "grm_plate") then return end
+        closeEditor()
+        local f = vgui.Create("DFrame")
+        editor = f
+        f:SetSize(360, 330) f:Center() f:MakePopup()
+        f:SetTitle("") f:ShowCloseButton(false)
+        f.Paint = function(_, w, h)
+            draw.RoundedBox(8, 0, 0, w, h, C.bg)
+            surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h, 1)
+            draw.SimpleText("ПОЛОЖЕНИЕ ЗНАКА", "GRMPlate_Title", 14, 12, C.gold)
+            local par = IsValid(plate:GetParent()) and plate:GetParent():GetClass() or "—"
+            draw.SimpleText("на: " .. par, "GRMPlate_Small", 14, 34, C.dim)
+        end
+        local x = button(f, "✕", C.red, closeEditor); x:SetSize(28, 24); x:SetPos(324, 8)
+
+        local body = vgui.Create("DPanel", f)
+        body:Dock(FILL) body:DockMargin(10, 52, 10, 10) body:SetPaintBackground(false)
+
+        local step = 1
+        local function stepBtn(parent, label, x2, y2, w2, h2, fn)
+            local b = button(parent, label, C.cardHov, fn)
+            b:SetPos(x2, y2) b:SetSize(w2, h2)
+            return b
+        end
+
+        -- переключатель шага
+        local function stepRow(y2, label, val)
+            local b = stepBtn(body, label, 10, y2, 108, 26, function() step = val end)
+            return b
+        end
+        stepRow(0, "шаг 1 см", 1)
+        local b5 = stepBtn(body, "шаг 5 см", 122, 0, 108, 26, function() step = 5 end)
+        local b20 = stepBtn(body, "шаг 20 см", 234, 0, 106, 26, function() step = 20 end)
+        f.Think = function()
+            if not IsValid(plate) then closeEditor() return end
+            local col1 = step == 1 and C.accent or C.cardHov
+            local col5 = step == 5 and C.accent or C.cardHov
+            local col20 = step == 20 and C.accent or C.cardHov
+        end
+
+        -- крестовина перемещения (по осям машины: X — вперёд/назад, Z — вверх/вниз, Y — влево/вправо)
+        local function arrow(label, ax, ay, kind, axis, delta)
+            stepBtn(body, label, ax, ay, 40, 34, function() nudge(plate, kind, axis, delta * step) end)
+        end
+        local lbl = vgui.Create("DLabel", body); lbl:SetPos(10, 36); lbl:SetSize(330, 18)
+        lbl:SetFont("GRMPlate_Small"); lbl:SetTextColor(C.dim); lbl:SetText("СДВИГ (локальные оси машины)")
+
+        arrow("↑", 60, 58, "move", "z", 1)
+        arrow("↓", 60, 130, "move", "z", -1)
+        arrow("←", 18, 94, "move", "y", -1)
+        arrow("→", 102, 94, "move", "y", 1)
+        arrow("F", 146, 94, "move", "x", 1)
+        arrow("R", 146, 58, "move", "x", -1)
+
+        -- поворот
+        local rl = vgui.Create("DLabel", body); rl:SetPos(10, 174); rl:SetSize(200, 18)
+        rl:SetFont("GRMPlate_Small"); rl:SetTextColor(C.dim); rl:SetText("ПОВОРОТ (градусы × шаг)")
+        stepBtn(body, "P▼", 10, 196, 60, 30, function() nudge(plate, "turn", "p", -step) end)
+        stepBtn(body, "P▲", 74, 196, 60, 30, function() nudge(plate, "turn", "p", step) end)
+        stepBtn(body, "Y◀", 138, 196, 60, 30, function() nudge(plate, "turn", "y", -step) end)
+        stepBtn(body, "Y▶", 202, 196, 60, 30, function() nudge(plate, "turn", "y", step) end)
+        stepBtn(body, "R↶", 266, 196, 44, 30, function() nudge(plate, "turn", "r", -step) end)
+
+        -- действия
+        local auto = button(body, "АВТО-ПОЗИЦИЯ", C.green, function()
+            net.Start(PL.Net.ACT) net.WriteString("attach_auto")
+                net.WriteTable({ ent = plate:EntIndex() }) net.SendToServer()
+        end)
+        auto:SetPos(10, 236) auto:SetSize(160, 30)
+        local detach = button(body, "СНЯТЬ ЗНАК", C.red, function()
+            net.Start(PL.Net.ACT) net.WriteString("detach")
+                net.WriteTable({ ent = plate:EntIndex() }) net.SendToServer()
+            closeEditor()
+        end)
+        detach:SetPos(178, 236) detach:SetSize(162, 30)
+        local hint = vgui.Create("DLabel", body); hint:SetPos(10, 272); hint:SetSize(330, 18)
+        hint:SetFont("GRMPlate_Small"); hint:SetTextColor(C.dim)
+        hint:SetText("F=вперёд R=назад. Сохраняется на эту машину.")
+    end
+    PL.OpenEditor = openEditor
+
+    concommand.Add("grm_plate_edit", function()
+        local tr = LocalPlayer():GetEyeTrace()
+        local ent = tr and tr.Entity
+        if IsValid(ent) and ent:GetClass() == "grm_plate" then openEditor(ent) end
+    end)
+
+    hook.Add("PlayerSayTransform", "GRM_Plates_EditorChat", function(ply, pack)
+        if not (istable(pack) and isstring(pack[1])) or ply ~= LocalPlayer() then return end
+        local low = string.lower(string.Trim(pack[1]))
+        if low == "/номер_ред" or low == "/номерред" or low == "/plate_edit" then
+            pack[1] = "" pack.SkipPlayerSay = true
+            RunConsoleCommand("grm_plate_edit")
+        end
+    end)
+
+    -- клик правой кнопкой по 3D2D-плашке над знаком — открыть редактор
+    hook.Add("GUIMousePressed", "GRM_Plates_EditorClick", function(mc)
+        if mc ~= MOUSE_RIGHT then return end
+        local tr = LocalPlayer():GetEyeTrace()
+        local ent = tr and tr.Entity
+        if IsValid(ent) and ent:GetClass() == "grm_plate" and canEditPlate(ent) then
+            openEditor(ent)
+        end
+    end)
+
     --[[ НОМЕР НАД ЗНАКОМ — 3D2D В МИРЕ.
 
          Экранная плашка посреди монитора мешала (и появлялась не там, где
@@ -2940,14 +3306,22 @@ if CLIENT then
         local tw, th = surface.GetTextSize(text)
         local w, h = tw + 46, th + 16
 
+        local mounted = ent:GetNWBool("GRM_PlateMounted", false)
+        local canEdit = mounted and canEditPlate(ent)
+        local extraH = canEdit and 14 or 0
+        local boxH = h + extraH
         cam.Start3D2D(origin + Vector(0, 0, 14), ang, 0.12)
-            draw.RoundedBox(6, -w / 2, -h / 2, w, h, Color(12, 16, 24, 225))
-            draw.RoundedBox(6, -w / 2, -h / 2, 10, h, Color(def.band[1], def.band[2], def.band[3]))
-            draw.SimpleText(text, "GRMPlate_Hud", 6, 0, Color(def.plate[1], def.plate[2], def.plate[3]),
+            draw.RoundedBox(6, -w / 2, -boxH / 2, w, boxH, Color(12, 16, 24, 225))
+            draw.RoundedBox(6, -w / 2, -boxH / 2, 10, boxH, Color(def.band[1], def.band[2], def.band[3]))
+            draw.SimpleText(text, "GRMPlate_Hud", 6, -extraH / 2, Color(def.plate[1], def.plate[2], def.plate[3]),
                 TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
             if status ~= "active" then
                 draw.SimpleText(string.upper(PL.Statuses[status] or status), "GRMPlate_Small",
-                    0, h / 2 + 8, Color(215, 75, 75), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    0, h / 2 - extraH / 2 + 8, Color(215, 75, 75), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            end
+            if canEdit then
+                draw.SimpleText("ПКМ — подвинуть", "GRMPlate_Small", 0, boxH / 2 - 9,
+                    Color(150, 200, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
             end
         cam.End3D2D()
     end)

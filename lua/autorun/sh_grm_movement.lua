@@ -83,6 +83,10 @@ if SERVER then
         return math.Clamp(tonumber(v) or cfg.StaminaMax, cfg.StaminaMaxMin or 80, cfg.StaminaMaxCap or 160)
     end
 
+    -- Форвард-декларация: TrainFitness вызывает syncStamina до её
+    -- построчного объявления (ловит sim_forward_locals).
+    local syncStamina
+
     local function getPlayerData(ply)
         local sid = charKey(ply)
         if not playerData[sid] then
@@ -131,7 +135,7 @@ if SERVER then
         return data.stamina, data.max
     end
 
-    local function syncStamina(ply, force)
+    function syncStamina(ply, force)
         if not IsValid(ply) then return end
         local data = getPlayerData(ply);local now=CurTime()
         if not force and (data.nextSync or 0)>now then return end
