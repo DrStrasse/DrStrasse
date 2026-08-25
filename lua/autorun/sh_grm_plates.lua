@@ -274,7 +274,9 @@ PL.NormalizeLayout = normalizeLayout
 --- Layout по машине: сначала точный класс, потом класс без регистра.
 function PL.LayoutFor(veh)
     if not IsValid(veh) then return nil end
-    local class = tostring(veh:GetClass() or "")
+    local base = vehicleBase(veh)
+    if not IsValid(base) then return nil end
+    local class = PL.ClassFor(base)
     local direct = PL.Layouts[class]
     if istable(direct) then return normalizeLayout(direct) end
     local lower = string.lower(class)
@@ -477,7 +479,41 @@ local function vehicleBase(ent)
     if base.base and IsValid(base.base) then base = base.base end
     local parent = base:GetParent()
     if IsValid(parent) and looksLikeVehicle(parent) then base = parent end
+    -- simfphys прячет реальную машину в списке passengers/spawnlist
+    if base.IsVehicle and base:GetClass() == "prop_vehicle_prisoner_pod" then
+        for _, key in ipairs({ "vehlist", "vehList", "passengers", "SeatArmor" }) do
+            local list = base[key]
+            if istable(list) then
+                for _, v in ipairs(list) do
+                    if IsValid(v) and looksLikeVehicle(v) and not v:IsVehicle() then
+                        return v
+                    end
+                end
+            end
+        end
+    end
     return base
+end
+
+--- Истинный класс машины (а не сиденья). Для сохранения раскладки
+--  «для всех таких» должен возвращаться, например, simfphys_gta_sa_enforcer,
+--  а не gmod_sent_vehicle_fphysics_base.
+function PL.ClassFor(ent)
+    local base = vehicleBase(ent)
+    if not IsValid(base) then return "" end
+    local cls = base:GetClass() or ""
+    if cls == "prop_vehicle_prisoner_pod" or cls == "gmod_sent_vehicle_fphysics_base"
+        or cls == "prop_vehicle_jeep" or cls == "prop_vehicle_airboat" then
+        local vehList = isfunction(base.GetNW2String) and base:GetNW2String("veh_list_name", "") or ""
+        if vehList ~= "" then return tostring(vehList) end
+        -- simfphys/SimfPhys часто хранит SpawnList
+        local sl = base.SpawnList
+        if isstring(sl) and sl ~= "" then return sl end
+        -- последний шанс: имя сущности модели
+        local mdl = base:GetModel() or ""
+        if mdl ~= "" then local fn = string.GetFileFromFilename and string.GetFileFromFilename(mdl) or mdl return (fn or mdl):lower() end
+    end
+    return cls
 end
 PL.VehicleBase = vehicleBase
 PL.LooksLikeVehicle = looksLikeVehicle
@@ -1864,7 +1900,7 @@ if SERVER then
         local lp = veh:WorldToLocal(plate:GetPos())
         local la = veh:WorldToLocalAngles(plate:GetAngles())
         saveVehicleMemory(veh, lp, la)
-        local class = tostring(veh:GetClass() or "")
+        local class = PL.ClassFor(veh)
         PL.SetLayout(class, {
             pos = { x = lp.x, y = lp.y, z = lp.z },
             normal = { x = -1, y = 0, z = 0 },
@@ -2462,7 +2498,7 @@ if SERVER then
                 notify(ply, "Смотрите на транспорт (или на знак) и повторите команду.")
                 return true
             end
-            local class = tostring(base:GetClass() or "")
+            local class = PL.ClassFor(base)
             if #nums >= 3 then
                 local layout = PL.SetLayout(class, {
                     pos = { x = nums[1], y = nums[2], z = nums[3] },

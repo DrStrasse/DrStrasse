@@ -585,11 +585,18 @@ local function DrawMainHUD()
     draw.SimpleText("СЧЁТ", "GRM_HUD_Label", hx + hw - 12, hy + 70, cfg.labelColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
     draw.SimpleText(bankTxt, "GRM_HUD_Money", hx + hw - 12, hy + 90, cfg.bankColor or cfg.moneyColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
 
-    -- Реальное время: отдельная плашка в правом верхнем углу
+    -- Реальное время: отдельная плашка в правом верхнем углу.
+    -- Источник общий с таблистой (GRM.Time) — секунды/минуты совпадают.
     do
-        local rt = os.date("*t")
-        local clock = string.format("%02d:%02d:%02d", rt.hour, rt.min, rt.sec)
-        local date = string.format("%02d.%02d.%d", rt.day, rt.month, rt.year)
+        local clock, date
+        if GRM and GRM.Time and GRM.Time.Clock then
+            clock = GRM.Time.Clock("%H:%M:%S")
+            date  = GRM.Time.Clock("%d.%m.%Y")
+        else
+            local rt = os.date("*t")
+            clock = string.format("%02d:%02d:%02d", rt.hour, rt.min, rt.sec)
+            date  = string.format("%02d.%02d.%d", rt.day, rt.month, rt.year)
+        end
         surface.SetFont("GRM_HUD_TimeBig")
         local tw = surface.GetTextSize(clock)
         local bx, by, bw, bh = sw - 16 - (tw + 28), 16, tw + 28, 56
