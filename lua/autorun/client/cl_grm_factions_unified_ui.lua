@@ -919,10 +919,14 @@ function UI.Open(requestedFaction, requestedTab)
         -- Номер персонажа в госреестре: по нему кадровик находит человека и
         -- по нему же пробивают через планшет госслужб.
         list:AddColumn("ID"):SetFixedWidth(90)
-        list:AddColumn("Должность"):SetFixedWidth(180)
-        list:AddColumn("Отдел / Подотдел"):SetFixedWidth(280)
-        list:AddColumn("Статус службы"):SetFixedWidth(130)
-        list:AddColumn("Локация"):SetFixedWidth(140)
+        --[[ Звание и должность — две независимые оси (ось v5). Раньше колонка
+             «Должность» показывала ЗВАНИЕ, и отличить начальника отдела от
+             рядового с тем же званием было нельзя. ]]
+        list:AddColumn("Звание"):SetFixedWidth(150)
+        list:AddColumn("Должность"):SetFixedWidth(190)
+        list:AddColumn("Отдел / Подотдел"):SetFixedWidth(240)
+        list:AddColumn("Статус службы"):SetFixedWidth(120)
+        list:AddColumn("Локация"):SetFixedWidth(130)
         skinListView(list)
 
         local function populateMembers(filter)
@@ -951,10 +955,26 @@ function UI.Open(requestedFaction, requestedTab)
                     elseif dutyText == "ВНЕ СЛУЖБЫ" then dutyCol = C.teal end
                     local loc = rec._location or "—"
                     local cid = tostring(rec._cid or "")
-                    local ln = list:AddLine(rp, cid ~= "" and cid or "—", roleDisplay, branchText, dutyText, loc)
+                    -- Должность сотрудника: пусто = человек на одном звании.
+                    local posDisplay = "—"
+                    local posObj = (GRM.Positions and GRM.Positions.OfMember)
+                        and GRM.Positions.OfMember(fac, rec) or nil
+                    if posObj then
+                        local kindName = (GRM.Positions.KindName or {})[posObj.kind] or ""
+                        posDisplay = posObj.name
+                        if kindName ~= "" and kindName ~= posObj.name then
+                            posDisplay = posObj.name .. " (" .. kindName .. ")"
+                        end
+                    end
+                    local ln = list:AddLine(rp, cid ~= "" and cid or "—", roleDisplay, posDisplay,
+                        branchText, dutyText, loc)
                     skinListViewLine(ln)
-                    if ln.Columns and IsValid(ln.Columns[5]) then
-                        ln.Columns[5]:SetTextColor(dutyCol)
+                    if ln.Columns and IsValid(ln.Columns[6]) then
+                        ln.Columns[6]:SetTextColor(dutyCol)
+                    end
+                    -- Должность подсвечена: начальника видно в списке сразу.
+                    if ln.Columns and IsValid(ln.Columns[4]) then
+                        ln.Columns[4]:SetTextColor(posObj and C.gold or C.dim)
                     end
                     if ln.Columns and IsValid(ln.Columns[2]) then
                         ln.Columns[2]:SetTextColor(C.gold)
@@ -994,8 +1014,8 @@ function UI.Open(requestedFaction, requestedTab)
 
             local comboRole = vgui.Create("DComboBox", invModal)
             comboRole:SetPos(16, 90); comboRole:SetSize(388, 28); skinCombo(comboRole)
-            -- Первая должность выбирается сразу: раньше можно было отправить
-            -- приглашение с пустой должностью и получить молчаливый отказ.
+            -- Первое звание выбирается сразу: раньше можно было отправить
+            -- приглашение с пустым званием и получить молчаливый отказ.
             local firstRole = true
             for _, rKey in ipairs(fac.Roles or {}) do
                 if rKey ~= fac.LeaderRoleName then
@@ -1051,7 +1071,9 @@ function UI.Open(requestedFaction, requestedTab)
             btnSend:SetPos(16, isSA and 260 or 190); btnSend:SetSize(388, 38)
         end):Dock(LEFT); bBar:GetChildren()[1]:SetWide(190)
 
-        mkBtn(bBar, "Изменить должность", C.cardLight, C.cardHover, function()
+        --[[ Кнопка называлась «Изменить должность», а меняла ЗВАНИЕ. После
+             разделения осей это две разные кнопки. ]]
+        mkBtn(bBar, "Изменить звание", C.cardLight, C.cardHover, function()
             local l = list:GetSelectedLine()
             if not l then notification.AddLegacy("Выберите сотрудника в списке!", NOTIFY_ERROR, 3) return end
             local memKey = list:GetLine(l).memberKey
@@ -1063,7 +1085,46 @@ function UI.Open(requestedFaction, requestedTab)
                 end)
             end
             rMenu:Open()
-        end):Dock(LEFT); bBar:GetChildren()[2]:DockMargin(8, 0, 0, 0); bBar:GetChildren()[2]:SetWide(160)
+        end):Dock(LEFT); bBar:GetChildren()[2]:DockMargin(8, 0, 0, 0); bBar:GetChildren()[2]:SetWide(150)
+
+        --- Назначение на должность прямо из личного состава.
+        mkBtn(bBar, "Назначить должность", C.accent, C.accentHover, function()
+            local l = list:GetSelectedLine()
+            if not l then notification.AddLegacy("Выберите сотрудника в списке!", NOTIFY_ERROR, 3) return end
+            local memKey = list:GetLine(l).memberKey
+            local POS = GRM.Positions
+            if not (POS and POS.List) then
+                notification.AddLegacy("Модуль должностей не загружен", NOTIFY_ERROR, 4)
+                return
+            end
+            local positions = POS.List(fac)
+            local pMenu = DermaMenu()
+            pMenu:AddOption("— снять с должности —", function()
+                sendAction("positionAssign",
+                    isSA and { facName, memKey, "" } or { memKey, "" }, refreshView)
+            end)
+            if #positions == 0 then
+                local none = pMenu:AddOption("Должностей нет — создайте в разделе «Должности»", function() end)
+                none:SetTextColor(C.dim)
+            end
+            local rec = fac.Members and fac.Members[memKey]
+            local own = rec and POS.OfMember(fac, rec) or nil
+            for _, pos in ipairs(positions) do
+                local st = POS.Staffing(fac, pos.id)
+                local free = st.unlimited and "без лимита" or (st.free .. " своб.")
+                local opt = pMenu:AddOption(
+                    pos.name .. "  (" .. POS.NodeDisplayName(fac, pos.node) .. " · " .. free .. ")",
+                    function()
+                        sendAction("positionAssign",
+                            isSA and { facName, memKey, pos.id } or { memKey, pos.id }, refreshView)
+                    end)
+                -- Занятые места видно до клика, а не отказом сервера после.
+                if not st.unlimited and st.free <= 0 and (not own or own.id ~= pos.id) then
+                    opt:SetTextColor(C.dim)
+                end
+            end
+            pMenu:Open()
+        end):Dock(LEFT); bBar:GetChildren()[3]:DockMargin(8, 0, 0, 0); bBar:GetChildren()[3]:SetWide(170)
 
         mkBtn(bBar, "Перевести в отдел / подотдел", C.cardLight, C.cardHover, function()
             local l = list:GetSelectedLine()
@@ -1085,7 +1146,7 @@ function UI.Open(requestedFaction, requestedTab)
                 end
             end
             dMenu:Open()
-        end):Dock(LEFT); bBar:GetChildren()[3]:DockMargin(8, 0, 0, 0); bBar:GetChildren()[3]:SetWide(220)
+        end):Dock(LEFT); bBar:GetChildren()[4]:DockMargin(8, 0, 0, 0); bBar:GetChildren()[4]:SetWide(210)
 
         if isSA then
             mkBtn(bBar, "Назначить лидером", C.gold, C.cardHover, function()
@@ -1095,7 +1156,7 @@ function UI.Open(requestedFaction, requestedTab)
                 Derma_Query("Сделать " .. memKey .. " лидером организации?", "Смена лидера", "Назначить", function()
                     sendAction("changeLeader", { facName, memKey }, refreshView)
                 end, "Отмена")
-            end):Dock(LEFT); bBar:GetChildren()[4]:DockMargin(8, 0, 0, 0); bBar:GetChildren()[4]:SetWide(160)
+            end):Dock(LEFT); bBar:GetChildren()[5]:DockMargin(8, 0, 0, 0); bBar:GetChildren()[5]:SetWide(150)
         end
 
         mkBtn(bBar, "Уволить", C.red, C.redHover, function()
@@ -1105,7 +1166,7 @@ function UI.Open(requestedFaction, requestedTab)
             Derma_Query("Уволить сотрудника " .. memKey .. " из организации?", "Подтверждение", "Уволить", function()
                 sendAction("removeMember", { isSA and facName or memKey, isSA and memKey or nil }, refreshView)
             end, "Отмена")
-        end):Dock(RIGHT); bBar:GetChildren()[isSA and 5 or 4]:SetWide(130)
+        end):Dock(RIGHT); bBar:GetChildren()[isSA and 6 or 5]:SetWide(120)
     end
 
     -- ════════════ 3. СТРУКТУРА И ШТАТ ════════════
@@ -1122,7 +1183,7 @@ function UI.Open(requestedFaction, requestedTab)
         left:SetWide((pnl:GetWide() - 30) * 0.40)
         left.Paint = function(self, w, h)
             draw.RoundedBox(6, 0, 0, w, h, C.card)
-            draw.SimpleText("Должности и ранги (Roles)", "GRMFac_Sub", 14, 16, C.gold)
+            draw.SimpleText("Звания и ранги (Roles)", "GRMFac_Sub", 14, 16, C.gold)
         end
 
         local rList = vgui.Create("DListView", left)
@@ -1146,8 +1207,8 @@ function UI.Open(requestedFaction, requestedTab)
         rBar:SetPaintBackground(false)
 
         mkBtn(rBar, "+ Добавить", C.accent, C.accentHover, function()
-            promptInput("Системный ключ новой должности (eng)", "officer", function(kVal)
-                promptInput("Публичное название должности (RU)", "Офицер", function(dVal)
+            promptInput("Системный ключ нового звания (eng)", "sergeant", function(kVal)
+                promptInput("Публичное название звания (RU)", "Сержант", function(dVal)
                     sendAction("addRole", { isSA and facName or kVal, isSA and kVal or nil }, function()
                         sendAction("renameRole", { isSA and facName or kVal, isSA and kVal or dVal, isSA and dVal or nil }, refreshView)
                     end)
@@ -1157,26 +1218,26 @@ function UI.Open(requestedFaction, requestedTab)
 
         mkBtn(rBar, "Переименовать", C.cardLight, C.cardHover, function()
             local l = rList:GetSelectedLine()
-            if not l then notification.AddLegacy("Выберите должность в списке!", NOTIFY_ERROR, 3) return end
+            if not l then notification.AddLegacy("Выберите звание в списке!", NOTIFY_ERROR, 3) return end
             local rKey = rList:GetLine(l).roleKey
             local curDisp = GRM.Factions.RoleDisplayName(fac, rKey)
-            promptInput("Новое публичное название должности", curDisp, function(val)
+            promptInput("Новое публичное название звания", curDisp, function(val)
                 sendAction("renameRole", { isSA and facName or rKey, isSA and rKey or val, isSA and val or nil }, refreshView)
             end)
         end):Dock(LEFT); rBar:GetChildren()[2]:DockMargin(6, 0, 0, 0); rBar:GetChildren()[2]:SetWide(125)
 
-        --[[ Смена СИСТЕМНОГО ключа должности (заказ владельца 19.08): ключ
+        --[[ Смена СИСТЕМНОГО ключа звания (заказ владельца 19.08): ключ
              тянется через права, двери и кадровые записи, поэтому меняем его
              отдельной кнопкой и с предупреждением. ]]
         mkBtn(rBar, "Ключ", C.gold, C.cardHover, function()
             local l = rList:GetSelectedLine()
-            if not l then notification.AddLegacy("Выберите должность в списке!", NOTIFY_ERROR, 3) return end
+            if not l then notification.AddLegacy("Выберите звание в списке!", NOTIFY_ERROR, 3) return end
             local rKey = rList:GetLine(l).roleKey
-            promptInput("Новый системный ключ должности (eng)", rKey, function(val)
+            promptInput("Новый системный ключ звания (eng)", rKey, function(val)
                 val = string.Trim(tostring(val or ""))
                 if val == "" or val == rKey then return end
                 Derma_Query("Сменить ключ «" .. rKey .. "» на «" .. val .. "»?\nСотрудники, права, двери и списки будут переведены автоматически.",
-                    "Системный ключ должности", "Сменить", function()
+                    "Системный ключ звания", "Сменить", function()
                         sendAction("setRoleKey", { isSA and facName or rKey, isSA and rKey or val, isSA and val or nil }, refreshView)
                     end, "Отмена")
             end)

@@ -646,7 +646,9 @@ function PB.BuildAccessEditor(host, payload)
     refresh:Dock(RIGHT)
     refresh:SetWide(132)
     refresh:DockMargin(8, 8, 0, 10)
-    refresh.DoClick = function() PB.RequestAccessMenu() end
+    refresh.DoClick = function()
+        PB.RequestAccessMenu(not IsValid(PB._accessHost) and IsValid(PB._accessFrame))
+    end
 
     local hint = vgui.Create("DLabel", actions)
     hint:Dock(FILL)
@@ -658,11 +660,25 @@ function PB.BuildAccessEditor(host, payload)
     hint:SetText("Изменения применяются только после «Сохранить».")
 end
 
-function PB.OpenAccessMenu(payload)
+--[[ ОТКУДА БРАЛОСЬ ОКНО ГОСБАЗЫ ПРИ ЗАКРЫТИИ /factions (находка 27.08).
+
+     Вкладка «Госбаза» внутри меню организаций при создании сразу просит у
+     сервера снимок допусков. Ответ приходит на кадр-другой позже. Если за
+     это время меню закрыли, панель вкладки уже уничтожена — и обработчик,
+     не найдя её, услужливо открывал ОТДЕЛЬНОЕ полноэкранное окно. Со
+     стороны это выглядело так: закрываешь фракции — выскакивает /pcboard.
+     Тот же эффект давал ответ сервера после «Сохранить».
+
+     Теперь ответ знает, чего от него ждали: снимок для встроенной вкладки
+     НИКОГДА не открывает своё окно. Отдельное окно появляется только по
+     явной команде игрока (grm_pcboard_access или кнопка «Обновить» в нём). ]]
+function PB.OpenAccessMenu(payload, wantWindow)
     if IsValid(PB._accessHost) then
         PB.BuildAccessEditor(PB._accessHost, payload)
         return
     end
+    -- Окно просили? Если снимок был для вкладки, а вкладки уже нет — молчим.
+    if wantWindow ~= true and not IsValid(PB._accessFrame) then return end
     if IsValid(PB._accessFrame) then PB._accessFrame:Remove() end
     local wrap = vgui.Create("DFrame")
     PB._accessFrame = wrap
@@ -684,14 +700,20 @@ end
 
 net.Receive(PB.Net.DATA, function()
     local payload = net.ReadTable()
-    if istable(payload) then PB.OpenAccessMenu(payload) end
+    if not istable(payload) then return end
+    -- Флаг ставит тот, кто запрашивал снимок, и сбрасывается он здесь же.
+    local wantWindow = PB._wantWindow == true
+    PB._wantWindow = nil
+    PB.OpenAccessMenu(payload, wantWindow)
 end)
 
-function PB.RequestAccessMenu()
+--- wantWindow = true только для явного вызова игроком.
+function PB.RequestAccessMenu(wantWindow)
+    PB._wantWindow = wantWindow == true
     net.Start(PB.Net.REQ)
     net.SendToServer()
 end
-concommand.Add("grm_pcboard_access", function() PB.RequestAccessMenu() end)
+concommand.Add("grm_pcboard_access", function() PB.RequestAccessMenu(true) end)
 
 local function installTab(sheet)
     if not IsValid(sheet) then return end
@@ -713,7 +735,7 @@ local function installTab(sheet)
     wait:SetText("Загрузка допусков госбазы…")
 
     timer.Simple(0, function()
-        if IsValid(panel) then PB.RequestAccessMenu() end
+        if IsValid(panel) then PB.RequestAccessMenu(false) end
     end)
 
     sheet:AddSheet("Госбаза", panel, "icon16/report_magnify.png")
