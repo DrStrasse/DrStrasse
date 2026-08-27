@@ -153,7 +153,18 @@ if CLIENT then
             { "R", "удалить зону под прицелом" },
         }
         local w, h = 560, 52 + #lines * 22
+        --[[ Подсказка не должна налезать на панель «СОСТОЯНИЕ» (жалоба
+             владельца 27.08: «оно в ХУД впадает»). HUD публикует свой
+             прямоугольник в GRM.HUD.StatusRect — встаём ровно над ним,
+             а если HUD выключен, отступаем от низа экрана по-старому. ]]
         local x, y = 24, ScrH() - h - 120
+        local sr = GRM.HUD and GRM.HUD.StatusRect
+        if istable(sr) and (tonumber(sr.y) or 0) > 0 then
+            x = tonumber(sr.x) or x
+            y = (tonumber(sr.y) or y) - h - 14
+        end
+        -- Совсем к потолку прижимать тоже нельзя: там висит имя тула.
+        y = math.max(y, 110)
         draw.RoundedBox(8, x, y, w, h, Color(12, 16, 24, 226))
         draw.RoundedBox(0, x, y, 4, h, kind == "estate" and COL_ESTATE or COL_BIZ)
         draw.SimpleText(kind == "estate" and "GRM: ЗОНА ЖИЛЬЯ" or "GRM: БИЗНЕС-ЗОНА",

@@ -72,17 +72,58 @@ VENDING.Category = "GRM Food"
 VENDING.Spawnable = true
 VENDING.AdminSpawnable = true
 
+surface.CreateFont("GRMVend_Title", { font = "Roboto", size = 26, weight = 800, extended = true, antialias = true })
+surface.CreateFont("GRMVend_Sub",   { font = "Roboto", size = 17, weight = 600, extended = true, antialias = true })
+
+--[[ ПЛАШКА НА САМОЙ МОДЕЛИ (заказ владельца 27.08).
+
+     Раньше надпись висела в воздухе на 82 юнита выше автомата и всегда
+     разворачивалась к камере: издалека она читалась как чужая, вблизи
+     улетала под потолок, а на фоне светлой стены исчезала совсем
+     («слишком не видна и слишком высоко»).
+
+     Теперь делаем как у терминалов-компьютеров: тёмная плашка ЛЕЖИТ на
+     передней грани корпуса, в углах ориентации самого автомата. Она
+     часть модели, поэтому не спорит с окружением и сразу понятно, к
+     какому именно автомату относится. ]]
 function VENDING:Draw()
     self:DrawModel()
 
-    local pos = self:GetPos() + Vector(0, 0, 82)
-    local ang = EyeAngles()
-    ang:RotateAroundAxis(ang:Forward(), 90)
-    ang:RotateAroundAxis(ang:Right(), 90)
+    local lp = LocalPlayer()
+    if not IsValid(lp) then return end
 
-    cam.Start3D2D(pos, Angle(0, ang.y, 90), 0.1)
-        draw.SimpleTextOutlined("Торговый автомат", "DermaLarge", 0, 0, Color(255, 255, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0))
-        draw.SimpleTextOutlined("Нажмите E", "DermaDefaultBold", 0, 32, Color(230, 230, 230), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0))
+    -- Далеко подпись не нужна: автоматов на карте много, бережём кадр.
+    local dist = lp:EyePos():DistToSqr(self:GetPos())
+    if dist > 400 * 400 then return end
+
+    local mins, maxs = self:OBBMins(), self:OBBMaxs()
+    local ang = self:GetAngles()
+    --[[ Разворачиваем плоскость 3D2D в плоскость передней грани корпуса.
+         Порядок осей тот же, что у терминалов grm_comp_*. ]]
+    ang:RotateAroundAxis(ang:Up(), 90)
+    ang:RotateAroundAxis(ang:Forward(), 90)
+
+    --[[ Точка крепления — центр передней грани, чуть выше середины
+         корпуса, и на волос перед поверхностью, чтобы не мерцало
+         z-фighting'ом с текстурой автомата. ]]
+    local frontOffset = maxs.x + 0.6
+    local height = mins.z + (maxs.z - mins.z) * 0.86
+    local pos = self:LocalToWorld(Vector(frontOffset, (mins.y + maxs.y) * 0.5, height))
+
+    -- Смотрим на автомат сзади — плашки там нет, рисовать нечего.
+    if (lp:EyePos() - pos):Dot(self:GetForward()) < 0 then return end
+
+    local near = dist <= 170 * 170
+
+    cam.Start3D2D(pos, ang, 0.09)
+        draw.RoundedBox(6, -125, -34, 250, 68, Color(10, 14, 22, 238))
+        draw.RoundedBox(0, -125, -34, 250, 3, Color(90, 175, 255))
+        draw.SimpleText("ТОРГОВЫЙ АВТОМАТ", "GRMVend_Title", 0, -12,
+            Color(235, 243, 252), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        -- «Нажмите E» показываем только когда игрок реально может нажать.
+        draw.SimpleText(near and "НАЖМИТЕ  E" or "напитки и еда", "GRMVend_Sub", 0, 16,
+            near and Color(120, 220, 150) or Color(150, 168, 190),
+            TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     cam.End3D2D()
 end
 

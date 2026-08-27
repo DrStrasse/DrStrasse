@@ -42,13 +42,36 @@ ES.Version = "1.0.0"
 
 --- Модель значка и его размеры (заказ владельца).
 ES.MarkerModel  = "models/props_phx/facepunch_logo.mdl"
-ES.MarkerScale  = { business = 1 / 1.5, estate = 1 / 2 }
+
+--[[ МАТЕРИАЛ ЗНАЧКА (заказ владельца 27.08).
+
+     У facepunch_logo своя текстура, и render.SetColorModulation только
+     подкрашивал её — жёлтый выходил грязным, зелёный почти не читался.
+     debugwhite это чистый белый без деталей: умножение на цвет даёт
+     ровно тот цвет, который задали. ]]
+ES.MarkerMaterial = "models/debug/debugwhite"
+
+--[[ РАЗМЕР. Было 1/1.5 и 1/2 — на карте значок перекрывал полдороги.
+     Уменьшен ещё примерно втрое; бизнес чуть крупнее жилья, чтобы их
+     можно было различить издалека. ]]
+ES.MarkerScale  = { business = 0.22, estate = 0.18 }
+
 ES.MarkerColor  = {
     business = Color(245, 200, 60),    -- жёлтый — бизнес
     estate   = Color(80, 205, 110),    -- зелёный — жильё
     sale     = Color(90, 170, 255),    -- синий — продаётся
 }
-ES.MarkerHeight = 78          -- на сколько поднять значок над центром зоны
+
+--[[ ВЫСОТА. 78 поднимало значок выше головы и он висел «крышей».
+     36 — примерно на уровне глаз стоящего рядом человека. ]]
+ES.MarkerHeight = 36
+
+--[[ ПОВОРОТ. Логотип у facepunch_logo лежит в плоскости модели, поэтому
+     без разворота на 90° по Roll он смотрел в небо — владелец назвал это
+     «словно крыша». Теперь ставим его вертикально и поворачиваем по Yaw
+     вслед за игроком, чтобы значок всегда был лицом к смотрящему. ]]
+ES.MarkerRoll = 90
+
 ES.DrawDistance = 2200        -- дальше значок не рисуем: бережём кадр
 
 --- Оборудование, которое считается доходной точкой бизнеса.
@@ -1173,13 +1196,17 @@ if CLIENT then
     local function ensureMarkers()
         if ES._markers then return ES._markers end
         local out = {}
+        --[[ Чистый белый материал: только с ним умножение на цвет даёт
+             ровно заданный оттенок, а не подкрашенную текстуру логотипа. ]]
+        local mat = Material(ES.MarkerMaterial)
         for _, zone in ipairs(ES.Zones or {}) do
             local mdl = ClientsideModel(ES.MarkerModel, RENDERGROUP_TRANSLUCENT)
             if IsValid(mdl) then
                 mdl:SetNoDraw(true)
                 mdl:SetPos(Vector(zone.pos.x, zone.pos.y, zone.pos.z))
-                local scale = ES.MarkerScale[zone.kind] or 0.5
+                local scale = ES.MarkerScale[zone.kind] or 0.2
                 mdl:SetModelScale(scale, 0)
+                if mat and not mat:IsError() then mdl:SetMaterial(ES.MarkerMaterial) end
                 out[#out + 1] = { ent = mdl, zone = zone }
             end
         end
@@ -1195,7 +1222,6 @@ if CLIENT then
         if #markers == 0 then return end
 
         local eyePos = EyePos()
-        local rot = CurTime() * 42        -- медленное вращение
         for _, row in ipairs(markers) do
             local ent, zone = row.ent, row.zone
             if IsValid(ent) then
@@ -1207,7 +1233,15 @@ if CLIENT then
                          занятый — цветом своего вида. ]]
                     local col = zone.vacant and ES.MarkerColor.sale
                         or (ES.MarkerColor[zone.kind] or color_white)
-                    ent:SetAngles(Angle(0, rot % 360, 0))
+                    --[[ Значок смотрит НА ИГРОКА, а не в небо. Раньше он
+                         просто крутился вокруг вертикали и лежал плашмя —
+                         владелец увидел «крышу». Yaw берём из направления
+                         на камеру, Roll фиксируем, чтобы поставить логотип
+                         вертикально. ]]
+                    local dir = eyePos - pos
+                    dir.z = 0
+                    local yaw = dir:Angle().y
+                    ent:SetAngles(Angle(0, yaw, ES.MarkerRoll))
                     render.SetColorModulation(col.r / 255, col.g / 255, col.b / 255)
                     ent:DrawModel()
                     render.SetColorModulation(1, 1, 1)
@@ -1228,7 +1262,8 @@ if CLIENT then
             local pos = Vector(zone.pos.x, zone.pos.y, zone.pos.z)
             local dist = eyePos:DistToSqr(pos)
             if dist <= (ES.DrawDistance * 0.55) ^ 2 then
-                local screen = (pos - Vector(0, 0, 34)):ToScreen()
+                -- Значок стал меньше и висит ниже — подпись подтягиваем к нему.
+                local screen = (pos - Vector(0, 0, 16)):ToScreen()
                 if screen.visible then
                     local col = zone.vacant and ES.MarkerColor.sale
                         or (ES.MarkerColor[zone.kind] or color_white)

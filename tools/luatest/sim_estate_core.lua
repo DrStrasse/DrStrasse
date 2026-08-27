@@ -90,10 +90,16 @@ ok(ES.KindOf(shop) == "estate", "явно заданный вид сильнее
 shop.estateKind = ""
 
 ok(ES.MarkerModel == "models/props_phx/facepunch_logo.mdl", "модель значка как в заказе")
-ok(math.abs(ES.MarkerScale.business - 1 / 1.5) < 0.001,
-   "бизнес уменьшен в 1.5 раза", ES.MarkerScale.business)
-ok(math.abs(ES.MarkerScale.estate - 1 / 2) < 0.001,
-   "жильё уменьшено в 2 раза", ES.MarkerScale.estate)
+--[[ Размеры пересмотрены 27.08: владелец увидел значки на карте и
+     попросил «масштаб ещё меньше, а то слишком большой размер».
+     Исходные 1/1.5 и 1/2 перекрывали полдороги. Подробности размера,
+     поворота и материала — в sim_estate_marker_ui.lua. ]]
+ok(ES.MarkerScale.business < 1 / 1.5 and ES.MarkerScale.business > 0.05,
+   "бизнес-значок уменьшен по замечанию владельца", ES.MarkerScale.business)
+ok(ES.MarkerScale.estate < 1 / 2 and ES.MarkerScale.estate > 0.05,
+   "значок жилья уменьшен по замечанию владельца", ES.MarkerScale.estate)
+ok(ES.MarkerScale.business > ES.MarkerScale.estate,
+   "бизнес крупнее жилья — виды различимы")
 local yellow = ES.MarkerColor.business
 ok(yellow.r > 200 and yellow.g > 150 and yellow.b < 120, "бизнес жёлтый")
 local green = ES.MarkerColor.estate
