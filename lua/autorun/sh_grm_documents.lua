@@ -2876,7 +2876,7 @@ if CLIENT then
         ph.Paint = function(_, pw, phh)
             draw.RoundedBox(4, 0, 0, pw, phh, Color(210, 212, 220))
             draw.RoundedBox(4, 3, 3, pw - 6, phh - 6, Color(178, 182, 194))
-            draw.SimpleText(initials, "GRMDoc_Title", pw / 2, phh / 2 - 8, Color(90, 95, 110),
+            draw.SimpleText(initials, "GRMDoc_CoverTitle", pw / 2, phh / 2 - 8, Color(90, 95, 110),
                 TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
             draw.SimpleText("ФОТО", "GRMDoc_Small", pw / 2, phh - 16, Color(90, 95, 110),
                 TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)

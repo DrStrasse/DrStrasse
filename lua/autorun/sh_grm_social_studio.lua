@@ -650,7 +650,8 @@ local function openStudio()
 
     local statusL = vgui.Create("DLabel", left)
     statusL:SetPos(10, 150) statusL:SetSize(260, 18)
-    statusL:SetFont("GRMSocEd_Small") statusL:SetTextColor(Color(110, 200, 130))
+    -- Шрифта GRMSocEd_Small в модуле нет: объявлены только _H и _B.
+    statusL:SetFont("GRMSocEd_B") statusL:SetTextColor(Color(110, 200, 130))
     statusL:SetText("")
     function ST.setStatus(txt) if IsValid(statusL) then statusL:SetText(txt or "") end end
 
