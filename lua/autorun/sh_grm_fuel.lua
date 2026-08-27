@@ -545,6 +545,54 @@ if SERVER then
         end
     end)
 
+    --[[ ЗА РУЛЁМ ЛИ ИГРОК (находка 27.08).
+
+         Симптом: пассажир заводил машину клавишей R со своего места.
+         Причина: проверялось только ply:InVehicle(), а пассажирский под —
+         это тоже vehicle, и RootVehicle честно приводил его к корпусу.
+         Теперь зажигание доступно только с места водителя. ]]
+    local function isDriver(ply, veh)
+        if not (IsValid(ply) and IsValid(veh)) then return false end
+        local seat = ply:GetVehicle()
+        if not IsValid(seat) then return false end
+
+        -- simfphys и LVS сами знают, кто у них за рулём.
+        for _, getter in ipairs({ "GetDriver", "GetDriverSeat" }) do
+            if isfunction(veh[getter]) then
+                local ok, res = pcall(veh[getter], veh)
+                if ok and IsValid(res) then
+                    if res == ply or res == seat then return true end
+                    -- GetDriver вернул другого игрока — значит этот не водитель.
+                    if res ~= ply and res.IsPlayer and res:IsPlayer() then return false end
+                end
+            end
+        end
+
+        --[[ Ванильный транспорт: сиденье и есть сама машина. Если игрок
+             сидит прямо в корпусе, он за рулём. ]]
+        if seat == veh then return true end
+
+        -- Иначе это отдельный под: пассажирское место.
+        return false
+    end
+
+    --[[ ЕСТЬ ЛИ ДОСТУП К МАШИНЕ.
+
+         Симптом: обычный игрок не мог завести даже свою машину, а
+         суперадмин заводил любую. Причина: доступ вообще не проверялся,
+         а сама выдача ключей живёт в системе VK — заводить должен тот,
+         кому машина принадлежит или у кого есть ключ. ]]
+    local function canStart(ply, veh)
+        if not (IsValid(ply) and IsValid(veh)) then return false end
+        if ply:IsSuperAdmin() then return true end
+        local VK = GRM.VehicleKeys or _G.VK
+        --[[ Если система ключей не знает эту машину (ничья, никем не
+             куплена), запрет накладывать не за что: заводит тот, кто сел. ]]
+        if not (VK and isfunction(VK.CanInteract)) then return true end
+        if VK.OWNER_TYPE and veh.VK_OwnerType == nil then return true end
+        return VK.CanInteract(veh, ply, false) == true
+    end
+
     hook.Add("StartCommand", "GRM_Fuel_Ignition", function(ply, cmd)
         if not (IsValid(ply) and ply:InVehicle()) then return end
         if not cmd:KeyDown(IN_RELOAD) then ply._grmIgnWas = false return end
@@ -552,6 +600,20 @@ if SERVER then
         ply._grmIgnWas = true
         local veh = F.RootVehicle(ply:GetVehicle())
         if not IsValid(veh) then return end
+
+        if not isDriver(ply, veh) then
+            if GRM.Notify then
+                GRM.Notify(ply, "Завести можно только с места водителя", 255, 170, 90)
+            end
+            return
+        end
+        if not canStart(ply, veh) then
+            if GRM.Notify then
+                GRM.Notify(ply, "Нет ключей от этой машины", 255, 160, 80)
+            end
+            return
+        end
+
         local on = not veh:GetNWBool("GRM_EngineOn", false)
         local ok, why = F.SetEngine(veh, on)
         if GRM.Notify then
