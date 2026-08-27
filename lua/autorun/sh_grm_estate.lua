@@ -988,14 +988,122 @@ if SERVER then
             return ""
         end
         if low == "/business" or low == "/бизнес" then
+            --[[ Внутри зоны открываем сам объект, снаружи — личный кабинет
+                 со всеми объектами: одна команда на оба случая. ]]
             local rec = ES.ZoneOfPlayer(ply)
             if rec and ES.KindOf(rec) ~= "none" then ES.OpenPanel(ply, rec)
-            elseif GRM.Notify then
-                GRM.Notify(ply, "Вы не внутри бизнес-зоны или жилья", 255, 170, 90)
-            end
+            else ES.OpenCabinet(ply) end
+            return ""
+        end
+        if low == "/cabinet" or low == "/кабинет" then
+            ES.OpenCabinet(ply)
             return ""
         end
     end)
+
+    -----------------------------------------------------------------
+    -- КАБИНЕТ ВЛАДЕЛЬЦА (фаза 6)
+    -----------------------------------------------------------------
+    --[[ Один список всех объектов игрока с общим доходом. Раньше, чтобы
+         понять «чем я владею и сколько это приносит», приходилось обходить
+         карту и открывать каждый объект отдельно. ]]
+    local NET_CABINET = "GRM_Estate_Cabinet"
+    util.AddNetworkString(NET_CABINET)
+
+    function ES.CabinetData(ply)
+        local key = ownerKeyOf(ply)
+        local rows, totals = {}, {
+            cash = 0, daily = 0, debt = 0, earned = 0,
+            business = 0, estate = 0,
+        }
+        local P = GRM.Property
+        for _, rec in pairs((P and P.Records) or {}) do
+            local kind = ES.KindOf(rec)
+            if kind ~= "none" and tostring(rec.ownerType or "") == "character"
+                and tostring(rec.ownerKey or "") == key then
+                local row = ES.Summary(rec)
+                row.forSale = istable(rec.estateSale) and math.max(0,
+                    math.floor(tonumber(rec.estateSale.price) or 0)) or 0
+                --[[ Аренда с датой окончания: владелец должен видеть, что
+                     договор скоро истечёт, а не узнавать об этом постфактум. ]]
+                row.tenure = tostring(rec.tenure or "none")
+                row.rentLeft = 0
+                if row.tenure == "rent" and (tonumber(rec.rentUntil) or 0) > 0 then
+                    row.rentLeft = math.max(0, math.floor((rec.rentUntil - os.time()) / 3600))
+                end
+                rows[#rows + 1] = row
+                totals.cash = totals.cash + (row.cash or 0)
+                totals.daily = totals.daily + (row.daily or 0)
+                totals.debt = totals.debt + (row.debt or 0)
+                totals.earned = totals.earned + (row.earned or 0)
+                if kind == "business" then totals.business = totals.business + 1
+                else totals.estate = totals.estate + 1 end
+            end
+        end
+        -- Бизнес выше жилья, внутри — по убыванию кассы: где деньги, то и сверху.
+        table.sort(rows, function(a, b)
+            if a.kind ~= b.kind then return a.kind == "business" end
+            if (a.cash or 0) ~= (b.cash or 0) then return (a.cash or 0) > (b.cash or 0) end
+            return tostring(a.name) < tostring(b.name)
+        end)
+        return { rows = rows, totals = totals, limit = ES.Limit(),
+            owned = totals.business }
+    end
+
+    function ES.OpenCabinet(ply)
+        if not IsValid(ply) then return false end
+        net.Start(NET_CABINET)
+            net.WriteTable(ES.CabinetData(ply))
+        net.Send(ply)
+        return true
+    end
+
+    --[[ Снять кассу со ВСЕХ своих объектов разом: главный смысл кабинета.
+         Долги гасятся по каждому объекту отдельно, как и при обычном сборе. ]]
+    function ES.CollectAll(ply)
+        if not IsValid(ply) then return false, "Нет игрока" end
+        local key = ownerKeyOf(ply)
+        local P = GRM.Property
+        local total, paid, count = 0, 0, 0
+        for _, rec in pairs((P and P.Records) or {}) do
+            if ES.IsBusiness(rec) and tostring(rec.ownerType or "") == "character"
+                and tostring(rec.ownerKey or "") == key then
+                local before = ES.CashInZone(rec)
+                if before > 0 then
+                    local debtBefore = math.max(0, math.floor(tonumber(rec.utilityDebt) or 0))
+                    local ok = ES.Collect(ply, rec)
+                    if ok then
+                        count = count + 1
+                        local debtAfter = math.max(0, math.floor(tonumber(rec.utilityDebt) or 0))
+                        local covered = debtBefore - debtAfter
+                        paid = paid + covered
+                        total = total + (before - covered)
+                    end
+                end
+            end
+        end
+        if count == 0 then return false, "Во всех объектах касса пуста" end
+        if paid > 0 then
+            return true, ("Собрано %d GRM с %d объектов · погашено долгов %d GRM"):format(total, count, paid)
+        end
+        return true, ("Собрано %d GRM с %d объектов"):format(total, count)
+    end
+
+    net.Receive(NET_CABINET, function(_, ply)
+        if not IsValid(ply) then return end
+        if GRM.Net and GRM.Net.Guard
+            and not GRM.Net.Guard(ply, "estate.cabinet", { rate = 0.5, burst = 3 }, {}) then return end
+        local action = net.ReadString()
+        if action == "collect_all" then
+            local ok, msg = ES.CollectAll(ply)
+            if GRM.Notify then
+                GRM.Notify(ply, tostring(msg), ok and 100 or 255, ok and 215 or 150, ok and 125 or 110)
+            end
+        end
+        ES.OpenCabinet(ply)
+    end)
+
+    concommand.Add("grm_cabinet", function(ply) ES.OpenCabinet(ply) end)
 
     --- Диагностика: grm_estate
     concommand.Add("grm_estate", function(ply)
@@ -1312,6 +1420,105 @@ if CLIENT then
             hint:SetFont("GRMEstate_Row") hint:SetTextColor(UI.dim) hint:SetWrap(true)
             hint:SetText("Объект свободен. Цена: " .. tostring(d.price or 0)
                 .. " GRM. Купить можно у одной из дверей объекта или внутри зоны.")
+        end
+    end)
+
+    -----------------------------------------------------------------
+    -- КАБИНЕТ: все объекты игрока в одном окне
+    -----------------------------------------------------------------
+    local cabinetFrame
+
+    net.Receive("GRM_Estate_Cabinet", function()
+        local d = net.ReadTable() or {}
+        local rows = istable(d.rows) and d.rows or {}
+        local totals = istable(d.totals) and d.totals or {}
+        if IsValid(cabinetFrame) then cabinetFrame:Remove() end
+
+        local f = vgui.Create("DFrame")
+        cabinetFrame = f
+        f:SetSize(620, 520) f:Center() f:MakePopup() f:SetTitle("") f:ShowCloseButton(false)
+        if GRM.UI and GRM.UI.Track then GRM.UI.Track("estate.cabinet", f) end
+        f.Paint = function(_, w, h)
+            draw.RoundedBox(10, 0, 0, w, h, UI.bg)
+            draw.RoundedBoxEx(10, 0, 0, w, 76, UI.panel, true, true, false, false)
+            draw.SimpleText("МОИ ОБЪЕКТЫ", "GRMEstate_Head", 20, 14, UI.gold)
+            -- Общий доход крупно: главная цифра, ради которой сюда заходят.
+            draw.SimpleText("Доход в сутки: " .. tostring(totals.daily or 0) .. " GRM",
+                "GRMEstate_Row", 20, 42, UI.green)
+            draw.SimpleText(("бизнесов %d из %d  ·  жильё %d"):format(
+                totals.business or 0, d.limit or 3, totals.estate or 0),
+                "GRMEstate_Row", 20, 58, UI.dim)
+            draw.SimpleText("В КАССАХ", "GRMEstate_Row", w - 20, 20, UI.dim, TEXT_ALIGN_RIGHT)
+            draw.SimpleText(tostring(totals.cash or 0) .. " GRM", "GRMEstate_Val", w - 20, 38,
+                (totals.cash or 0) > 0 and UI.green or UI.dim, TEXT_ALIGN_RIGHT)
+        end
+
+        local close = estateButton(f, "ЗАКРЫТЬ", UI.red, 96, 26)
+        close:SetPos(510, 44)
+        close.DoClick = function() f:Remove() end
+
+        local scroll = vgui.Create("DScrollPanel", f)
+        scroll:SetPos(16, 88) scroll:SetSize(588, 380)
+
+        if #rows == 0 then
+            local empty = vgui.Create("DLabel", scroll)
+            empty:Dock(TOP) empty:SetTall(60) empty:SetWrap(true)
+            empty:SetFont("GRMEstate_Row") empty:SetTextColor(UI.dim)
+            empty:SetText("У вас пока нет объектов.\n\nСвободные помечены синим значком на карте: "
+                .. "подойдите и нажмите /business, чтобы купить. Что продают игроки — в /market.")
+        end
+
+        for _, row in ipairs(rows) do
+            local isBiz = row.kind == "business"
+            local card = vgui.Create("DPanel", scroll)
+            card:Dock(TOP) card:SetTall(isBiz and 78 or 58) card:DockMargin(0, 0, 6, 8)
+            card.Paint = function(_, w, h)
+                draw.RoundedBox(6, 0, 0, w, h, UI.panel)
+                -- Полоса слева цветом вида: бизнес жёлтый, жильё зелёное.
+                draw.RoundedBox(2, 0, 0, 4, h, isBiz and UI.gold or UI.green)
+                draw.SimpleText(tostring(row.name or ""), "GRMEstate_Row", 14, 12,
+                    UI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+
+                local meta = (isBiz and "Бизнес" or "Жильё") .. "  ·  " .. tostring(row.area or 0) .. " м²"
+                if isBiz and (row.equipment or 0) > 0 then
+                    meta = meta .. "  ·  " .. tostring(row.summary)
+                end
+                if row.tenure == "rent" then
+                    meta = meta .. "  ·  аренда: " .. tostring(row.rentLeft or 0) .. " ч"
+                end
+                draw.SimpleText(meta, "GRMEstate_Row", 14, 32, UI.dim,
+                    TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+
+                if isBiz then
+                    draw.SimpleText("касса " .. tostring(row.cash or 0) .. " GRM",
+                        "GRMEstate_Row", 14, 56,
+                        (row.cash or 0) > 0 and UI.green or UI.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    draw.SimpleText("в сутки ~" .. tostring(row.daily or 0) .. " GRM",
+                        "GRMEstate_Row", 190, 56, UI.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                end
+
+                -- Долг и продажа — справа, чтобы бросались в глаза.
+                if (row.debt or 0) > 0 then
+                    draw.SimpleText("долг " .. tostring(row.debt) .. " GRM", "GRMEstate_Row",
+                        w - 14, 12, UI.red, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                end
+                if (row.forSale or 0) > 0 then
+                    draw.SimpleText("продаётся: " .. tostring(row.forSale) .. " GRM",
+                        "GRMEstate_Row", w - 14, 32, Color(90, 170, 255),
+                        TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                end
+            end
+        end
+
+        --[[ Сбор со всех объектов разом — то, ради чего кабинет и нужен:
+             больше не надо обходить карту и снимать кассы по одной. ]]
+        local collectAll = estateButton(f, "СОБРАТЬ КАССЫ СО ВСЕХ ОБЪЕКТОВ", UI.green, 588, 38)
+        collectAll:SetPos(16, 474)
+        collectAll:SetEnabled((totals.cash or 0) > 0)
+        collectAll.DoClick = function()
+            net.Start("GRM_Estate_Cabinet")
+                net.WriteString("collect_all")
+            net.SendToServer()
         end
     end)
 
