@@ -683,6 +683,30 @@ if SERVER then
         ply:SetNWString("GRM_DepartmentTag", dept ~= "" and GRM.Factions.DepartmentTag(fData or fname, dept) or "")
         ply:SetNWString("GRM_SubdepartmentTag", subdept ~= "" and GRM.Factions.SubdepartmentTag(fData or fname, subdept) or "")
         ply:SetNWString("GRM_ChannelTag", fname ~= "" and GRM.Factions.ChannelTag(fData or fname, dept, subdept, tag) or "")
+
+        --[[ Должность (ось v5) тоже висит на игроке строкой: её читают права
+             организаций, правила бодигрупп и служебные каналы. Берём прямо из
+             состава, чтобы не менять сигнатуру getPlayerFactionData. ]]
+        local positionID, positionName, positionTag = "", "", ""
+        if istable(fData) and istable(fData.Members) then
+            local rec = GRM.Identity and GRM.Identity.FactionMember
+                and GRM.Identity.FactionMember(fData, ply) or nil
+            if istable(rec) then
+                positionID = tostring(rec.Position or "")
+                if positionID ~= "" and GRM.Positions and GRM.Positions.Get then
+                    local pos = GRM.Positions.Get(fData, positionID)
+                    if pos then
+                        positionName = pos.name or ""
+                        positionTag = pos.tag or ""
+                    else
+                        positionID = ""
+                    end
+                end
+            end
+        end
+        ply:SetNWString("GRM_Position", positionID)
+        ply:SetNWString("GRM_PositionDisplay", positionName)
+        ply:SetNWString("GRM_PositionTag", positionTag)
     end
 
     local function syncAllPlayersFactionNW()

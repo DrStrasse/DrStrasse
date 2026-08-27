@@ -51,7 +51,7 @@ local C = {
 }
 
 local frame = nil
-local ui = { rows = {}, faction = nil, signature = nil, scroll = nil, applying = false }
+local ui = { rows = {}, posRows = {}, faction = nil, signature = nil, scroll = nil, applying = false }
 
 local function click(path)
     if GRM.Sound and GRM.Sound.UI then GRM.Sound.UI(path or "buttons/button15.wav")
@@ -105,6 +105,11 @@ local function structureSignature(factionName)
     if not istable(f) then return "none" end
     local parts = { factionName }
     for _, role in ipairs(f.Roles or {}) do parts[#parts + 1] = tostring(role) end
+    parts[#parts + 1] = "|pos|"
+    -- Появилась или исчезла должность — панель обязана перестроиться.
+    if GRM.Positions and GRM.Positions.List then
+        for _, pos in ipairs(GRM.Positions.List(f)) do parts[#parts + 1] = tostring(pos.id) end
+    end
     parts[#parts + 1] = "|"
     for _, cat in ipairs(categories()) do
         for _, permID in ipairs(cat.perms) do parts[#parts + 1] = permID end
@@ -115,12 +120,23 @@ end
 -- Точечное обновление значений без пересборки панели.
 local function syncValues(factionName)
     local rolePerms = PERMS.GetFactionRoles(factionName) or {}
+    local posPerms = PERMS.GetFactionPositions and PERMS.GetFactionPositions(factionName) or {}
     ui.applying = true
     for role, perms in pairs(ui.rows) do
         local rp = rolePerms[role] or {}
         for permID, chk in pairs(perms) do
             if IsValid(chk) then
                 local want = rp[permID] and true or false
+                if chk:GetChecked() ~= want then chk:SetValue(want) end
+                chk:SetTextColor(want and C.green or C.text)
+            end
+        end
+    end
+    for posID, perms in pairs(ui.posRows or {}) do
+        local pp = posPerms[posID] or {}
+        for permID, chk in pairs(perms) do
+            if IsValid(chk) then
+                local want = pp[permID] and true or false
                 if chk:GetChecked() ~= want then chk:SetValue(want) end
                 chk:SetTextColor(want and C.green or C.text)
             end
@@ -137,6 +153,7 @@ local function buildPanel(parent, factionName)
 
     if GRM.UI and GRM.UI.SafeClear then GRM.UI.SafeClear(parent) else parent:Clear() end
     ui.rows = {}
+    ui.posRows = {}
     ui.scroll = nil
     ui.faction = factionName
     ui.signature = structureSignature(factionName)
@@ -165,6 +182,102 @@ local function buildPanel(parent, factionName)
         lbl:Dock(TOP) lbl:SetTall(40) lbl:SetFont("GRMFPerm_Normal") lbl:SetTextColor(C.dim)
         lbl:SetText("Ролей нет — создайте во вкладке «Структура».")
         return
+    end
+
+    --[[ ДОСТУПЫ ДОЛЖНОСТЕЙ (ось v5).
+
+         Право звания получают ВСЕ носители звания — все сержанты сразу.
+         Право должности получает конкретное место в штате, поэтому
+         «распоряжаться автопарком» можно отдать начальнику транспортного
+         отдела, не раздавая это всем сержантам организации. ]]
+    local POS = GRM.Positions
+    local positions = (POS and POS.List) and POS.List(f) or {}
+    if #positions > 0 then
+        local posHead = vgui.Create("DLabel", scroll)
+        posHead:Dock(TOP) posHead:SetTall(26) posHead:DockMargin(0, 6, 0, 2)
+        posHead:SetFont("GRMFPerm_Title") posHead:SetTextColor(C.gold)
+        posHead:SetText("Доступы по должностям")
+
+        -- Наследование и замещение: по умолчанию оба выключены, чтобы
+        -- ничего не раздавалось молча.
+        local cfg = PERMS.PositionSettings and PERMS.PositionSettings(factionName)
+            or { inherit = false, standin = false }
+
+        local function settingRow(text, key, value)
+            local row = vgui.Create("DPanel", scroll)
+            row:Dock(TOP) row:SetTall(30) row:DockMargin(8, 0, 0, 2)
+            row.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, C.card) end
+            local chk = vgui.Create("DCheckBoxLabel", row)
+            chk:Dock(FILL) chk:DockMargin(10, 0, 0, 0)
+            chk:SetText(text)
+            chk:SetFont("GRMFPerm_Normal")
+            chk:SetTextColor(value and C.green or C.text)
+            chk:SetValue(value and 1 or 0)
+            chk.OnChange = function(_, val)
+                if ui.applying then return end
+                local v = val == true
+                chk:SetTextColor(v and C.green or C.text)
+                if PERMS.SetPositionSetting then
+                    PERMS.SetPositionSetting(factionName, key, v)
+                end
+            end
+        end
+
+        settingRow("Начальник наследует доступы подчинённых должностей своего подразделения",
+            "inherit", cfg.inherit)
+        settingRow("Заместитель получает доступы начальника, пока того нет в сети",
+            "standin", cfg.standin)
+
+        local posPerms = PERMS.GetFactionPositions and PERMS.GetFactionPositions(factionName) or {}
+        for _, pos in ipairs(positions) do
+            local pp = posPerms[pos.id] or {}
+            ui.posRows[pos.id] = {}
+
+            local posCard = vgui.Create("DPanel", scroll)
+            posCard:Dock(TOP) posCard:SetTall(30) posCard:DockMargin(0, 6, 0, 0)
+            local kindName = (POS.KindName and POS.KindName[pos.kind]) or pos.kind
+            local nodeName = POS.NodeDisplayName and POS.NodeDisplayName(f, pos.node) or pos.node
+            posCard.Paint = function(_, w, h)
+                draw.RoundedBox(4, 0, 0, w, h, C.head)
+                draw.SimpleText("ДОЛЖНОСТЬ: " .. pos.name, "GRMFPerm_Normal", 10, h / 2,
+                    C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.SimpleText(kindName .. " · " .. nodeName, "GRMFPerm_Small", w - 10, h / 2,
+                    C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            end
+
+            for _, cat in ipairs(categories()) do
+                local catLabel = vgui.Create("DLabel", scroll)
+                catLabel:Dock(TOP) catLabel:SetTall(22) catLabel:SetFont("GRMFPerm_Small")
+                catLabel:SetTextColor(C.dim) catLabel:DockMargin(8, 6, 0, 0)
+                catLabel:SetText("— " .. cat.name:upper())
+
+                for _, permID in ipairs(cat.perms) do
+                    local row = vgui.Create("DPanel", scroll)
+                    row:Dock(TOP) row:SetTall(30) row:DockMargin(8, 0, 0, 2)
+                    row.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, C.card) end
+
+                    local chk = vgui.Create("DCheckBoxLabel", row)
+                    chk:Dock(FILL) chk:DockMargin(10, 0, 0, 0)
+                    chk:SetText(PERMS.Permissions[permID] or permID)
+                    chk:SetFont("GRMFPerm_Normal")
+                    chk:SetTextColor(pp[permID] and C.green or C.text)
+                    chk:SetValue(pp[permID] and 1 or 0)
+                    chk.OnChange = function(_, val)
+                        if ui.applying then return end
+                        local v = val == true
+                        chk:SetTextColor(v and C.green or C.text)
+                        if v then PERMS.GrantToPosition(factionName, pos.id, permID)
+                        else PERMS.RevokeFromPosition(factionName, pos.id, permID) end
+                    end
+                    ui.posRows[pos.id][permID] = chk
+                end
+            end
+        end
+
+        local rolesHead = vgui.Create("DLabel", scroll)
+        rolesHead:Dock(TOP) rolesHead:SetTall(30) rolesHead:DockMargin(0, 12, 0, 2)
+        rolesHead:SetFont("GRMFPerm_Title") rolesHead:SetTextColor(C.gold)
+        rolesHead:SetText("Доступы по званиям (действуют на всех носителей звания)")
     end
 
     for _, role in ipairs(roles) do

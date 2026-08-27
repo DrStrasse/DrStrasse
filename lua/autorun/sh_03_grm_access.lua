@@ -181,6 +181,19 @@ function A.Why(ply, capability)
         sources[#sources + 1] = "capability не объявлена — модуль её не регистрировал"
     else
         sources[#sources + 1] = "право организации: " .. A.FactionPermName(capability)
+        --[[ Право может прийти и от ДОЛЖНОСТИ (ось v5), а не только от
+             звания. Показываем это в ответе, иначе человек ищет причину
+             в правах звания и не находит. ]]
+        if IsValid(ply) and ply.GetNWString then
+            local posID = ply:GetNWString("GRM_Position", "")
+            if posID ~= "" then
+                local posName = ply:GetNWString("GRM_PositionDisplay", "")
+                sources[#sources + 1] = "должность: "
+                    .. (posName ~= "" and posName or posID) .. " [" .. posID .. "]"
+            else
+                sources[#sources + 1] = "должность: не назначена (действует только звание)"
+            end
+        end
         if istable(def.levels) then
             local names = {}
             for lv in pairs(def.levels) do names[#names + 1] = lv end

@@ -109,6 +109,121 @@ function PERMS.Save()
     end
 end
 
+--[[ ДОСТУПЫ ДОЛЖНОСТЕЙ (ось v5, GRM.Positions).
+
+     Раньше источник права был один — звание. Из-за этого право «распоряжаться
+     автопарком» получали ВСЕ сержанты организации, а не начальник
+     транспортного отдела. Отделить было нечем.
+
+     Теперь источников три, и они складываются по ИЛИ:
+        1) право звания      (как раньше, ничего не сломано);
+        2) право должности   (новое);
+        3) персональный грант GRM.Access (был и остался).
+
+     Права должностей лежат отдельно от прав званий, поэтому старый файл
+     доступов читается как есть:
+        PERMS.Data[организация].positions[ключДолжности][право] = true
+
+     НАСЛЕДОВАНИЕ. Начальник узла может наследовать права должностей своего
+     подразделения. По умолчанию ВЫКЛЮЧЕНО — молча раздавать доступы опасно.
+     Включается флагом организации, отдельно для каждой.
+
+     ЗАМЕЩЕНИЕ. Заместитель может получать права начальника, когда того нет
+     в сети. По умолчанию тоже ВЫКЛЮЧЕНО, включается тем же флагом. ]]
+PERMS.PositionDefaults = {
+    inherit = false,    -- начальник наследует права подчинённых должностей узла
+    standin = false,    -- заместитель замещает начальника, когда тот не в сети
+}
+
+--- Настройки должностных прав организации.
+function PERMS.PositionSettings(factionName)
+    local fd = PERMS.Data and PERMS.Data[tostring(factionName or "")] or {}
+    local cfg = istable(fd.positionSettings) and fd.positionSettings or {}
+    return {
+        inherit = cfg.inherit == true,
+        standin = cfg.standin == true,
+    }
+end
+
+--- Право конкретной должности (без наследования).
+function PERMS.PositionHasPermission(factionName, positionID, permission)
+    if not factionName or not positionID or not permission then return false end
+    local fd = PERMS.Data and PERMS.Data[factionName] or {}
+    local store = istable(fd.positions) and fd.positions or {}
+    local row = store[tostring(positionID)]
+    return istable(row) and row[permission] == true
+end
+
+function PERMS.GetPositionPerms(factionName, positionID)
+    local fd = PERMS.Data and PERMS.Data[factionName] or {}
+    local store = istable(fd.positions) and fd.positions or {}
+    return store[tostring(positionID)] or {}
+end
+
+function PERMS.GetFactionPositions(factionName)
+    local fd = PERMS.Data and PERMS.Data[factionName] or {}
+    return istable(fd.positions) and fd.positions or {}
+end
+
+--[[ Есть ли право у должности с учётом наследования и замещения.
+     Возвращает: есть ли право, причина (для диагностики). ]]
+function PERMS.PositionGrants(factionName, positionID, permission, ply)
+    positionID = tostring(positionID or "")
+    if positionID == "" then return false end
+    if PERMS.PositionHasPermission(factionName, positionID, permission) then
+        return true, "position:" .. positionID
+    end
+
+    local POS = GRM.Positions
+    if not (POS and POS.Get) then return false end
+    local own = POS.Get(factionName, positionID)
+    if not own then return false end
+    local cfg = PERMS.PositionSettings(factionName)
+
+    --[[ Наследование: начальник узла получает права должностей, которые
+         этому узлу подчинены и весят меньше. Строго вниз по дереву. ]]
+    if cfg.inherit then
+        for _, other in ipairs(POS.List(factionName)) do
+            if other.id ~= own.id and POS.Weight(other) < POS.Weight(own)
+                and PERMS.PositionHasPermission(factionName, other.id, permission) then
+                -- Узел подчинённой должности должен лежать в ветке начальника.
+                if own.node == "root" then return true, "inherit:" .. other.id end
+                for _, node in ipairs(POS.NodeChain(factionName, other.node)) do
+                    if node == own.node then return true, "inherit:" .. other.id end
+                end
+            end
+        end
+    end
+
+    --[[ Замещение: заместитель берёт права начальника своего узла, но только
+         пока начальника действительно нет в сети. ]]
+    if cfg.standin and POS.NormalizeKind(own.kind) == "deputy" then
+        local head = POS.HeadOfNode(factionName, own.node)
+        if head and head.id ~= own.id
+            and PERMS.PositionHasPermission(factionName, head.id, permission)
+            and PERMS.PositionVacant(factionName, head.id, ply) then
+            return true, "standin:" .. head.id
+        end
+    end
+
+    return false
+end
+
+--[[ Нет ли на должности живого человека в сети (кроме самого спрашивающего).
+     Нужно замещению: зам получает права, только когда начальника нет. ]]
+function PERMS.PositionVacant(factionName, positionID, exceptPly)
+    local POS = GRM.Positions
+    if not (POS and POS.Holders) then return false end
+    local holders = POS.Holders(factionName, positionID)
+    if #holders == 0 then return true end
+    for _, key in ipairs(holders) do
+        local holder = GRM.Identity and GRM.Identity.ResolveCharacter
+            and GRM.Identity.ResolveCharacter(key) or nil
+        if IsValid(holder) and holder ~= exceptPly then return false end
+    end
+    return true
+end
+
 -- Проверить доступ роли
 function PERMS.RoleHasPermission(factionName, roleName, permission)
     if not factionName or not roleName or not permission then return false end
@@ -143,6 +258,11 @@ function PERMS.PlayerHasPermission(ply, permission)
                     if PERMS.RoleHasPermission(factionName, roleName, permission) then
                         return true
                     end
+                    -- Должность — второй независимый источник права.
+                    local positionID = tostring(member.Position or "")
+                    if positionID ~= "" and PERMS.PositionGrants(factionName, positionID, permission, ply) then
+                        return true
+                    end
                 end
             end
         end
@@ -163,6 +283,8 @@ function PERMS.PlayerHasPermission(ply, permission)
         local sub = ply:GetNWString("GRM_Subdepartment", "")
         if dept ~= "" and PERMS.RoleHasPermission(nwFaction, dept, permission) then return true end
         if sub ~= "" and PERMS.RoleHasPermission(nwFaction, sub, permission) then return true end
+        local nwPos = ply:GetNWString("GRM_Position", "")
+        if nwPos ~= "" and PERMS.PositionGrants(nwFaction, nwPos, permission, ply) then return true end
     end
     return false
 end
@@ -187,6 +309,55 @@ if SERVER then
         PERMS.Save()
         PERMS.Broadcast()
     end
+
+    --- Выдать доступ ДОЛЖНОСТИ (хранится отдельно от прав званий).
+    function PERMS.GrantToPosition(factionName, positionID, permission)
+        PERMS.Data = PERMS.Data or {}
+        PERMS.Data[factionName] = PERMS.Data[factionName] or { roles = {} }
+        local fd = PERMS.Data[factionName]
+        fd.positions = istable(fd.positions) and fd.positions or {}
+        fd.positions[positionID] = istable(fd.positions[positionID]) and fd.positions[positionID] or {}
+        fd.positions[positionID][permission] = true
+        PERMS.Save()
+        PERMS.Broadcast()
+    end
+
+    function PERMS.RevokeFromPosition(factionName, positionID, permission)
+        local fd = PERMS.Data and PERMS.Data[factionName]
+        if istable(fd) and istable(fd.positions) and istable(fd.positions[positionID]) then
+            fd.positions[positionID][permission] = nil
+            PERMS.Save()
+            PERMS.Broadcast()
+        end
+    end
+
+    --- Наследование и замещение — по одному флагу на организацию.
+    function PERMS.SetPositionSetting(factionName, key, value)
+        key = tostring(key or "")
+        if key ~= "inherit" and key ~= "standin" then return false end
+        PERMS.Data = PERMS.Data or {}
+        PERMS.Data[factionName] = PERMS.Data[factionName] or { roles = {} }
+        local fd = PERMS.Data[factionName]
+        fd.positionSettings = istable(fd.positionSettings) and fd.positionSettings or {}
+        fd.positionSettings[key] = value == true or nil
+        PERMS.Save()
+        PERMS.Broadcast()
+        return true
+    end
+
+    --[[ Должность удалили — её права должны уйти вместе с ней, иначе
+         одноимённая новая должность молча унаследует чужие доступы. ]]
+    hook.Add("GRM_FactionPositionChanged", "GRM_FactionPerms_PositionGone",
+        function(factionName, positionID, _, kind)
+            if kind ~= "delete" then return end
+            local fd = PERMS.Data and PERMS.Data[factionName]
+            if not (istable(fd) and istable(fd.positions) and fd.positions[positionID]) then return end
+            fd.positions[positionID] = nil
+            PERMS.Save()
+            PERMS.Broadcast()
+            print(("[GRM FactionPerms] права удалённой должности очищены: %s (%s)")
+                :format(tostring(positionID), tostring(factionName)))
+        end)
 
     -- Отозвать доступ у роли
     function PERMS.RevokeFromRole(factionName, roleName, permission)
@@ -261,7 +432,23 @@ if SERVER then
         local role = net.ReadString()
         local perm = net.ReadString()
         local val = net.ReadBool()
-        if faction == "" or role == "" or perm == "" then return end
+        --[[ Вид цели дописан в конец пакета, поэтому старые клиенты
+             продолжают работать: пустая строка = право звания. ]]
+        local kind = net.ReadString() or ""
+        if faction == "" or role == "" then return end
+
+        -- Настройки наследования и замещения приходят тем же каналом.
+        if kind == "setting" then
+            if not ply:IsSuperAdmin() and not isLeaderOfFaction(ply, faction) then
+                PERMS.SendTo(ply)
+                return
+            end
+            PERMS.SetPositionSetting(faction, perm, val)
+            PERMS.SendTo(ply)
+            return
+        end
+
+        if perm == "" then return end
         if not PERMS.Permissions[perm] then return end
         --[[ Право менять доступы: суперадмин или лидер этой организации.
              Раньше отказ был молчаливым — человек щёлкал галочку, она
@@ -276,7 +463,10 @@ if SERVER then
             PERMS.SendTo(ply)
             return
         end
-        if val then
+        if kind == "position" then
+            if val then PERMS.GrantToPosition(faction, role, perm)
+            else PERMS.RevokeFromPosition(faction, role, perm) end
+        elseif val then
             PERMS.GrantToRole(faction, role, perm)
         else
             PERMS.RevokeFromRole(faction, role, perm)
@@ -309,21 +499,34 @@ else
     end
 
     -- На клиенте Grant/Revoke отправляют net-сообщение (а не пишут локальный файл).
-    function PERMS.GrantToRole(factionName, roleName, permission)
+    local function sendPerm(factionName, target, permission, value, kind)
         net.Start(NET_SET)
             net.WriteString(tostring(factionName or ""))
-            net.WriteString(tostring(roleName or ""))
+            net.WriteString(tostring(target or ""))
             net.WriteString(tostring(permission or ""))
-            net.WriteBool(true)
+            net.WriteBool(value == true)
+            net.WriteString(tostring(kind or ""))
         net.SendToServer()
     end
 
+    function PERMS.GrantToRole(factionName, roleName, permission)
+        sendPerm(factionName, roleName, permission, true, "role")
+    end
+
     function PERMS.RevokeFromRole(factionName, roleName, permission)
-        net.Start(NET_SET)
-            net.WriteString(tostring(factionName or ""))
-            net.WriteString(tostring(roleName or ""))
-            net.WriteString(tostring(permission or ""))
-            net.WriteBool(false)
-        net.SendToServer()
+        sendPerm(factionName, roleName, permission, false, "role")
+    end
+
+    function PERMS.GrantToPosition(factionName, positionID, permission)
+        sendPerm(factionName, positionID, permission, true, "position")
+    end
+
+    function PERMS.RevokeFromPosition(factionName, positionID, permission)
+        sendPerm(factionName, positionID, permission, false, "position")
+    end
+
+    --- Переключатель наследования/замещения (target не используется).
+    function PERMS.SetPositionSetting(factionName, key, value)
+        sendPerm(factionName, "settings", key, value, "setting")
     end
 end
