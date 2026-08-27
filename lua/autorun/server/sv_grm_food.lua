@@ -633,12 +633,20 @@ timer.Create("GRM_Food_HungerTick", 1, 0, function()
             elseif not ply:Alive() then
                 GRM.Food.SyncHunger(ply)
             else
+                --[[ Множитель расхода. Дома человек тратит меньше сил:
+                     модуль жилья (sh_grm_housing) возвращает через этот
+                     хук значение меньше единицы. Сделано хуком, а не
+                     проверкой жилья прямо здесь, чтобы питание не зависело
+                     от недвижимости и отдых можно было отключить конваром. ]]
+                local scale = hook.Run("GRM_Food_DrainScale", ply)
+                scale = (isnumber(scale) and scale > 0) and math.min(scale, 4) or 1
+
                 local cur = GRM.Food.GetHunger(ply)
-                local newVal = math.max(0, cur - (cfg().HungerDrainPerSecond or 0.02))
+                local newVal = math.max(0, cur - (cfg().HungerDrainPerSecond or 0.02) * scale)
                 GRM.Food.SetHunger(ply, newVal)
 
                 local tcur = GRM.Food.GetThirst(ply)
-                local tnew = math.max(0, tcur - (cfg().ThirstDrainPerSecond or 0.035))
+                local tnew = math.max(0, tcur - (cfg().ThirstDrainPerSecond or 0.035) * scale)
                 GRM.Food.SetThirst(ply, tnew)
 
                 if newVal <= 0 then

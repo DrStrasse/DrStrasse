@@ -27,6 +27,14 @@ function P.Normalize(r)
       просрочку копится отдельным полем, чтобы её было видно в отчёте. ]]
  r.estateKind=({estate=1,business=1})[tostring(r.estateKind or"")]and r.estateKind or""
  r.estatePenalty=math.max(0,math.floor(tonumber(r.estatePenalty)or 0))
+ --[[ Точка появления в жилье, заданная админом вручную (grm_housing_setspawn).
+      Нужна там, где автопоиск «от двери внутрь комнаты» промахивается:
+      сложная планировка, второй этаж, длинный коридор. Если поля нет,
+      GRM.Housing.SpawnPoint ищет точку сам. Чистим мусор: без координат
+      запись бессмысленна и мешает автопоиску. ]]
+ if istable(r.housingSpawn) and tonumber(r.housingSpawn.x) then
+  r.housingSpawn={x=tonumber(r.housingSpawn.x) or 0,y=tonumber(r.housingSpawn.y) or 0,z=tonumber(r.housingSpawn.z) or 0,yaw=tonumber(r.housingSpawn.yaw) or 0}
+ else r.housingSpawn=nil end
  return r
 end
 function P.CanAdmin(p)return IsValid(p)and(p:IsSuperAdmin()or(GRM.Access and GRM.Access.Can and GRM.Access.Can(p,"property.manage")==true))end

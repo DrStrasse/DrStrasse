@@ -146,6 +146,35 @@ if SERVER then
          вписан жильцом, с живой арендой и не опечатанный. ]]
     function SP.HomePoint(ply)
         if not IsValid(ply) then return nil end
+
+        --[[ Решение владельца 27.08 (вариант «А»): жильё — это реальные
+             квартиры с дверями, и спавн должен быть ВНУТРИ квартиры.
+
+             Раньше точка бралась как центр зоны на mins.z + 8. Зона
+             обводится тулом снаружи дома, поэтому центр регулярно
+             попадал в стену, на лестничную клетку или под пол. Теперь
+             точку ищет модуль жилья: сначала заданную админом, затем пол
+             у двери со стороны комнаты, и только в крайнем случае центр
+             зоны. ]]
+        local HS = GRM.Housing
+        if HS and HS.HomeOf and HS.SpawnPoint then
+            local rec = HS.HomeOf(ply)
+            if rec then
+                local pos, ang = HS.SpawnPoint(rec)
+                if pos then
+                    local name = tostring(rec.name or "")
+                    return {
+                        pos = pos,
+                        ang = ang or Angle(0, 0, 0),
+                        label = name ~= "" and name or "Ваше жильё",
+                    }
+                end
+            end
+            return nil
+        end
+
+        --[[ Запасной путь: модуль жилья почему-то не загрузился. Работаем
+             по-старому, чтобы вариант «Дом» не пропал совсем. ]]
         local P = GRM.Property
         if not (P and istable(P.Records)) then return nil end
         local key = charKey(ply)
