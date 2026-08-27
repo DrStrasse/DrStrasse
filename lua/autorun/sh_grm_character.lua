@@ -772,6 +772,13 @@ if SERVER then
         if not isAllowedModel(ply, entry.path) then return false, "Модель не разрешена вашей фракцией/ролью" end
 
         local bg = CH.NormalizeBodygroups(entry.bodygroups)
+        --[[ Последнее слово за правилами организации: даже если клиент
+             прислал скрытую или запрещённую часть, сервер приводит набор
+             к разрешённому. Скрытые группы получают своё жёсткое значение. ]]
+        if GRM.BGRules and GRM.BGRules.Sanitize then
+            local ctx = GRM.BGRules.ContextFor(ply, CH.GetActiveKey and CH.GetActiveKey(ply) or nil)
+            bg = CH.NormalizeBodygroups(GRM.BGRules.Sanitize(entry.path, bg, ctx))
+        end
         if _G.ApplyModelSettings then
             _G.ApplyModelSettings(ply, { path = entry.path, skin = tonumber(entry.skin) or 0, bodygroups = bg })
         else
@@ -971,6 +978,7 @@ if SERVER then
             factionName = factionName or "",
             factionRole = member and tostring(member.Role or "") or "",
             factionDepartment = member and tostring(member.Department or "") or "",
+            factionSubdepartment = member and tostring(member.Subdepartment or member.Subdept or "") or "",
             onDuty = onDuty,
         }
     end
@@ -2191,25 +2199,45 @@ if CLIENT then
         local bodyScroll = vgui.Create("DScrollPanel", pageBody)
         bodyScroll:Dock(FILL)
 
-        local function stepperRow(parent, label, get, set, count)
+        local function stepperRow(parent, label, get, set, count, opts)
+            opts = istable(opts) and opts or {}
+            local locked = opts.locked == true
+            local values = istable(opts.values) and opts.values or nil
             local row = vgui.Create("DPanel", parent)
             row:Dock(TOP) row:SetTall(46) row:DockMargin(0, 0, 6, 6)
             row.Paint = function(_, pw, ph)
                 draw.RoundedBox(8, 0, 0, pw, ph, C.panel)
-                draw.SimpleText(label, "GRMChar_Normal", 14, ph / 2, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.SimpleText(label, "GRMChar_Normal", 14, ph / 2, locked and C.dim or C.text,
+                    TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                 draw.SimpleText(tostring(get()) .. " / " .. tostring(math.max(0, count() - 1)), "GRMChar_Small",
                     pw - 96, ph / 2, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            end
+            --- Следующее разрешённое значение: по списку правил или по кругу.
+            local function nextValue(cur, dir)
+                local total = math.max(1, count())
+                if values and #values > 0 then
+                    local idx = 1
+                    for i, v in ipairs(values) do if v == cur then idx = i break end end
+                    idx = ((idx - 1 + dir) % #values) + 1
+                    return math.Clamp(values[idx] or 0, 0, total - 1)
+                end
+                return (cur + dir) % total
             end
             local function arrow(text, dir, x)
                 local b = vgui.Create("DButton", row)
                 b:SetText("") b:SetSize(32, 28) b:SetPos(x, 9)
                 b.Paint = function(self, pw, ph)
-                    draw.RoundedBox(6, 0, 0, pw, ph, self:IsHovered() and C.accHov or C.panel2)
-                    draw.SimpleText(text, "GRMChar_Sub", pw / 2, ph / 2, C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    local bgc = locked and C.panel or (self:IsHovered() and C.accHov or C.panel2)
+                    draw.RoundedBox(6, 0, 0, pw, ph, bgc)
+                    draw.SimpleText(text, "GRMChar_Sub", pw / 2, ph / 2, locked and C.dim or C.text,
+                        TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                 end
                 b.DoClick = function()
-                    local total = math.max(1, count())
-                    set((get() + dir) % total)
+                    if locked then
+                        surface.PlaySound("buttons/button10.wav")
+                        return
+                    end
+                    set(nextValue(get(), dir))
                     applyPreview(false)
                 end
                 return b
@@ -2238,29 +2266,92 @@ if CLIENT then
             end
 
             local rule = draft.wardrobeRule or {}
-            local added = 0
+            --[[ Правила бодигрупп организации: модель сканируется честно,
+                 но игроку показываются только те строки, которые разрешил
+                 редактор /bodygroups_admin для его организации, отдела и
+                 должности. Скрытые строки просто не рисуются (Armbands
+                 исчезает), закреплённые видны серыми, ограниченные
+                 переключаются только по разрешённым вариантам. ]]
+            local bgRules = {}
+            if GRM.BGRules and GRM.BGRules.Resolve then
+                bgRules = GRM.BGRules.Resolve(draft.model, {
+                    faction = payload.factionName or "",
+                    dept = payload.factionDepartment or "",
+                    sub = payload.factionSubdepartment or "",
+                    role = payload.factionRole or "",
+                }) or {}
+            end
+            -- Значения, закреплённые правилами, применяем к черновику сразу:
+            -- иначе игрок «сохранит» то, чего не видит.
+            local forced = false
+            for gi, spec in pairs(bgRules) do
+                if spec.mode == "hide" or spec.mode == "lock" then
+                    local v = math.max(0, math.floor(tonumber(spec.value) or 0))
+                    if CH.BodygroupGet(draft.bodygroups, gi) ~= v then
+                        draft.bodygroups = CH.BodygroupSet(draft.bodygroups or {}, gi, v)
+                        forced = true
+                    end
+                elseif spec.mode == "limit" then
+                    local now = CH.BodygroupGet(draft.bodygroups, gi)
+                    if not table.HasValue(spec.values or {}, now) then
+                        local pick = (spec.values or {})[1] or 0
+                        draft.bodygroups = CH.BodygroupSet(draft.bodygroups or {}, gi, pick)
+                        forced = true
+                    end
+                end
+            end
+            if forced then
+                for i = 0, (ent:GetNumBodyGroups() or 0) - 1 do ent:SetBodygroup(i, 0) end
+                for g, v in pairs(CH.NormalizeBodygroups(draft.bodygroups)) do
+                    ent:SetBodygroup(tonumber(g) or 0, tonumber(v) or 0)
+                end
+            end
+
+            local added, hidden = 0, 0
             for i = 0, (ent:GetNumBodyGroups() or 0) - 1 do
                 local total = ent:GetBodygroupCount(i) or 1
                 local groupRule = rule.bodygroups and (rule.bodygroups[i] or rule.bodygroups[tostring(i)])
                 local allowed = (payload.allowBodygroups ~= false)
                     and (not isWardrobe or groupRule == nil or groupRule == true or istable(groupRule))
+                local spec = bgRules[i]
+                if istable(spec) and spec.mode == "hide" then
+                    if total > 1 and allowed then hidden = hidden + 1 end
+                    allowed = false
+                end
                 if total > 1 and allowed then
                     added = added + 1
                     local name = ent:GetBodygroupName(i)
                     if name == "" then name = "Группа " .. i end
+                    local locked = istable(spec) and spec.mode == "lock"
+                    local values = istable(spec) and spec.mode == "limit" and spec.values or nil
+                    if locked then
+                        name = name .. "  (закреплено организацией)"
+                    elseif values then
+                        name = name .. "  (доступно: " .. table.concat(values, ", ") .. ")"
+                    end
                     stepperRow(bodyScroll, name,
                         function() return CH.BodygroupGet(draft.bodygroups, i) end,
                         function(v)
+                            if locked then return end
                             draft.bodygroups = draft.bodygroups or {}
                             CH.BodygroupSet(draft.bodygroups, i, v)
                         end,
-                        function() return total end)
+                        function() return total end,
+                        { locked = locked, values = values })
                 end
             end
             if added == 0 then
                 local none = vgui.Create("DLabel", bodyScroll)
-                none:Dock(TOP) none:SetText("У этой модели нет настраиваемых частей.")
+                none:Dock(TOP)
+                none:SetText(hidden > 0
+                    and "Настройка внешности этой модели закрыта вашей организацией."
+                    or "У этой модели нет настраиваемых частей.")
                 none:SetFont("GRMChar_Normal") none:SetTextColor(C.dim)
+            elseif hidden > 0 then
+                local note = vgui.Create("DLabel", bodyScroll)
+                note:Dock(TOP) note:SetTall(20)
+                note:SetText("Часть элементов формы закреплена организацией и не редактируется.")
+                note:SetFont("GRMChar_Small") note:SetTextColor(C.dim)
             end
         end
 
