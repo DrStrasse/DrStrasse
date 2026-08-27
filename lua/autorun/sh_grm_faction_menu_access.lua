@@ -47,6 +47,7 @@ MA.Tabs = {
     { key = "overview",  name = "Обзор",                default = "member" },
     { key = "members",   name = "Личный состав",        default = "leader" },
     { key = "structure", name = "Структура и штат",     default = "leader" },
+    { key = "positions", name = "Должности",            default = "leader" },
     { key = "personnel", name = "Кадровые дела",        default = "leader" },
     { key = "finance",   name = "Казна и финансы",      default = "leader" },
     { key = "gear",      name = "Вооружение и форма",   default = "admin"  },

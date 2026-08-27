@@ -723,7 +723,8 @@ function UI.Open(requestedFaction, requestedTab)
         local MA = GRM.MenuAccess
         if not (MA and MA.CanSeeLocal) then
             -- Модуль прав не загружен — безопасный режим: чувствительное скрыто.
-            local safe = { overview = true, members = true, structure = true, personnel = true, finance = true }
+            local safe = { overview = true, members = true, structure = true, positions = true,
+                personnel = true, finance = true }
             return safe[tabKey] == true
         end
         return MA.CanSeeLocal(tabKey, targetFac) == true
@@ -1317,6 +1318,262 @@ function UI.Open(requestedFaction, requestedTab)
         end):Dock(LEFT); dBar:GetChildren()[1]:SetWide(190)
     end
 
+    -- ════════════ 3б. ДОЛЖНОСТИ (ось v5) ════════════
+    --[[ Ранг отвечает на вопрос «какое звание», должность — «какое место в
+         штате и что человеку можно». Две независимые оси: лейтенант может
+         быть рядовым инспектором, а сержант — начальником отдела.
+
+         Вес власти не задаётся руками — он следует из вида должности
+         (начальник / заместитель / старший / сотрудник). Из веса система
+         сама выводит вертикаль подчинения. ]]
+    local function buildPositionsTab(pnl, facName, facData)
+        local fac = facData and facData[facName] or {}
+        local POS = GRM.Positions
+
+        if not (POS and POS.List) then
+            local lbl = vgui.Create("DLabel", pnl)
+            lbl:Dock(TOP) lbl:SetTall(24) lbl:SetFont("GRMFac_Normal") lbl:SetTextColor(C.dim)
+            lbl:SetText("Модуль должностей не загружен.")
+            return
+        end
+
+        --- Узлы структуры: организация, отделы, подотделы.
+        local function nodeChoices()
+            local out = { { key = "root", label = "Организация целиком" } }
+            for _, dKey in ipairs(fac.Departments or {}) do
+                out[#out + 1] = { key = "dept:" .. dKey,
+                    label = "Отдел: " .. GRM.Factions.DepartmentDisplayName(fac, dKey) }
+            end
+            for _, sub in ipairs(GRM.Factions.GetSubdepartments(fac)) do
+                out[#out + 1] = { key = "sub:" .. sub.id, label = "Подотдел: " .. sub.name }
+            end
+            return out
+        end
+
+        --[[ Окно создания и правки должности. Одно на оба случая: при правке
+             ключ показан, но не меняется — иначе назначенные люди потеряли бы
+             свою должность. ]]
+        local function openEditor(existing)
+            local isNew = existing == nil
+            local modal = vgui.Create("DFrame")
+            modal:SetTitle("") modal:SetSize(460, 420) modal:Center() modal:MakePopup()
+            modal:ShowCloseButton(false)
+            modal.Paint = function(_, w, h)
+                draw.RoundedBox(8, 0, 0, w, h, C.bg)
+                draw.RoundedBox(8, 0, 0, w, 38, C.sidebar)
+                draw.SimpleText(isNew and "Новая должность" or "Правка должности",
+                    "GRMFac_Sub", 16, 19, C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+
+            local function label(text, y)
+                local l = vgui.Create("DLabel", modal)
+                l:SetPos(16, y) l:SetSize(428, 18)
+                l:SetFont("GRMFac_Small") l:SetTextColor(C.dim) l:SetText(text)
+            end
+
+            label("Системный ключ (eng, менять нельзя после создания)", 48)
+            local keyEntry = vgui.Create("DTextEntry", modal)
+            keyEntry:SetPos(16, 68) keyEntry:SetSize(428, 28) skinTextEntry(keyEntry)
+            keyEntry:SetText(existing and existing.id or "")
+            if not isNew then keyEntry:SetEditable(false) end
+
+            label("Публичное название", 104)
+            local nameEntry = vgui.Create("DTextEntry", modal)
+            nameEntry:SetPos(16, 124) nameEntry:SetSize(428, 28) skinTextEntry(nameEntry)
+            nameEntry:SetText(existing and existing.name or "")
+
+            label("Подразделение", 160)
+            local nodeCombo = vgui.Create("DComboBox", modal)
+            nodeCombo:SetPos(16, 180) nodeCombo:SetSize(428, 28) skinCombo(nodeCombo)
+            local curNode = existing and existing.node or "root"
+            for _, n in ipairs(nodeChoices()) do
+                nodeCombo:AddChoice(n.label, n.key, n.key == curNode)
+            end
+
+            label("Вид должности — от него зависит старшинство", 216)
+            local kindCombo = vgui.Create("DComboBox", modal)
+            kindCombo:SetPos(16, 236) kindCombo:SetSize(428, 28) skinCombo(kindCombo)
+            local curKind = existing and existing.kind or "staff"
+            for _, k in ipairs(POS.Kinds) do
+                kindCombo:AddChoice(k.name .. "  (вес " .. k.weight .. ")", k.id, k.id == curKind)
+            end
+
+            label("Мест в штате (0 — без лимита)", 272)
+            local slotsEntry = vgui.Create("DTextEntry", modal)
+            slotsEntry:SetPos(16, 292) slotsEntry:SetSize(206, 28) skinTextEntry(slotsEntry)
+            slotsEntry:SetNumeric(true)
+            slotsEntry:SetText(tostring(existing and existing.slots or 0))
+
+            label("Тег в эфире", 272)
+            local tagEntry = vgui.Create("DTextEntry", modal)
+            tagEntry:SetPos(238, 292) tagEntry:SetSize(206, 28) skinTextEntry(tagEntry)
+            tagEntry:SetText(existing and existing.tag or "")
+
+            local btnCancel = mkBtn(modal, "Отмена", C.cardLight, C.cardHover, function() modal:Close() end)
+            btnCancel:SetPos(16, 348) btnCancel:SetSize(206, 38)
+
+            local btnSave = mkBtn(modal, isNew and "Создать" or "Сохранить", C.green, C.greenHover, function()
+                local key = string.Trim(keyEntry:GetText() or "")
+                local nm = string.Trim(nameEntry:GetText() or "")
+                if key == "" then
+                    notification.AddLegacy("Укажите системный ключ", NOTIFY_ERROR, 4)
+                    return
+                end
+                local _, node = nodeCombo:GetSelected()
+                local _, kind = kindCombo:GetSelected()
+                local data = {
+                    name = nm ~= "" and nm or key,
+                    node = tostring(node or "root"),
+                    kind = tostring(kind or "staff"),
+                    slots = math.max(0, math.floor(tonumber(slotsEntry:GetText()) or 0)),
+                    tag = string.Trim(tagEntry:GetText() or ""),
+                }
+                sendAction("positionSave",
+                    isSA and { facName, key, data } or { key, data }, refreshView)
+                modal:Close()
+            end)
+            btnSave:SetPos(238, 348) btnSave:SetSize(206, 38)
+        end
+
+        -- ── ЛЕВО: список должностей ────────────────────────────────
+        local left = vgui.Create("DPanel", pnl)
+        left:Dock(LEFT)
+        left:SetWide((pnl:GetWide() - 30) * 0.52)
+        left.Paint = function(_, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, C.card)
+            draw.SimpleText("Штатное расписание", "GRMFac_Sub", 14, 16, C.gold)
+        end
+
+        local pScroll = vgui.Create("DScrollPanel", left)
+        pScroll:Dock(FILL) pScroll:DockMargin(10, 42, 10, 50)
+
+        local positions = POS.List(fac)
+        if #positions == 0 then
+            local empty = vgui.Create("DLabel", pScroll)
+            empty:Dock(TOP) empty:SetTall(40) empty:SetFont("GRMFac_Normal") empty:SetTextColor(C.dim)
+            empty:SetWrap(true) empty:SetAutoStretchVertical(true)
+            empty:SetText("Должностей нет. Организация работает на одних званиях — как раньше.\n"
+                .. "Создайте должности, чтобы отделить начальника от рядового с тем же званием.")
+        end
+
+        local lastNode
+        for _, pos in ipairs(positions) do
+            -- Заголовок подразделения: должности сгруппированы по узлам.
+            if pos.node ~= lastNode then
+                lastNode = pos.node
+                local hdr = vgui.Create("DLabel", pScroll)
+                hdr:Dock(TOP) hdr:SetTall(24) hdr:DockMargin(0, 6, 0, 2)
+                hdr:SetFont("GRMFac_Small") hdr:SetTextColor(C.accent)
+                hdr:SetText(string.upper(POS.NodeDisplayName(fac, pos.node)))
+            end
+
+            local st = POS.Staffing(fac, pos.id)
+            local row = vgui.Create("DPanel", pScroll)
+            row:Dock(TOP) row:SetTall(46) row:DockMargin(0, 0, 0, 4)
+            row.Paint = function(_, w, h)
+                draw.RoundedBox(5, 0, 0, w, h, C.cardLight)
+                -- Полоса слева тем ярче, чем выше должность.
+                local weight = POS.Weight(pos)
+                local col = weight >= 80 and C.gold or (weight >= 60 and C.accent or C.dim)
+                draw.RoundedBox(2, 0, 0, 4, h, col)
+                draw.SimpleText(pos.name, "GRMFac_Normal", 14, 13, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                local staffText = st.unlimited
+                    and ("занято " .. st.taken .. " · без лимита")
+                    or ("занято " .. st.taken .. " из " .. st.slots)
+                local kindName = POS.KindName[pos.kind] or pos.kind
+                draw.SimpleText(kindName .. " · " .. staffText .. " · [" .. pos.id .. "]"
+                    .. (pos.tag ~= "" and (" · тег " .. pos.tag) or ""),
+                    "GRMFac_Small", 14, 32, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+
+            local bDel = mkBtn(row, "Удалить", C.red, C.redHover, function()
+                Derma_Query("Удалить должность «" .. pos.name .. "»?\n"
+                    .. "Сотрудники останутся в организации, но без должности.",
+                    "Должности", "Удалить", function()
+                        sendAction("positionDelete", isSA and { facName, pos.id } or { pos.id }, refreshView)
+                    end, "Отмена", function() end)
+            end)
+            bDel:Dock(RIGHT) bDel:SetWide(74) bDel:DockMargin(4, 7, 8, 7)
+
+            local bEdit = mkBtn(row, "Правка", C.cardLight, C.cardHover, function() openEditor(pos) end)
+            bEdit:Dock(RIGHT) bEdit:SetWide(70) bEdit:DockMargin(4, 7, 0, 7)
+        end
+
+        local pBar = vgui.Create("DPanel", left)
+        pBar:Dock(BOTTOM) pBar:SetTall(36) pBar:DockMargin(10, 0, 10, 8)
+        pBar:SetPaintBackground(false)
+        local bAdd = mkBtn(pBar, "+ Создать должность", C.green, C.greenHover, function() openEditor(nil) end)
+        bAdd:Dock(LEFT) bAdd:SetWide(190)
+
+        -- ── ПРАВО: назначение сотрудников ──────────────────────────
+        local right = vgui.Create("DPanel", pnl)
+        right:Dock(FILL) right:DockMargin(10, 0, 0, 0)
+        right.Paint = function(_, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, C.card)
+            draw.SimpleText("Назначение сотрудников", "GRMFac_Sub", 14, 16, C.gold)
+        end
+
+        local mScroll = vgui.Create("DScrollPanel", right)
+        mScroll:Dock(FILL) mScroll:DockMargin(10, 42, 10, 10)
+
+        --- Кто где служит: имя, звание и текущая должность.
+        local memberKeys = {}
+        for key in pairs(fac.Members or {}) do memberKeys[#memberKeys + 1] = key end
+        table.sort(memberKeys)
+
+        if #memberKeys == 0 then
+            local empty = vgui.Create("DLabel", mScroll)
+            empty:Dock(TOP) empty:SetTall(24) empty:SetFont("GRMFac_Normal") empty:SetTextColor(C.dim)
+            empty:SetText("В организации нет сотрудников.")
+        end
+
+        for _, key in ipairs(memberKeys) do
+            local mem = fac.Members[key]
+            if istable(mem) then
+                local own = POS.OfMember(fac, mem)
+                local row = vgui.Create("DPanel", mScroll)
+                row:Dock(TOP) row:SetTall(48) row:DockMargin(0, 0, 0, 4)
+                local rpName = tostring(mem._rpName or "")
+                if rpName == "" then rpName = key end
+                local roleName = GRM.Factions.RoleDisplayName(fac, mem.Role or "")
+                row.Paint = function(_, w, h)
+                    draw.RoundedBox(5, 0, 0, w, h, C.cardLight)
+                    draw.SimpleText(rpName, "GRMFac_Normal", 12, 14, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    -- Звание и должность — рядом, чтобы разница была видна сразу.
+                    local posText = own and own.name or "без должности"
+                    local posCol = own and C.gold or C.dim
+                    draw.SimpleText("звание: " .. roleName, "GRMFac_Small", 12, 33, C.dim,
+                        TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    draw.SimpleText(posText, "GRMFac_Small", w - 150, 33, posCol,
+                        TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                end
+
+                local bSet = mkBtn(row, "Назначить", C.accent, C.accentHover, function()
+                    local menu = DermaMenu()
+                    menu:AddOption("— снять с должности —", function()
+                        sendAction("positionAssign",
+                            isSA and { facName, key, "" } or { key, "" }, refreshView)
+                    end)
+                    for _, pos in ipairs(POS.List(fac)) do
+                        local st = POS.Staffing(fac, pos.id)
+                        local free = st.unlimited and "без лимита" or (st.free .. " своб.")
+                        local title = pos.name .. "  (" .. POS.NodeDisplayName(fac, pos.node) .. " · " .. free .. ")"
+                        local opt = menu:AddOption(title, function()
+                            sendAction("positionAssign",
+                                isSA and { facName, key, pos.id } or { key, pos.id }, refreshView)
+                        end)
+                        -- Занятые места видно до клика, а не после отказа сервера.
+                        if not st.unlimited and st.free <= 0 and (not own or own.id ~= pos.id) then
+                            opt:SetTextColor(C.dim)
+                        end
+                    end
+                    menu:Open()
+                end)
+                bSet:Dock(RIGHT) bSet:SetWide(96) bSet:DockMargin(4, 8, 8, 8)
+            end
+        end
+    end
+
     -- ════════════ 4. КАДРОВЫЕ ДЕЛА ════════════
     local function buildPersonnelTab(pnl, facName, facData)
         if GRM.FactionPersonnel and GRM.FactionPersonnel.OpenTab then
@@ -1786,6 +2043,7 @@ function UI.Open(requestedFaction, requestedTab)
     addTabBtn("overview", "Обзор", "icon16/application_home.png", buildOverviewTab)
     addTabBtn("members", "Личный состав", "icon16/group.png", buildMembersTab)
     addTabBtn("structure", "Структура и штат", "icon16/chart_organisation.png", buildStructureTab)
+    addTabBtn("positions", "Должности", "icon16/award_star_gold_1.png", buildPositionsTab)
     addTabBtn("personnel", "Кадровые дела", "icon16/book.png", buildPersonnelTab)
     addTabBtn("access", "Доступы и связь", "icon16/key.png", buildAccessTab)
     addTabBtn("gear", "Вооружение и форма", "icon16/shield.png", buildWeaponsModelsTab)

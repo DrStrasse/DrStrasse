@@ -1493,6 +1493,7 @@ if SERVER then
             addSubdepartment=true, removeSubdepartment=true, renameSubdepartment=true,
             setDepartmentTag=true, setSubdepartmentTag=true, setRole=true, setDepartment=true,
             setSubdepartment=true, removeMember=true, inviteMember=true, assignSelf=true,
+            positionSave=true, positionDelete=true, positionAssign=true,
         }
         if guarded[action] and isSuperAdmin and args[1] and GRM.Root and GRM.Root.RequestFactionApproval then
             local targetFaction = tostring(args[1])
@@ -1661,6 +1662,28 @@ if SERVER then
             local faction, shift = getFactionAndShift()
             if not faction then return end
             local ok,err=setMemberSubdepartment(faction,args[1+shift],args[2+shift],ply)
+            done(ok, err)
+        --[[ ДОЛЖНОСТИ (ось v5, GRM.Positions). Работают так же, как подотделы:
+             суперадмин указывает организацию первым аргументом, лидер правит
+             свою. Вся проверка данных — внутри GRM.Positions. ]]
+        elseif action == "positionSave" then
+            local faction, shift = getFactionAndShift()
+            if not faction then return end
+            if not (GRM.Positions and GRM.Positions.Set) then done(false, "Модуль должностей не загружен") return end
+            local data = istable(args[2 + shift]) and args[2 + shift] or {}
+            local ok, err = GRM.Positions.Set(faction, args[1 + shift], data)
+            done(ok, err)
+        elseif action == "positionDelete" then
+            local faction, shift = getFactionAndShift()
+            if not faction then return end
+            if not (GRM.Positions and GRM.Positions.Delete) then done(false, "Модуль должностей не загружен") return end
+            local ok, err = GRM.Positions.Delete(faction, args[1 + shift])
+            done(ok, err)
+        elseif action == "positionAssign" then
+            local faction, shift = getFactionAndShift()
+            if not faction then return end
+            if not (GRM.Positions and GRM.Positions.Assign) then done(false, "Модуль должностей не загружен") return end
+            local ok, err = GRM.Positions.Assign(faction, args[1 + shift], args[2 + shift], ply)
             done(ok, err)
         elseif action == "saveIncasso" then
             -- Код 126: сохранение настроек инкассации фракции (только суперадмин)
