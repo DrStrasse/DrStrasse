@@ -716,6 +716,13 @@ if SERVER then
          его позицией управляет только лимб. ]]
     hook.Add("PlayerSpawn", "SpawnAtFactionPoint", function(ply)
         if IsValid(ply) and GRM.Char and GRM.Char.IsPending and GRM.Char.IsPending(ply) then return end
+        --[[ Во время входа позицией распоряжается ТОЛЬКО конвейер
+             (GRM.Entry): игрок мог выбрать «дом» или «где вышел», и
+             фракционная точка обязана уступить. Раньше этот хук
+             срабатывал последним и возвращал человека в штаб — отсюда
+             жалоба «нажми любую кнопку, ничего не происходит». ]]
+        if GRM.Entry and GRM.Entry.InProgress and GRM.Entry.InProgress(ply) then return end
+        if IsValid(ply) and ply.GRMEntryPoint ~= nil then return end
         GRM_MovePlayerToSpawnPoint(ply)
     end)
 

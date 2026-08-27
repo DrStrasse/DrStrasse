@@ -52,15 +52,25 @@ ok(has("function CH.SendToLimbo(ply)") and has("ply:StripWeapons()") and has("pl
    "в лимбе игрок без оружия, без модели, без коллизии и неуязвим")
 ok(has("if locked == true then\n            CH.SendToLimbo(ply)"),
    "лимб включается вместе с блокировкой выбора")
-ok(has("elseif ply.GRMCharLimbo then\n            CH.ReleaseFromLimbo(ply)"),
-   "и выключается, когда персонаж подтверждён")
+--[[ Переработано 27.08 (конвейер входа GRM.Entry). Выпуск из лимба
+     больше не мгновенный: при первичном входе управление передаётся
+     конвейеру, который сначала спросит точку входа и только потом
+     выпустит в мир. Подробности — sim_entry_pipeline.lua. ]]
+ok(has("CH.ConfirmedToEntry(ply)") and has("if ply.GRMCharLimbo then CH.ReleaseFromLimbo(ply) end"),
+   "подтверждение персонажа передаёт управление конвейеру входа")
 
 print("\n=== 3. ТОЧКА СПАВНА ПОСЛЕ ВЫБОРА ===")
 ok(has("function CH.PlaceOnSpawnPoint(ply)") and has("_G.GetSpawnPointForPlayer(ply)"),
    "точка берётся из системы точек спавна (/spawnmenu)")
 ok(has('ents.FindByClass("info_player_start")'), "если точек нет — запасной вариант карты")
-ok(has("ply.GRMCharPlaceOnSpawn = true") and has('hook.Add("PlayerSpawn", "GRM_Char_PlaceAfterSelect"'),
-   "после спавна игрока ставят на точку принудительно")
+--[[ Хук GRM_Char_PlaceAfterSelect удалён намеренно (жалоба владельца
+     27.08 «нажми любую — ничего не происходит»): он ставил игрока на
+     фракционную точку после Spawn и затирал выбранную точку входа.
+     Теперь позицию выставляет ровно один владелец — GRM.Entry. ]]
+ok(not has('hook.Add("PlayerSpawn", "GRM_Char_PlaceAfterSelect"'),
+   "затирающий позицию хук убран: точку ставит только конвейер входа")
+ok(has("function CH.FinishEntry(ply)"),
+   "спавн вынесен в CH.FinishEntry — её зовёт конвейер после выбора точки")
 
 print("\n=== 4. ОКНО НА ВЕСЬ ЭКРАН И БЕЗ ВЫХОДА ===")
 ok(has("f:SetSize(ScrW(), ScrH())") and has("f:SetPos(0, 0)"), "окно занимает весь экран")

@@ -313,13 +313,34 @@ if SERVER then
         return nil
     end
 
-    --- Поставить игрока на выбранную точку.
+    --[[ Применить выбор точки.
+
+         ГЛАВНОЕ ИЗМЕНЕНИЕ (жалоба владельца 27.08 «нажми любую — ничего
+         не происходит»): раньше здесь просто делался SetPos игроку,
+         который УЖЕ стоял в мире. Следом отрабатывали хуки PlayerSpawn
+         (SpawnAtFactionPoint, GRM_Char_PlaceAfterSelect) и возвращали
+         его обратно — выбор визуально не срабатывал.
+
+         Теперь при первичном входе точка не применяется напрямую, а
+         передаётся конвейеру: он сам заспавнит игрока и поставит его
+         куда надо ПОСЛЕДНИМ действием, так что перетирать уже некому. ]]
     function SP.Apply(ply, kind)
         local point = SP.Resolve(ply, kind)
         if not point then return false end
+
+        ply.GRMSpawnPickDone = true
+
+        local E = GRM.Entry
+        if E and E.InProgress and E.InProgress(ply) then
+            -- Первичный вход: мир игрок увидит только сейчас.
+            E.ToWorld(ply, point)
+            hook.Run("GRM_SpawnPicked", ply, kind, point.pos)
+            return true
+        end
+
+        -- Игрок уже в мире (смена персонажа, админ-телепорт) — ставим сразу.
         ply:SetPos(point.pos)
         if point.ang then ply:SetEyeAngles(Angle(0, point.ang.y or 0, 0)) end
-        ply.GRMSpawnPickDone = true
         hook.Run("GRM_SpawnPicked", ply, kind, point.pos)
         return true
     end
@@ -334,6 +355,15 @@ if SERVER then
         if not IsValid(ply) then return true end
         if ply:GetNWBool("GRM_Arrested", false) then return true end
         if ply:GetNWBool("GRM_911_Downed", false) then return true end
+
+        --[[ ВАЖНО. На стадии выбора точки игрок ПО ЗАМЫСЛУ ещё сидит в
+             лимбе и формально «не подтверждён» для остальных модулей —
+             мира он не видит. Поэтому лимб и pending здесь не считаются
+             блокировкой: иначе экран точек не показался бы никогда, а
+             это ровно то, ради чего вся стадия и существует. ]]
+        local E = GRM.Entry
+        if E and E.StageOf(ply) == E.Stages.spawnpoint then return false end
+
         if ply:GetNWBool("GRM_CharacterPending", false) then return true end
         if ply.GRMCharLimbo == true then return true end
         return false
@@ -376,10 +406,17 @@ if SERVER then
     -----------------------------------------------------------------
     -- ВСТРАИВАНИЕ В ЖИЗНЕННЫЙ ЦИКЛ
     -----------------------------------------------------------------
-    --[[ Персонаж подтверждён и поставлен на точку — предлагаем выбор.
-         Хук поднимает модуль персонажей после выхода из лимба. ]]
-    hook.Add("GRM_CharacterConfirmed", "GRM_SpawnPick_Offer", function(ply)
-        timer.Simple(0.2, function()
+    --[[ Экран точек показывает конвейер входа (GRM.Entry.ToSpawnPoint),
+         строго между выбором персонажа и появлением в мире. Свой хук на
+         GRM_CharacterConfirmed здесь БЫЛ и убран: он открывал экран уже
+         после того, как игрок стоял на карте, и его выбор перетирался.
+
+         Оставлен только запасной путь: если конвейер почему-то не
+         загрузился, экран всё равно предложим — но с задержкой, чтобы
+         не спорить с чужим спавном. ]]
+    hook.Add("GRM_CharacterConfirmed", "GRM_SpawnPick_Fallback", function(ply)
+        if GRM.Entry and GRM.Entry.ToSpawnPoint then return end
+        timer.Simple(0.4, function()
             if IsValid(ply) then SP.Offer(ply) end
         end)
     end)

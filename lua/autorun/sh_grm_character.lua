@@ -585,6 +585,20 @@ if SERVER then
         return true
     end
 
+    --[[ ВЫПУСК ИЗ ЛИМБА — ТОЛЬКО ФИЗИКА, БЕЗ СПАВНА.
+
+         РАНЬШЕ здесь же делался Spawn() и PlaceOnSpawnPoint(), то есть
+         игрока ставили в мир СРАЗУ после выбора персонажа. А экран
+         «ВЫБЕРИТЕ ТОЧКУ ВХОДА» показывался уже поверх стоящего в мире
+         человека, и его SetPos потом перетирался хуками PlayerSpawn.
+         Отсюда жалоба владельца: «нажми любую — ничего не происходит».
+
+         ТЕПЕРЬ выпуск разделён надвое:
+           CH.ReleaseFromLimbo — снимает лимб-флаги (эта функция);
+           CH.FinishEntry      — реально спавнит, но её зовёт ТОЛЬКО
+                                 конвейер входа, после выбора точки.
+
+         Порядок владеет GRM.Entry, здесь его больше нет. ]]
     function CH.ReleaseFromLimbo(ply)
         if not IsValid(ply) or not ply.GRMCharLimbo then return end
         ply.GRMCharLimbo = nil
@@ -595,29 +609,45 @@ if SERVER then
         ply:GodDisable()
         ply:Freeze(false)
         ply:SetMoveType(MOVETYPE_WALK)
-        -- Спавн заново: игрок получает модель, экипировку и здоровье как
-        -- обычно, а точку ему выставляем сразу после спавна.
-        ply.GRMCharPlaceOnSpawn = true
-        ply:Spawn()
-        timer.Simple(0, function()
-            if not IsValid(ply) then return end
-            CH.PlaceOnSpawnPoint(ply)
-            --[[ Персонаж подтверждён и стоит на точке по умолчанию. Теперь
-                 модуль точек входа может предложить выбор: фракция, дом или
-                 место, где игрок вышел в прошлый раз. Если вариант всего
-                 один, экран не показывается и игрок остаётся здесь же. ]]
-            hook.Run("GRM_CharacterConfirmed", ply)
-        end)
     end
 
-    hook.Add("PlayerSpawn", "GRM_Char_PlaceAfterSelect", function(ply)
-        timer.Simple(0, function()
-            if not IsValid(ply) then return end
-            if not ply.GRMCharPlaceOnSpawn then return end
-            ply.GRMCharPlaceOnSpawn = nil
+    --[[ ФИНАЛ ВХОДА: собственно появление в мире. Зовётся из
+         GRM.Entry.ToWorld, когда точка уже выбрана. Позицию НЕ трогаем:
+         её выставит конвейер следующим шагом, иначе мы снова затрём
+         выбор игрока. ]]
+    function CH.FinishEntry(ply)
+        if not IsValid(ply) then return false end
+        if ply.GRMCharLimbo then CH.ReleaseFromLimbo(ply) end
+        ply.GRMCharConfirmed = true
+        -- Спавн даёт модель, здоровье и анимации. Точку ставим после.
+        ply:Spawn()
+        return true
+    end
+
+    --[[ Подтверждение персонажа больше не спавнит игрока само. Оно лишь
+         передаёт управление конвейеру, который спросит про точку входа
+         и только потом выпустит в мир. ]]
+    function CH.ConfirmedToEntry(ply)
+        if not IsValid(ply) then return end
+        hook.Run("GRM_CharacterConfirmed", ply)
+        local E = GRM.Entry
+        if E and E.ToSpawnPoint then
+            E.ToSpawnPoint(ply)
+        else
+            -- Конвейер не загрузился: работаем по-старому, чтобы игрок
+            -- в любом случае попал в мир.
+            CH.FinishEntry(ply)
             CH.PlaceOnSpawnPoint(ply)
-        end)
-    end)
+        end
+    end
+
+    --[[ Хук GRM_Char_PlaceAfterSelect удалён намеренно.
+
+         Он ставил игрока на точку по флагу GRMCharPlaceOnSpawn сразу
+         после Spawn(). Именно он (вместе с SpawnAtFactionPoint) перетирал
+         выбранную точку входа, из-за чего кнопки экрана «ВЫБЕРИТЕ ТОЧКУ
+         ВХОДА» выглядели нерабочими. Теперь позицию после спавна
+         выставляет ровно один владелец — GRM.Entry, шагом «place». ]]
 
     local function setCharacterLock(ply, locked, mandatory)
         if not IsValid(ply) then return end
@@ -631,12 +661,22 @@ if SERVER then
             ply:SetNWBool("GRM_CharacterMandatory", locked == true and mandatory == true)
         end
         if ply.Freeze then ply:Freeze(locked == true) end
-        -- Лимб включается вместе с блокировкой и выключается вместе с ней.
+        --[[ Лимб включается вместе с блокировкой. А вот выпуск теперь НЕ
+             мгновенный: снятие блокировки лишь говорит «персонаж выбран».
+             Дальше слово за конвейером входа — он спросит точку и только
+             потом выпустит в мир. Иначе игрок появлялся бы на карте до
+             того, как ответил, где хочет появиться. ]]
         if locked == true then
             CH.SendToLimbo(ply)
         else
             ply.GRMCharConfirmed = true
-            if ply.GRMCharLimbo then CH.ReleaseFromLimbo(ply) end
+            local E = GRM.Entry
+            if E and E.ToSpawnPoint and E.InProgress(ply) then
+                CH.ConfirmedToEntry(ply)
+            else
+                -- Не первичный вход (смена персонажа в игре) — выпускаем сразу.
+                if ply.GRMCharLimbo then CH.ReleaseFromLimbo(ply) end
+            end
         end
     end
 
@@ -1434,11 +1474,20 @@ if SERVER then
             if wasNew then
                 hook.Run("GRM_CharacterChanged", ply, nil, CH.GetActiveKey(ply))
             end
-            if wasNew and ply.Spawn then ply:Spawn() end
+            --[[ Spawn() при первичной регистрации делает конвейер (шаг
+                 «release»), уже после выбора точки. Здесь он не нужен и
+                 вреден: заспавнил бы игрока в мир до вопроса «куда». ]]
+            local entryNow = GRM.Entry and GRM.Entry.InProgress and GRM.Entry.InProgress(ply)
+            if wasNew and not entryNow and ply.Spawn then ply:Spawn() end
         end
 
-        -- первичная регистрация: синхронизируем с фракционным спавном
-        if wasNew and CH.Get(ply) ~= nil and _G.GetSpawnPointForPlayer then
+        --[[ Первичная регистрация раньше сразу двигала игрока на
+             фракционную точку. Во время входа этого делать НЕЛЬЗЯ: точку
+             ещё не выбрали, а если выбрали — этот SetPos её затрёт.
+             Поэтому при активном конвейере пропускаем: он поставит игрока
+             сам, последним шагом. ]]
+        local entryActive = GRM.Entry and GRM.Entry.InProgress and GRM.Entry.InProgress(ply)
+        if wasNew and not entryActive and CH.Get(ply) ~= nil and _G.GetSpawnPointForPlayer then
             local pos, ang = _G.GetSpawnPointForPlayer(ply)
             if pos then
                 ply:SetPos(pos)

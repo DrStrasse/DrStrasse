@@ -104,6 +104,12 @@ if SERVER then
     hook.Add("PlayerInitialSpawn", "GRM_Loading_Start", function(ply)
         LD.Waiting[ply] = true
         ensureTimer()
+        --[[ Конвейер входа стартует ПЕРВЫМ делом: он сразу ставит стадию
+             и опускает занавес на клиенте. Раньше экран загрузки
+             открывался таймером через 0.5 с, и до него игрок успевал
+             увидеть кадр мира — жалоба владельца «пару секунд успеваешь
+             увидеть, что персонаж уже заспавнился». ]]
+        if GRM.Entry and GRM.Entry.Begin then GRM.Entry.Begin(ply) end
         timer.Simple(1, function() if IsValid(ply) then push(ply) end end)
     end)
 
@@ -119,6 +125,9 @@ if SERVER then
         LD.Waiting[ply] = nil
         ply.GRMLoadingDone = true
         hook.Run("GRM_LoadingFinished", ply)
+        --[[ Стадию двигает конвейер: он же следит, чтобы окно персонажа
+             не открылось раньше времени и чтобы занавес не поднялся. ]]
+        if GRM.Entry and GRM.Entry.ToCharacter then GRM.Entry.ToCharacter(ply) end
         if GRM.Char and GRM.Char.OpenMenu then GRM.Char.OpenMenu(ply) end
     end)
 
@@ -305,10 +314,31 @@ if CLIENT then
     -- данные персонажа пришли — этап закрыт
     hook.Add("GRM_CharacterPayload", "GRM_Loading_Char", function() LD.CharReady = true end)
 
-    --[[ Экран показываем сразу после входа в мир. Персонаж в это время
-         висит за картой, поэтому чёрный фон никого не смущает. ]]
+    --[[ Экран открываем как можно раньше. Занавес конвейера (GRM.Entry)
+         уже держит чёрный кадр, но окно с полосой должно появиться сразу,
+         а не через полсекунды — иначе видно пустой чёрный экран без
+         объяснений.
+
+         Первая попытка — немедленно; затем ретраи, потому что стадия
+         приходит с сервера NW-полем и может чуть запоздать. ]]
     hook.Add("InitPostEntity", "GRM_Loading_Open", function()
-        timer.Simple(0.5, function() LD.Open() end)
+        LD.Open()
+        for _, d in ipairs({ 0.1, 0.4, 1, 2 }) do
+            timer.Simple(d, function()
+                local E = GRM.Entry
+                -- Открываем, только если конвейер ещё не выпустил в мир.
+                if E and E.ClientInProgress and not E.ClientInProgress() then return end
+                LD.Open()
+            end)
+        end
+    end)
+
+    --[[ Стадия сменилась на «выбор персонажа» — экран загрузки обязан
+         уйти, даже если игрок не нажимал кнопку (например, сервер сам
+         продвинул его после таймаута). ]]
+    hook.Add("GRM_EntryStageClient", "GRM_Loading_AutoClose", function(stage)
+        local E = GRM.Entry
+        if E and stage and stage >= E.Stages.character then LD.Close() end
     end)
 
     hook.Add("OnReloaded", "GRM_Loading_Reopen", function()
