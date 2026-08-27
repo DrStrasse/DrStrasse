@@ -40,6 +40,7 @@ function P.Normalize(r)
       исчезать вместе с ним — отдельный файл пришлось бы чистить от
       «сирот» после сноса квартир. _entrySeen НЕ сохраняем: это
       сессионная защита от повторов при дёргании дверных полотен. ]]
+ r.rentWarned=r.rentWarned==true or nil
  r.entryLog=istable(r.entryLog) and r.entryLog or nil
  r._entrySeen=nil
  return r
@@ -130,8 +131,16 @@ if SERVER then
  local function newID()return"prop_"..os.time().."_"..math.random(1000,9999)end
  local function clearOwnership(r)r.ownerType="none";r.ownerKey="";r.ownerName="";r.tenure="none";r.rentUntil=0;r.employees={};r.guests={};r.tempKeys={};r.utilityDebt=0;lockAll(r,false)end
  local function audit(action,p,r,d)if GRM.Audit then GRM.Audit.Write("property",action,p,{propertyID=r and r.id or""},d or{})end end
- net.Receive(NACT,function(bits,p)
-  if not guard(p,"property.action",bits,524288)then return end;local a=net.ReadTable()or{};local act=tostring(a.action or"");local r=P.Records[tostring(a.id or"")]
+ --[[ Ядро действий вынесено из net.Receive, чтобы окно квартиры
+      (sh_grm_housing_panel) могло звать ТЕ ЖЕ проверки, а не заводить
+      свою копию правил доступа. Две реализации одних правил — самый
+      быстрый способ получить дыру: поправят одну, забудут другую. ]]
+ function P.PanelAction(p,a)
+  if not IsValid(p)or not istable(a)then return end
+  P._Act(p,a)
+ end
+ function P._Act(p,a)
+  local act=tostring(a.action or"");local r=P.Records[tostring(a.id or"")]
   if act=="open_aim"then local tr=p:GetEyeTrace();if tr and IsValid(tr.Entity)then P.OpenForDoor(p,tr.Entity)end return end
   if act=="admin_open"then if P.CanAdmin(p)then send(p,nil,true)end return end
   if act=="create"then
@@ -151,6 +160,28 @@ if SERVER then
    local price=act=="buy"and r.purchasePrice or r.rentPrice
    if price>0 and GRM.HasMoney and not GRM.HasMoney(p,price)then tell(p,"Недостаточно наличных.",false)return end;if price>0 and GRM.TakeMoney then GRM.TakeMoney(p,price,act=="buy"and"Покупка недвижимости"or"Аренда недвижимости")end
    r.ownerType="character";r.ownerKey=ck(p);r.ownerName=p:GetNWString("GRM_RPName",p:Nick());r.tenure=act=="buy"and"owned"or"rent";r.rentUntil=act=="rent"and(os.time()+P.Config.RentSeconds)or 0;r.lastUtilityAt=os.time();lockAll(r,true);save(act);audit(act,p,r,{price=price});hook.Run("GRM_PropertyOwnerChanged",r,act,p);tell(p,act=="buy"and"Объект куплен."or"Договор аренды оформлен.",true);send(p,r,false)
+  elseif act=="extend_rent"then
+   --[[ ПРОДЛЕНИЕ АРЕНДЫ (фаза 4 жилья).
+        Раньше продлить было НЕЧЕМ: аренда просто истекала по таймеру
+        биллинга, человека молча выселяло, ключи и доступ пропадали.
+        Единственным способом «продлить» было дождаться выселения и
+        успеть арендовать заново раньше других — это не механика, а
+        случайность.
+        Платим за один период вперёд; срок наращиваем ОТ ТЕКУЩЕГО
+        rentUntil, а не от «сейчас», иначе оплата досрочно сжигала бы
+        остаток уже оплаченного времени. ]]
+   if not P.CanManage(p,r)then return end
+   if r.tenure~="rent"then tell(p,"Этот объект не арендуется.",false)return end
+   local price=r.rentPrice
+   if price>0 and GRM.HasMoney and not GRM.HasMoney(p,price)then tell(p,"Недостаточно наличных.",false)return end
+   if price>0 and GRM.TakeMoney then GRM.TakeMoney(p,price,"Продление аренды") end
+   local base=math.max(tonumber(r.rentUntil)or 0,os.time())
+   r.rentUntil=base+P.Config.RentSeconds
+   -- Предупреждения выдаются заново: срок теперь другой.
+   r.rentWarned=nil
+   save("extend-rent");audit("rent.extend",p,r,{price=price})
+   tell(p,"Аренда продлена. Оплачено ещё "..math.floor(P.Config.RentSeconds/86400).." сут.",true)
+   send(p,r,false)
   elseif act=="pay_utilities"then
    if not P.CanManage(p,r)then return end;local sum=r.utilityDebt;if sum<=0 then return end;if GRM.HasMoney and not GRM.HasMoney(p,sum)then tell(p,"Недостаточно наличных.",false)return end;if GRM.TakeMoney then GRM.TakeMoney(p,sum,"Коммунальные платежи")end;r.utilityDebt=0;save("utilities");audit("utilities.pay",p,r,{amount=sum});send(p,r,false)
   elseif act=="add_key"then
@@ -166,6 +197,10 @@ if SERVER then
    if not P.CanAdmin(p)and not(GRM.Access and GRM.Access.Can(p,"wanted.civil.edit"))then return end;if not P.CanAdmin(p)and not nearProperty(p,r)then return end;r.sealed=a.on==true;r.sealReason=trim(a.reason,160);r.sealUntil=r.sealed and(os.time()+math.Clamp(tonumber(a.minutes)or 60,5,10080)*60)or 0;lockAll(r,r.sealed or r.ownerType~="none");save("seal");audit(r.sealed and"seal"or"unseal",p,r,{reason=r.sealReason});send(p,r,false)
   elseif act=="evict"then if not P.CanAdmin(p)then return end;clearOwnership(r);save("evict");audit("evict",p,r,{});hook.Run("GRM_PropertyOwnerChanged",r,"evict",p);send(p,nil,true)
   elseif act=="delete"then if not P.CanAdmin(p)then return end;clearOwnership(r);P.Records[r.id]=nil;P.Reindex();save("delete");audit("delete",p,r,{});send(p,nil,true)end
+ end
+ net.Receive(NACT,function(bits,p)
+  if not guard(p,"property.action",bits,524288)then return end
+  P._Act(p,net.ReadTable()or{})
  end)
  hook.Add("GRM_DoorPropertyAccess","GRM_Property_Key",function(p,doorID)local r=P.GetByDoorID(doorID);if r then return P.HasAccess(p,r)end end)
  hook.Add("GRM_DoorAccessOverride","GRM_Property_Seal",function(p,e)local r=P.GetByDoor(e);if not r then return nil end;local warrant=r.ownerType=="character"and GRM.Doors and GRM.Doors.HasWarrant and GRM.Doors.HasWarrant(r.ownerKey)and GRM.Access and GRM.Access.Can(p,"wanted.civil.edit");if warrant then return true,"property_warrant"end;if r.sealed and not P.CanAdmin(p)then return false,"Объект опечатан: "..(r.sealReason~=""and r.sealReason or"доступ запрещён")end;if P.HasAccess(p,r)then return true,"property_key"end;return false,"Нет ключа от объекта «"..r.name.."»."end)
@@ -174,7 +209,25 @@ if SERVER then
  hook.Add("PlayerSay","GRM_Property_Chat",function(p,t)local s=string.lower(string.Trim(t or""));if s=="/property"or s=="/недвижимость"then local tr=p:GetEyeTrace();if tr and IsValid(tr.Entity)then P.OpenForDoor(p,tr.Entity)end return""elseif s=="/property_admin"and P.CanAdmin(p)then send(p,nil,true)return""end end)
  hook.Add("PlayerSayTransform","GRM_Property_EasyChat",function(p,t,d)d=istable(t)and t or d;local raw=istable(t)and t[1]or t;local s=string.lower(string.Trim(raw or""));if s~="/property"and s~="/недвижимость"and s~="/property_admin"then return end;if s=="/property_admin"then if P.CanAdmin(p)then send(p,nil,true)end else local tr=p:GetEyeTrace();if tr and IsValid(tr.Entity)then P.OpenForDoor(p,tr.Entity)end end;d.SkipPlayerSay=true;d[1]=""end)
  concommand.Add("grm_property",function(p)if IsValid(p)then local tr=p:GetEyeTrace();if tr and IsValid(tr.Entity)then P.OpenForDoor(p,tr.Entity)end end end);concommand.Add("grm_property_admin",function(p)if P.CanAdmin(p)then send(p,nil,true)end end)
- timer.Create("GRM_Property_Billing",P.Config.UtilityInterval,0,function()local now=os.time();for _,r in pairs(P.Records)do if r.sealed and r.sealUntil>0 and r.sealUntil<=now then r.sealed=false;r.sealUntil=0 end;if r.tenure=="rent"and r.rentUntil>0 and r.rentUntil<=now then clearOwnership(r);audit("rent.expired",nil,r,{});hook.Run("GRM_PropertyOwnerChanged",r,"rent_expired",nil)elseif r.ownerType~="none"and r.utilityRate>0 then local periods=math.floor((now-r.lastUtilityAt)/P.Config.UtilityInterval);if periods>0 then r.utilityDebt=math.min(100000000,r.utilityDebt+periods*r.utilityRate);r.lastUtilityAt=r.lastUtilityAt+periods*P.Config.UtilityInterval end end;for i=#r.tempKeys,1,-1 do if(tonumber(r.tempKeys[i].expires)or 0)<=now then table.remove(r.tempKeys,i)end end end;save("billing")end)
+ --[[ ПРЕДУПРЕЖДЕНИЕ ОБ ОКОНЧАНИИ АРЕНДЫ (фаза 4).
+      Раньше биллинг выселял молча: человек заходил и обнаруживал, что
+      жильё чужое, вещи в шкафу недоступны, спавн пропал. Теперь за
+      сутки до конца приходит предупреждение — успеть продлить. ]]
+ P.RentWarnBefore=86400
+ local function warnRent(r,now)
+  if r.tenure~="rent"or r.ownerType~="character"then return end
+  local left=(tonumber(r.rentUntil)or 0)-now
+  if left<=0 or left>P.RentWarnBefore then return end
+  if r.rentWarned then return end
+  r.rentWarned=true
+  local target=GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(r.ownerKey)
+  local hours=math.max(1,math.floor(left/3600))
+  local msg="[Недвижимость] Аренда «"..tostring(r.name).."» заканчивается через "..hours.." ч. Продлите в /property, иначе объект освободится."
+  if IsValid(target)then
+   if GRM.Notify then GRM.Notify(target,msg,255,190,90) else target:PrintMessage(HUD_PRINTTALK,msg) end
+  end
+ end
+ timer.Create("GRM_Property_Billing",P.Config.UtilityInterval,0,function()local now=os.time();for _,r in pairs(P.Records)do if r.sealed and r.sealUntil>0 and r.sealUntil<=now then r.sealed=false;r.sealUntil=0 end;warnRent(r,now);if r.tenure=="rent"and r.rentUntil>0 and r.rentUntil<=now then local who=r.ownerKey;clearOwnership(r);r.rentWarned=nil;audit("rent.expired",nil,r,{});local ex=GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(who);if IsValid(ex)and GRM.Notify then GRM.Notify(ex,"[Недвижимость] Аренда «"..tostring(r.name).."» закончилась, объект освобождён.",255,120,100)end;hook.Run("GRM_PropertyOwnerChanged",r,"rent_expired",nil)elseif r.ownerType~="none"and r.utilityRate>0 then local periods=math.floor((now-r.lastUtilityAt)/P.Config.UtilityInterval);if periods>0 then r.utilityDebt=math.min(100000000,r.utilityDebt+periods*r.utilityRate);r.lastUtilityAt=r.lastUtilityAt+periods*P.Config.UtilityInterval end end;for i=#r.tempKeys,1,-1 do if(tonumber(r.tempKeys[i].expires)or 0)<=now then table.remove(r.tempKeys,i)end end end;save("billing")end)
  grmBootStart("GRM_Property_DoorPolicy","early",function()timer.Simple(2,function()P.Reindex();for _,r in pairs(P.Records)do setDoorPolicy(r);if r.sealed or r.ownerType~="none"then lockAll(r,true)end end end)end)
  print("[GRM Property] v"..P.Version.." server loaded")
 end
