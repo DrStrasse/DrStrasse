@@ -326,6 +326,10 @@ if SERVER then
                     Weapons = f.Weapons or {},
                     RoleWeapons = f.RoleWeapons or {},
                     DepartmentWeapons = f.DepartmentWeapons or {},
+                    -- Наборы должностей (ось v5) — иначе после рестарта
+                    -- форма начальника слетала бы, как когда-то оружие.
+                    PositionModels = f.PositionModels or {},
+                    PositionWeapons = f.PositionWeapons or {},
                 }
             end
         end
@@ -352,9 +356,16 @@ if SERVER then
                         for i, entry in ipairs(list) do list[i] = normalizeModelEntry(entry) end
                     end
                 end
+                f.PositionModels = istable(data.PositionModels) and data.PositionModels or f.PositionModels or {}
+                for _, list in pairs(f.PositionModels) do
+                    if istable(list) then
+                        for i, entry in ipairs(list) do list[i] = normalizeModelEntry(entry) end
+                    end
+                end
                 f.Weapons = istable(data.Weapons) and data.Weapons or f.Weapons or {}
                 f.RoleWeapons = istable(data.RoleWeapons) and data.RoleWeapons or f.RoleWeapons or {}
                 f.DepartmentWeapons = istable(data.DepartmentWeapons) and data.DepartmentWeapons or f.DepartmentWeapons or {}
+                f.PositionWeapons = istable(data.PositionWeapons) and data.PositionWeapons or f.PositionWeapons or {}
             end
         end
     end
@@ -957,6 +968,27 @@ if SERVER then
             return a.name < b.name
         end)
 
+        --[[ ДОЛЖНОСТИ (ось v5). Своя форма должности была доступна только
+             из кода: в дереве редактора её не было. Теперь узел должности
+             стоит рядом со своим подразделением, а списки лежат в
+             f.PositionModels / f.PositionWeapons. ]]
+        local posStore = (kind == "weapons") and f.PositionWeapons or f.PositionModels
+        posStore = istable(posStore) and posStore or {}
+        local positions, posList = {}, {}
+        if GRM.Positions and GRM.Positions.List then
+            for _, pos in ipairs(GRM.Positions.List(f)) do
+                positions[pos.id] = istable(posStore[pos.id]) and posStore[pos.id] or {}
+                posList[#posList + 1] = {
+                    id = pos.id,
+                    name = pos.name,
+                    node = pos.node,
+                    kind = pos.kind,
+                    kindName = (GRM.Positions.KindName or {})[pos.kind] or pos.kind,
+                    nodeName = GRM.Positions.NodeDisplayName(f, pos.node),
+                }
+            end
+        end
+
         return {
             displayName = GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(factionName) or factionName,
             rolesList = f.Roles or {},
@@ -965,6 +997,8 @@ if SERVER then
             deptNames = deptNames,
             subList = subList,
             subdepartments = subs,
+            posList = posList,
+            positions = positions,
         }
     end
 
@@ -979,6 +1013,8 @@ if SERVER then
                 roles = f.RoleModels or {},
                 departments = f.DepartmentModels or {},
                 subdepartments = st.subdepartments,
+                positions = st.positions,
+                posList = st.posList,
                 rolesList = st.rolesList,
                 deptsList = st.deptsList,
                 subList = st.subList,
@@ -1031,6 +1067,15 @@ if SERVER then
                 f.Subdepartments[key].models = models
             end
             if FactionsAPI and FactionsAPI.Save then pcall(FactionsAPI.Save) end
+        elseif saveType == "position" then
+            -- Форма должности: самая точная в порядке ResolveLoadout.
+            if not (GRM.Positions and GRM.Positions.Get and GRM.Positions.Get(f, key)) then
+                ply:PrintMessage(HUD_PRINTTALK, "[Модели] Должность не найдена.")
+                return
+            end
+            f.PositionModels = istable(f.PositionModels) and f.PositionModels or {}
+            f.PositionModels[key] = models
+            if FactionsAPI and FactionsAPI.Save then pcall(FactionsAPI.Save) end
         end
 
         saveFactionExtras()
@@ -1049,6 +1094,8 @@ if SERVER then
                 roles = f.RoleWeapons or {},
                 departments = f.DepartmentWeapons or {},
                 subdepartments = st.subdepartments,
+                positions = st.positions,
+                posList = st.posList,
                 rolesList = st.rolesList,
                 deptsList = st.deptsList,
                 subList = st.subList,
@@ -1099,6 +1146,14 @@ if SERVER then
                 f.Subdepartments[key].weapons = weapons
                 applyWeaponsToTargetGroup(factionName, nil, nil, key)
             end
+        elseif saveType == "position" then
+            if not (GRM.Positions and GRM.Positions.Get and GRM.Positions.Get(f, key)) then
+                ply:PrintMessage(HUD_PRINTTALK, "[Оружие] Должность не найдена.")
+                return
+            end
+            f.PositionWeapons = istable(f.PositionWeapons) and f.PositionWeapons or {}
+            f.PositionWeapons[key] = weapons
+            if FactionsAPI and FactionsAPI.Save then pcall(FactionsAPI.Save) end
         end
         -- фикс v3.1.1: оружейные списки раньше НЕ сохранялись на диск
         -- (только модели) — после рестарта слетали; пишем в fw_faction_extras.json

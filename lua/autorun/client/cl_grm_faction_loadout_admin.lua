@@ -634,6 +634,17 @@ local function openLoadout(kind, data)
         return b
     end
 
+    --[[ Должности узла (ось v5). Своя форма должности сильнее формы отдела,
+         поэтому её узел стоит прямо под своим подразделением — видно, что
+         начальник одет иначе, чем его подчинённые. ]]
+    local function positionsOfNode(fd, node)
+        local out = {}
+        for _, pos in ipairs(fd.posList or {}) do
+            if pos.node == node then out[#out + 1] = pos end
+        end
+        return out
+    end
+
     local function buildTree(factionName)
         treeScroll:Clear()
         treeButtons = {}
@@ -667,8 +678,25 @@ local function openLoadout(kind, data)
             list = fd.general or {},
         }, 0, C.gold)
 
+        local rootPositions = positionsOfNode(fd, "root")
+        if #rootPositions > 0 then
+            addTreeItem({ group = true, title = "ДОЛЖНОСТИ ОРГАНИЗАЦИИ" }, 0)
+            for _, pos in ipairs(rootPositions) do
+                fd.positions = fd.positions or {}
+                fd.positions[pos.id] = fd.positions[pos.id] or {}
+                addTreeItem({
+                    id = "pos:" .. pos.id, scope = "position", faction = factionName, key = pos.id,
+                    title = pos.name,
+                    sub = pos.kindName .. " • ключ " .. pos.id,
+                    hint = "Экипировка должности «" .. pos.name .. "» (" .. pos.kindName
+                        .. "). Сильнее формы отдела и звания.",
+                    list = fd.positions[pos.id],
+                }, 1, C.gold)
+            end
+        end
+
         if #(fd.rolesList or {}) > 0 then
-            addTreeItem({ group = true, title = "ДОЛЖНОСТИ (РАНГИ)" }, 0)
+            addTreeItem({ group = true, title = "ЗВАНИЯ (РАНГИ)" }, 0)
             for _, roleKey in ipairs(fd.rolesList or {}) do
                 fd.roles = fd.roles or {}
                 fd.roles[roleKey] = fd.roles[roleKey] or {}
@@ -676,8 +704,8 @@ local function openLoadout(kind, data)
                 addTreeItem({
                     id = "role:" .. roleKey, scope = "role", faction = factionName, key = roleKey,
                     title = pub,
-                    sub = "должность • ключ " .. roleKey,
-                    hint = "Экипировка должности «" .. pub .. "» организации " .. disp,
+                    sub = "звание • ключ " .. roleKey,
+                    hint = "Экипировка звания «" .. pub .. "» — действует на всех носителей звания",
                     list = fd.roles[roleKey],
                 }, 1, C.acc)
             end
@@ -697,6 +725,19 @@ local function openLoadout(kind, data)
                     list = fd.departments[deptKey],
                 }, 1, C.green)
 
+                for _, pos in ipairs(positionsOfNode(fd, "dept:" .. deptKey)) do
+                    fd.positions = fd.positions or {}
+                    fd.positions[pos.id] = fd.positions[pos.id] or {}
+                    addTreeItem({
+                        id = "pos:" .. pos.id, scope = "position", faction = factionName, key = pos.id,
+                        title = pos.name,
+                        sub = pos.kindName .. " • отдел " .. pub .. " • ключ " .. pos.id,
+                        hint = "Экипировка должности «" .. pos.name .. "» в отделе " .. pub
+                            .. ". Сильнее формы отдела.",
+                        list = fd.positions[pos.id],
+                    }, 2, C.gold)
+                end
+
                 -- Подотделы этого отдела — с отступом, как в структуре фракции.
                 for _, sub in ipairs(fd.subList or {}) do
                     if sub.parent == deptKey then
@@ -709,6 +750,19 @@ local function openLoadout(kind, data)
                             hint = "Экипировка подотдела «" .. sub.name .. "» (отдел " .. pub .. ")",
                             list = fd.subdepartments[sub.id],
                         }, 2, Color(190, 140, 240))
+
+                        for _, pos in ipairs(positionsOfNode(fd, "sub:" .. sub.id)) do
+                            fd.positions = fd.positions or {}
+                            fd.positions[pos.id] = fd.positions[pos.id] or {}
+                            addTreeItem({
+                                id = "pos:" .. pos.id, scope = "position", faction = factionName, key = pos.id,
+                                title = pos.name,
+                                sub = pos.kindName .. " • подотдел " .. sub.name .. " • ключ " .. pos.id,
+                                hint = "Экипировка должности «" .. pos.name .. "» в подотделе "
+                                    .. sub.name .. ". Самая точная в порядке выдачи.",
+                                list = fd.positions[pos.id],
+                            }, 3, C.gold)
+                        end
                     end
                 end
             end
@@ -735,6 +789,49 @@ local function openLoadout(kind, data)
                     hint = "Экипировка подотдела «" .. sub.name .. "»",
                     list = fd.subdepartments[sub.id],
                 }, 1, Color(190, 140, 240))
+
+                for _, pos in ipairs(positionsOfNode(fd, "sub:" .. sub.id)) do
+                    fd.positions = fd.positions or {}
+                    fd.positions[pos.id] = fd.positions[pos.id] or {}
+                    addTreeItem({
+                        id = "pos:" .. pos.id, scope = "position", faction = factionName, key = pos.id,
+                        title = pos.name,
+                        sub = pos.kindName .. " • подотдел " .. sub.name .. " • ключ " .. pos.id,
+                        hint = "Экипировка должности «" .. pos.name .. "»",
+                        list = fd.positions[pos.id],
+                    }, 2, C.gold)
+                end
+            end
+        end
+
+        --[[ Должности, чьё подразделение исчезло, иначе их форма стала бы
+             недоступной для правки, продолжая применяться к людям. ]]
+        local shownPos = {}
+        for _, node in ipairs({ "root" }) do
+            for _, pos in ipairs(positionsOfNode(fd, node)) do shownPos[pos.id] = true end
+        end
+        for _, deptKey in ipairs(fd.deptsList or {}) do
+            for _, pos in ipairs(positionsOfNode(fd, "dept:" .. deptKey)) do shownPos[pos.id] = true end
+        end
+        for _, sub in ipairs(fd.subList or {}) do
+            for _, pos in ipairs(positionsOfNode(fd, "sub:" .. sub.id)) do shownPos[pos.id] = true end
+        end
+        local lostPos = {}
+        for _, pos in ipairs(fd.posList or {}) do
+            if not shownPos[pos.id] then lostPos[#lostPos + 1] = pos end
+        end
+        if #lostPos > 0 then
+            addTreeItem({ group = true, title = "ДОЛЖНОСТИ БЕЗ ПОДРАЗДЕЛЕНИЯ" }, 0)
+            for _, pos in ipairs(lostPos) do
+                fd.positions = fd.positions or {}
+                fd.positions[pos.id] = fd.positions[pos.id] or {}
+                addTreeItem({
+                    id = "pos:" .. pos.id, scope = "position", faction = factionName, key = pos.id,
+                    title = pos.name,
+                    sub = pos.kindName .. " • подразделение удалено • ключ " .. pos.id,
+                    hint = "Подразделение этой должности удалено — проверьте её в разделе «Должности».",
+                    list = fd.positions[pos.id],
+                }, 1, C.gold)
             end
         end
 
