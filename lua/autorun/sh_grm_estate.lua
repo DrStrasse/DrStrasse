@@ -361,6 +361,144 @@ if SERVER then
         ES.Sync()
     end)
 
+    -----------------------------------------------------------------
+    -- ТУЛ «GRM: БИЗНЕС-ЗОНА» (фаза 3)
+    -----------------------------------------------------------------
+    --[[ Тул выделяет зону прямо на месте и сразу показывает, что внутри.
+         Заходить в админку и привязывать оборудование руками не нужно —
+         сканирование само найдёт автоматы и колонки в границах. ]]
+    local NET_TOOL_REQ  = "GRM_Estate_ToolReq"
+    local NET_TOOL_DATA = "GRM_Estate_ToolData"
+    util.AddNetworkString(NET_TOOL_REQ)
+    util.AddNetworkString(NET_TOOL_DATA)
+
+    --- Что лежит в произвольном прямоугольнике: нужно для предпросмотра.
+    function ES.ScanBox(mins, maxs)
+        local fake = { id = "__preview", zone = {
+            mins = { x = mins.x, y = mins.y, z = mins.z },
+            maxs = { x = maxs.x, y = maxs.y, z = maxs.z } } }
+        return ES.ScanZone(fake)
+    end
+
+    --[[ Снимок для тула: существующие зоны с их содержимым плюс
+         оборудование, которое пока ничьё — админ сразу видит, что
+         осталось неоформленным. ]]
+    local function toolSnapshot()
+        local zones, loose = {}, {}
+        local P = GRM.Property
+        local claimed = {}
+
+        for _, rec in pairs((P and P.Records) or {}) do
+            local kind = ES.KindOf(rec)
+            if kind ~= "none" and istable(rec.zone) then
+                local scan = ES.ScanCached(rec, 3)
+                for _, ent in ipairs(scan.entities) do claimed[ent] = true end
+                zones[#zones + 1] = {
+                    id = tostring(rec.id or ""),
+                    name = tostring(rec.name or ""),
+                    kind = kind,
+                    mins = rec.zone.mins,
+                    maxs = rec.zone.maxs,
+                    vacant = ES.IsVacant(rec),
+                    owner = tostring(rec.ownerName or ""),
+                    equipment = scan.total,
+                    summary = kind == "business" and ES.EquipmentSummary(rec) or "",
+                    area = ES.ZoneArea(rec),
+                    price = math.max(0, math.floor(tonumber(rec.purchasePrice) or 0)),
+                }
+            end
+        end
+
+        for class, info in pairs(ES.EquipmentClasses) do
+            local list = (GRM.Perf and GRM.Perf.Entities)
+                and GRM.Perf.Entities(class) or ents.FindByClass(class)
+            for _, ent in ipairs(list or {}) do
+                if IsValid(ent) and not claimed[ent] then
+                    local pos = ent:GetPos()
+                    loose[#loose + 1] = { x = pos.x, y = pos.y, z = pos.z, label = info.label }
+                end
+            end
+        end
+        return zones, loose
+    end
+
+    net.Receive(NET_TOOL_REQ, function(_, ply)
+        if not (IsValid(ply) and ply:IsSuperAdmin()) then return end
+        if GRM.Perf and GRM.Perf.Throttle
+            and not GRM.Perf.Throttle("estate.tool." .. ply:EntIndex(), 0.9) then return end
+        local zones, loose = toolSnapshot()
+        net.Start(NET_TOOL_DATA)
+            net.WriteTable({ zones = zones, loose = loose })
+        net.Send(ply)
+    end)
+
+    --[[ Создание зоны туллом. Объект недвижимости заводится сразу с
+         границами: двери можно привязать потом штатным тулом. ]]
+    function ES.CreateZone(ply, a, b, name, kind, price)
+        if not (IsValid(ply) and ply:IsSuperAdmin()) then return false, "Только суперадмин" end
+        local P = GRM.Property
+        if not (P and istable(P.Records)) then return false, "Модуль недвижимости не загружен" end
+
+        local mins = Vector(math.min(a.x, b.x), math.min(a.y, b.y), math.min(a.z, b.z))
+        local maxs = Vector(math.max(a.x, b.x), math.max(a.y, b.y), math.max(a.z, b.z) + 190)
+        -- Совсем плоскую зону оформлять нельзя: в неё ничего не попадёт.
+        if (maxs.x - mins.x) < 32 or (maxs.y - mins.y) < 32 then
+            return false, "Зона слишком мала — разведите углы шире"
+        end
+
+        kind = (kind == "estate") and "estate" or "business"
+        local id = "zone_" .. tostring(math.floor(CurTime() * 100)) .. "_" .. tostring(math.random(100, 999))
+        local rec = P.Normalize({
+            id = id,
+            name = tostring(name or ""),
+            -- Тип задаём под вид: жильё квартирой, бизнес магазином.
+            type = kind == "estate" and "apartment" or "shop",
+            estateKind = kind,
+            doors = {},
+            purchasePrice = math.max(0, math.floor(tonumber(price) or 0)),
+            zone = {
+                mins = { x = mins.x, y = mins.y, z = mins.z },
+                maxs = { x = maxs.x, y = maxs.y, z = maxs.z },
+            },
+        })
+        if rec.name == "" then
+            rec.name = kind == "estate" and "Жилой объект" or "Бизнес-объект"
+        end
+        P.Records[rec.id] = rec
+        if P.Reindex then P.Reindex() end
+        if P.Save then pcall(P.Save, "estate-tool") end
+        ES.InvalidateScan()
+        ES.Sync()
+
+        local scan = ES.ScanZone(rec)
+        return true, ("Зона «%s» создана · %d м² · внутри точек: %d"):format(
+            rec.name, ES.ZoneArea(rec), scan.total), rec
+    end
+
+    --- Удалить зону под прицелом.
+    function ES.DeleteZoneAt(ply, pos)
+        if not (IsValid(ply) and ply:IsSuperAdmin()) then return false, "Только суперадмин" end
+        local P = GRM.Property
+        if not (P and istable(P.Records)) then return false, "Модуль недвижимости не загружен" end
+        for id, rec in pairs(P.Records) do
+            if ES.KindOf(rec) ~= "none" and ES.PointInZone(rec, pos) then
+                -- Занятый объект не сносим молча: сначала пусть освободят.
+                if not ES.IsVacant(rec) then
+                    return false, "Объект занят: " .. tostring(rec.ownerName or "владелец")
+                        .. ". Сначала освободите его."
+                end
+                local name = tostring(rec.name or "")
+                P.Records[id] = nil
+                if P.Reindex then P.Reindex() end
+                if P.Save then pcall(P.Save, "estate-tool-delete") end
+                ES.InvalidateScan()
+                ES.Sync()
+                return true, "Зона «" .. name .. "» удалена"
+            end
+        end
+        return false, "Здесь нет зоны"
+    end
+
     --- Диагностика: grm_estate
     concommand.Add("grm_estate", function(ply)
         if IsValid(ply) and not ply:IsSuperAdmin() then return end
