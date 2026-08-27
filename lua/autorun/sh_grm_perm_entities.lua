@@ -232,6 +232,7 @@ if SERVER then
         grm_logistics_warehouse = true,
         grm_logistics_armory    = true,
         grm_logistics_crate     = true,
+        grm_weapon_rack         = true,
         -- ВАЖНО: CCTV (grm_cctv_camera/monitor/server) НЕ в PERM_CLASSES!
         -- У CCTV своя система сохранения через CCTV.SavePermanent/LoadPermanent
         -- (grm_cctv/<map>.json). Добавление сюда создаёт дубликаты.
@@ -1441,7 +1442,8 @@ if SERVER then
     -- Делегаты для логистических entity (Код 112)
     -- GRM.PermData.Extract[class] = fn(ent) -> таблица
     -- GRM.PermData.Apply[class]   = fn(ent, data)
-    for _, class in ipairs({"grm_logistics_loading", "grm_logistics_warehouse", "grm_logistics_armory"}) do
+    for _, class in ipairs({"grm_logistics_loading", "grm_logistics_warehouse", "grm_logistics_armory",
+        "grm_weapon_rack"}) do
         GRM.PermData.Extract[class] = function(ent)
             if not IsValid(ent) or not ent.GetPermData then return nil end
             return ent:GetPermData()
