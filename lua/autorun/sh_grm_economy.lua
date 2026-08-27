@@ -2401,7 +2401,7 @@ if CLIENT then
         local host
         if IsValid(parentTabs) then
             host = parentTabs
-            host:Clear()
+            if GRM.UI and GRM.UI.SafeClear then GRM.UI.SafeClear(host) else host:Clear() end
         else
             if not IsValid(adminFrame) then return end
             for _, ch in ipairs(adminFrame:GetChildren()) do
@@ -3031,7 +3031,7 @@ if CLIENT then
     GRM.Economy.EmbeddedAdmin = nil
     function GRM.Economy.BuildAdminContent(parent, d)
         if not IsValid(parent) then return end
-        parent:Clear()
+        if GRM.UI and GRM.UI.SafeClear then GRM.UI.SafeClear(parent) else parent:Clear() end
         buildAdminUI(d or {}, parent)
         return parent
     end

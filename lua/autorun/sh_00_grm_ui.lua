@@ -29,6 +29,47 @@ function GRM.UI.IsOpen(key)
     return IsValid(GRM.UI._frames and GRM.UI._frames[key])
 end
 
+--[[ БЕЗОПАСНАЯ ОЧИСТКА ПАНЕЛИ (находка 27.08).
+
+     Симптом: спам в консоли у любого игрока, открывшего окно с
+     перестраиваемым содержимым:
+         lua/vgui/dframe.lua:246: Tried to use a NULL Panel!
+           1. SetPos - [C]:-1
+
+     Причина. Panel:Clear() сносит ВСЕХ детей панели. Если панель — это
+     DFrame, вместе с содержимым улетают его служебные кнопки btnClose,
+     btnMaxim, btnMinim и заголовок lblTitle. Но PerformLayout самого
+     DFrame про это не знает и на каждом кадре продолжает звать у них
+     SetPos — отсюда «NULL Panel» пачками, пока окно открыто.
+
+     Решение. GRM.UI.SafeClear(panel) убирает только СОДЕРЖИМОЕ и никогда
+     не трогает служебную обвязку окна. Для обычных панелей ведёт себя
+     как привычный :Clear(). ]]
+function GRM.UI.SafeClear(panel)
+    if not IsValid(panel) then return false end
+
+    -- Не DFrame — обычная панель, никакой служебной обвязки нет.
+    local chrome = {
+        panel.btnClose, panel.btnMaxim, panel.btnMinim,
+        panel.lblTitle, panel.imgIcon,
+    }
+    local protected, any = {}, false
+    for _, ch in ipairs(chrome) do
+        if IsValid(ch) then protected[ch] = true any = true end
+    end
+    if not any then
+        if panel.Clear then panel:Clear() end
+        return true
+    end
+
+    for _, ch in ipairs(panel:GetChildren() or {}) do
+        if IsValid(ch) and not protected[ch] and ch._grmChrome ~= true then
+            ch:Remove()
+        end
+    end
+    return true
+end
+
 print("[GRM UI] lifecycle guard loaded")
 
 -- Полосы HUD регистрируются из нескольких файлов. Autorun идёт по алфавиту,

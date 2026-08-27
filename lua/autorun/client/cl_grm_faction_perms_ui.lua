@@ -135,7 +135,7 @@ local function buildPanel(parent, factionName)
     local prevScroll = 0
     if IsValid(ui.scroll) and IsValid(ui.scroll.VBar) then prevScroll = ui.scroll.VBar:GetScroll() end
 
-    parent:Clear()
+    if GRM.UI and GRM.UI.SafeClear then GRM.UI.SafeClear(parent) else parent:Clear() end
     ui.rows = {}
     ui.scroll = nil
     ui.faction = factionName

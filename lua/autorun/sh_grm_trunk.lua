@@ -587,7 +587,7 @@ if CLIENT then
 
     local function fillGrid(host, slots, count, toTrunk)
         if not IsValid(host) then return end
-        host:Clear()
+        if GRM.UI and GRM.UI.SafeClear then GRM.UI.SafeClear(host) else host:Clear() end
         local cols, gap = 6, 6
         local canvas = host:GetCanvas()
         local wide = math.max(300, (IsValid(canvas) and canvas:GetWide() or host:GetWide()) - 12)

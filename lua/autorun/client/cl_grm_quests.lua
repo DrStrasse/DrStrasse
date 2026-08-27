@@ -45,7 +45,10 @@ local function playDialogue(npcName,nodes,onAction)
  end
  local byID={};for i,n in ipairs(nodes)do byID[tostring(n.id or i)]=i end;local index=1
  local function show(i)
-  index=math.Clamp(tonumber(i)or 1,1,#nodes);local n=nodes[index];f:Clear()
+  index=math.Clamp(tonumber(i)or 1,1,#nodes);local n=nodes[index]
+  -- f — это DFrame: обычный :Clear() сносил его служебные кнопки, после
+  -- чего PerformLayout окна спамил «NULL Panel» в консоль каждый кадр.
+  if GRM.UI and GRM.UI.SafeClear then GRM.UI.SafeClear(f) else f:Clear() end
   local close=vgui.Create("DButton",f);close:SetSize(28,24);close:SetPos(f:GetWide()-36,10);close:SetText("")
   close.Paint=function(s,w,h)draw.RoundedBox(4,0,0,w,h,s:IsHovered()and C.red or Color(40,48,60));draw.SimpleText("X","GRMQ_Body",w/2,h/2,color_white,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)end
   close.DoClick=function()f:Close()end

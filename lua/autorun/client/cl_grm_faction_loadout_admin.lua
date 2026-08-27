@@ -238,7 +238,7 @@ end
 -- Редактор моделей выбранного узла структуры
 -----------------------------------------------------------------------
 local function buildModelsEditor(parent, node, list, saveFn)
-    parent:Clear()
+    if GRM.UI and GRM.UI.SafeClear then GRM.UI.SafeClear(parent) else parent:Clear() end
     list = istable(list) and list or {}
 
     local head = vgui.Create("DPanel", parent)
@@ -377,7 +377,7 @@ local function weaponCatalog()
 end
 
 local function buildWeaponsEditor(parent, node, list, saveFn)
-    parent:Clear()
+    if GRM.UI and GRM.UI.SafeClear then GRM.UI.SafeClear(parent) else parent:Clear() end
     list = istable(list) and list or {}
 
     local head = vgui.Create("DPanel", parent)

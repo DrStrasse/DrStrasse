@@ -297,7 +297,11 @@ end
 function PB.BuildAccessEditor(host, payload)
     if not IsValid(host) then return end
     local keep = PB._editorSel
-    host:Clear()
+    --[[ host бывает и вкладкой /factions, и собственным DFrame. Обычный
+         :Clear() на DFrame сносил его кнопки закрытия/сворачивания, после
+         чего PerformLayout окна каждый кадр звал у них SetPos — консоль
+         заливало «dframe.lua:246: Tried to use a NULL Panel!». ]]
+    if GRM.UI and GRM.UI.SafeClear then GRM.UI.SafeClear(host) else host:Clear() end
     payload = istable(payload) and payload or {}
     local cfg = istable(payload.config) and payload.config or { settings = {}, factions = {} }
     local tree = istable(payload.tree) and payload.tree or {}
