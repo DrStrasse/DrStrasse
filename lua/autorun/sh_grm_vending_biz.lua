@@ -40,13 +40,29 @@ function VB.SetCash(ent, n)
     if not IsValid(ent) then return end
     ent:SetNWInt("GRM_VendCash", math.max(0, math.floor(tonumber(n) or 0)))
     ent.GRMVendDirty = true
+    if VB.MarkDirty then VB.MarkDirty() end
 end
 
+--[[ Продажа: деньги в кассу плюс СЧЁТЧИКИ за всё время. Раньше считалась
+     только текущая касса, поэтому после снятия денег история продаж
+     исчезала и «общая сумма» нигде не хранилась. ]]
 function VB.AddSale(ent, price)
     if not IsValid(ent) then return end
     local p = math.max(0, math.floor(tonumber(price) or 0))
     if p <= 0 then return end
     VB.SetCash(ent, VB.GetCash(ent) + p)
+    ent.GRMVendSold = math.max(0, math.floor(tonumber(ent.GRMVendSold) or 0)) + 1
+    ent.GRMVendEarned = math.max(0, math.floor(tonumber(ent.GRMVendEarned) or 0)) + p
+    ent:SetNWInt("GRM_VendSold", ent.GRMVendSold)
+    ent:SetNWInt("GRM_VendEarned", ent.GRMVendEarned)
+    if VB.MarkDirty then VB.MarkDirty() end
+end
+
+--- Итоги автомата за всё время: штук продано и сколько заработано.
+function VB.GetStats(ent)
+    if not IsValid(ent) then return 0, 0 end
+    return math.max(0, math.floor(tonumber(ent.GRMVendSold) or 0)),
+        math.max(0, math.floor(tonumber(ent.GRMVendEarned) or 0))
 end
 
 function VB.GetOwner(ent)
@@ -79,7 +95,8 @@ function VB.Claim(ply, ent)
     local k = keyOf(ply)
     ent:SetNWString("GRM_VendOwner", k)
     ent.GRMVendOwner = k
-    if GRM.Food and GRM.Food.SaveVendingMachines then pcall(GRM.Food.SaveVendingMachines, nil) end
+    if VB.MarkDirty then VB.MarkDirty() end
+    if VB.Persist then VB.Persist(true) end
     return true, cur == "" and ("Автомат куплен за " .. price .. " GRM") or "Вы владелец этого автомата"
 end
 
@@ -105,27 +122,65 @@ timer.Simple(2, function()
     -- данные пишем поверх JSON после штатного сейва
 end)
 
-local function persistOverlay()
+--[[ СОХРАНЕНИЕ БИЗНЕС-ДАННЫХ.
+
+     Было: строки файла сопоставлялись с автоматами по ПОРЯДКОВОМУ НОМЕРУ
+     в ents.FindByClass. Порядок сущностей в GMod не гарантирован, поэтому
+     после рестарта касса и владелец могли уехать к чужому автомату, а при
+     любом изменении числа автоматов — потеряться совсем.
+
+     Стало: привязка по позиции на карте. Автомат стоит там же, где стоял,
+     значит его данные найдутся однозначно. ]]
+local function posKey(vec)
+    if not vec then return "" end
+    return string.format("%.0f:%.0f:%.0f", vec.x or 0, vec.y or 0, vec.z or 0)
+end
+
+local function rowPos(row)
+    if not istable(row) or not istable(row.pos) then return "" end
+    return posKey({ x = tonumber(row.pos.x) or 0, y = tonumber(row.pos.y) or 0,
+        z = tonumber(row.pos.z) or 0 })
+end
+
+local dirty = false
+function VB.MarkDirty() dirty = true end
+
+local function persistOverlay(force)
     if not (GRM.Food and file) then return end
+    if not force and not dirty then return end
+    dirty = false
     local map = string.lower(game.GetMap() or "unknown")
     local path = "grm_food/vending_" .. map .. ".json"
     if not file.Exists(path, "DATA") then return end
     local ok, data = pcall(util.JSONToTable, file.Read(path, "DATA") or "", false, true)
     if not (ok and istable(data)) then return end
-    local entsList = ents.FindByClass("grm_vending_machine")
-    for i, row in ipairs(data) do
-        local ent = entsList[i]
+
+    local byPos = {}
+    for _, ent in ipairs(ents.FindByClass("grm_vending_machine")) do
+        if IsValid(ent) then byPos[posKey(ent:GetPos())] = ent end
+    end
+
+    local changed = false
+    for _, row in ipairs(data) do
+        local ent = byPos[rowPos(row)]
         if IsValid(ent) and istable(row) then
+            local sold, earned = VB.GetStats(ent)
             row.owner = VB.GetOwner(ent)
             row.cash = VB.GetCash(ent)
+            row.sold = sold
+            row.earned = earned
+            changed = true
         end
     end
+    if not changed then return end
     local encOk, enc = pcall(util.TableToJSON, data, true)
     if encOk and enc then file.Write(path, enc) end
 end
+VB.Persist = persistOverlay
 
-timer.Create("GRM_VendingBiz_Persist", 20, 0, persistOverlay)
-hook.Add("ShutDown", "GRM_VendingBiz_Persist", persistOverlay)
+-- Раз в 20 с, но только если что-то менялось; на выключении — обязательно.
+timer.Create("GRM_VendingBiz_Persist", 20, 0, function() persistOverlay(false) end)
+hook.Add("ShutDown", "GRM_VendingBiz_Persist", function() persistOverlay(true) end)
 
 hook.Add("InitPostEntity", "GRM_VendingBiz_Restore", function()
     timer.Simple(3, function()
@@ -134,12 +189,23 @@ hook.Add("InitPostEntity", "GRM_VendingBiz_Restore", function()
         if not file.Exists(path, "DATA") then return end
         local ok, data = pcall(util.JSONToTable, file.Read(path, "DATA") or "", false, true)
         if not (ok and istable(data)) then return end
-        local list = ents.FindByClass("grm_vending_machine")
-        for i, row in ipairs(data) do
-            local ent = list[i]
+
+        local byPos = {}
+        for _, ent in ipairs(ents.FindByClass("grm_vending_machine")) do
+            if IsValid(ent) then byPos[posKey(ent:GetPos())] = ent end
+        end
+        for _, row in ipairs(data) do
+            local ent = byPos[rowPos(row)]
             if IsValid(ent) and istable(row) then
-                if isstring(row.owner) then ent:SetNWString("GRM_VendOwner", row.owner) end
+                if isstring(row.owner) and row.owner ~= "" then
+                    ent:SetNWString("GRM_VendOwner", row.owner)
+                    ent.GRMVendOwner = row.owner
+                end
                 if tonumber(row.cash) then ent:SetNWInt("GRM_VendCash", math.floor(row.cash)) end
+                ent.GRMVendSold = math.max(0, math.floor(tonumber(row.sold) or 0))
+                ent.GRMVendEarned = math.max(0, math.floor(tonumber(row.earned) or 0))
+                ent:SetNWInt("GRM_VendSold", ent.GRMVendSold)
+                ent:SetNWInt("GRM_VendEarned", ent.GRMVendEarned)
             end
         end
     end)

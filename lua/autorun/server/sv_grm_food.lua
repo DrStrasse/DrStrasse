@@ -295,13 +295,26 @@ function GRM.Food.SaveVendingMachines(ply)
 
     ensureVendingSaveDir()
 
+    --[[ БИЗНЕС-ДАННЫЕ СОХРАНЯЮТСЯ ВМЕСТЕ С ПОЗИЦИЕЙ (находка 27.08).
+
+         Раньше здесь писались только pos/ang, и файл ПЕРЕЗАПИСЫВАЛСЯ
+         целиком. Владелец и накопленная касса, которые дописывал модуль
+         бизнеса, стирались при каждом сохранении — после рестарта выручка
+         обнулялась, а автомат становился ничьим. ]]
     local saved = {}
     for _, ent in ipairs(ents.FindByClass("grm_vending_machine")) do
         if IsValid(ent) then
-            saved[#saved + 1] = {
+            local row = {
                 pos = vecToTable(ent:GetPos()),
                 ang = angToTable(ent:GetAngles()),
             }
+            if GRM.VendingBiz then
+                row.owner = GRM.VendingBiz.GetOwner and GRM.VendingBiz.GetOwner(ent) or ""
+                row.cash = GRM.VendingBiz.GetCash and GRM.VendingBiz.GetCash(ent) or 0
+                row.sold = math.max(0, math.floor(tonumber(ent.GRMVendSold) or 0))
+                row.earned = math.max(0, math.floor(tonumber(ent.GRMVendEarned) or 0))
+            end
+            saved[#saved + 1] = row
         end
     end
 
@@ -339,8 +352,23 @@ function GRM.Food.LoadVendingMachines(ply, replaceAll)
     local count = 0
     for _, row in ipairs(data) do
         if istable(row) and row.pos and row.ang then
-            if IsValid(createPermanentVending(tableToVec(row.pos), tableToAng(row.ang))) then
+            local ent = createPermanentVending(tableToVec(row.pos), tableToAng(row.ang))
+            if IsValid(ent) then
                 count = count + 1
+                -- Владелец, касса и счётчик продаж возвращаются вместе с автоматом.
+                if GRM.VendingBiz then
+                    if isstring(row.owner) and row.owner ~= "" then
+                        ent:SetNWString("GRM_VendOwner", row.owner)
+                        ent.GRMVendOwner = row.owner
+                    end
+                    if GRM.VendingBiz.SetCash then
+                        GRM.VendingBiz.SetCash(ent, tonumber(row.cash) or 0)
+                    end
+                    ent.GRMVendSold = math.max(0, math.floor(tonumber(row.sold) or 0))
+                    ent.GRMVendEarned = math.max(0, math.floor(tonumber(row.earned) or 0))
+                    ent:SetNWInt("GRM_VendSold", ent.GRMVendSold)
+                    ent:SetNWInt("GRM_VendEarned", ent.GRMVendEarned)
+                end
             end
         end
     end
