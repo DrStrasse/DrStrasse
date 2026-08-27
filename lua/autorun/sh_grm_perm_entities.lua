@@ -233,6 +233,9 @@ if SERVER then
         grm_logistics_armory    = true,
         grm_logistics_crate     = true,
         grm_weapon_rack         = true,
+        -- Домашний шкаф (жильё, фаза 2): мебель квартиры, обязан пережить
+        -- рестарт вместе с содержимым (вещи хранятся отдельным файлом).
+        grm_home_locker         = true,
         -- ВАЖНО: CCTV (grm_cctv_camera/monitor/server) НЕ в PERM_CLASSES!
         -- У CCTV своя система сохранения через CCTV.SavePermanent/LoadPermanent
         -- (grm_cctv/<map>.json). Добавление сюда создаёт дубликаты.
