@@ -57,8 +57,18 @@ function GRM.Factions.SubdepartmentTag(factionValue,subdeptKey)
     local f=isstring(factionValue)and((Factions and Factions[factionValue])or(FactionsData and FactionsData[factionValue]))or factionValue;local key=tostring(subdeptKey or"");if key==""then return""end
     local subs=istable(f)and f.Subdepartments or nil;local sub=subs and subs[key];return istable(sub)and factionTrim(sub.tag,24)or""
 end
--- Шапка служебного канала: тег фракции + тег отдела + тег подотдела.
-function GRM.Factions.ChannelTag(factionValue,departmentKey,subdeptKey,baseTag)
+--[[ Тег должности (ось v5). Пустой, если должности нет или тег не задан. ]]
+function GRM.Factions.PositionTag(factionValue,positionID)
+    local key=tostring(positionID or "");if key==""then return""end
+    if not(GRM.Positions and GRM.Positions.Get)then return""end
+    local f=isstring(factionValue)and((Factions and Factions[factionValue])or(FactionsData and FactionsData[factionValue]))or factionValue
+    local pos=GRM.Positions.Get(f or factionValue,key)
+    return istable(pos)and factionTrim(pos.tag,24)or""
+end
+--[[ Шапка служебного канала: тег фракции + отдела + подотдела + должности.
+     Пятый аргумент необязательный, поэтому старые вызовы работают как были.
+     В эфире сразу видно, что говорит начальник, а не рядовой. ]]
+function GRM.Factions.ChannelTag(factionValue,departmentKey,subdeptKey,baseTag,positionID)
     local f=isstring(factionValue)and((Factions and Factions[factionValue])or(FactionsData and FactionsData[factionValue]))or factionValue
     local base=factionTrim(baseTag,64)
     if base==""then base=factionTrim(istable(f)and f.Tag or"",24)end
@@ -66,6 +76,7 @@ function GRM.Factions.ChannelTag(factionValue,departmentKey,subdeptKey,baseTag)
     local parts={base}
     local dTag=GRM.Factions.DepartmentTag(f,departmentKey);if dTag~=""then parts[#parts+1]=dTag end
     local sTag=GRM.Factions.SubdepartmentTag(f,subdeptKey);if sTag~=""then parts[#parts+1]=sTag end
+    local pTag=GRM.Factions.PositionTag(f,positionID);if pTag~=""then parts[#parts+1]=pTag end
     return table.concat(parts," | ")
 end
 function GRM.Factions.RoleDisplayName(factionValue,roleKey)
@@ -682,7 +693,14 @@ if SERVER then
         ply:SetNWString("GRM_SubdepartmentDisplay", subdept ~= "" and GRM.Factions.SubdepartmentDisplayName(fData or fname, subdept) or "")
         ply:SetNWString("GRM_DepartmentTag", dept ~= "" and GRM.Factions.DepartmentTag(fData or fname, dept) or "")
         ply:SetNWString("GRM_SubdepartmentTag", subdept ~= "" and GRM.Factions.SubdepartmentTag(fData or fname, subdept) or "")
-        ply:SetNWString("GRM_ChannelTag", fname ~= "" and GRM.Factions.ChannelTag(fData or fname, dept, subdept, tag) or "")
+        local nwPositionID = ""
+        if istable(fData) and istable(fData.Members) then
+            local nwRec = GRM.Identity and GRM.Identity.FactionMember
+                and GRM.Identity.FactionMember(fData, ply) or nil
+            if istable(nwRec) then nwPositionID = tostring(nwRec.Position or "") end
+        end
+        ply:SetNWString("GRM_ChannelTag", fname ~= ""
+            and GRM.Factions.ChannelTag(fData or fname, dept, subdept, tag, nwPositionID) or "")
 
         --[[ Должность (ось v5) тоже висит на игроке строкой: её читают права
              организаций, правила бодигрупп и служебные каналы. Берём прямо из
@@ -1827,7 +1845,7 @@ if SERVER then
         local rec = (f and f.Members and f.Members[steam]) or {}
         -- Шапка канала: тег фракции + теги отдела и подотдела (если заданы).
         local tag=GRM.Factions.ChannelTag(f,rec.Department,rec.Subdepartment,
-            (f and f.Tag and f.Tag~="") and f.Tag or GRM.Factions.DisplayName(factionName))
+            (f and f.Tag and f.Tag~="") and f.Tag or GRM.Factions.DisplayName(factionName),rec.Position)
         tag=GRM.Factions.AppendCID(tag,ply)
         -- Формат как у /gnews: шапка отдельной строкой, дальше имя, должность
         -- и текст — раздельными полями, чтобы клиент раскрасил и перенёс строку.
@@ -1877,7 +1895,7 @@ if SERVER then
         local f = Factions[factionName]
         local recB = (f and f.Members and f.Members[steam]) or {}
         local tag = GRM.Factions.AppendCID(GRM.Factions.ChannelTag(f,recB.Department,recB.Subdepartment,
-            (f and f.Tag and f.Tag ~= "") and f.Tag or GRM.Factions.DisplayName(factionName)), ply)
+            (f and f.Tag and f.Tag ~= "") and f.Tag or GRM.Factions.DisplayName(factionName),recB.Position), ply)
         local rpName = ply:GetNWString("GRM_RPName", "")
         if rpName == "" then rpName = ply:Nick() end
         local roleName = (GRM.Factions and GRM.Factions.RoleDisplayName)
@@ -4294,7 +4312,7 @@ if CLIENT then
                         if istable(rec) then
                             -- Теги отдела и подотдела попадают и в шапку над игроком:
                             -- «[ПД | СВАТ] Полиция [Сержант]».
-                            local full = GRM.Factions.ChannelTag(fdata, rec.Department, rec.Subdepartment, tag)
+                            local full = GRM.Factions.ChannelTag(fdata, rec.Department, rec.Subdepartment, tag, rec.Position)
                             if tag == "" and full == GRM.Factions.DisplayName(fname) then full = "" end
                             idx[memberKey] = { fname, rec.Role, Color(cr, cg, cb), full }
                         end

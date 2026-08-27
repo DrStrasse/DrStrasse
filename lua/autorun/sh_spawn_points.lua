@@ -136,6 +136,9 @@ if SERVER then
         if not istable(f.RoleSpawnPoints) then f.RoleSpawnPoints = {} end
         if not istable(f.DepartmentSpawnPoints) then f.DepartmentSpawnPoints = {} end
         if not istable(f.SubdeptSpawnPoints) then f.SubdeptSpawnPoints = {} end
+        -- Точки должностей (ось v5): начальник появляется в кабинете,
+        -- а не в общей раздевалке вместе с подчинёнными.
+        if not istable(f.PositionSpawnPoints) then f.PositionSpawnPoints = {} end
     end
 
     -- Полный bundle фракции: points + roles + departments (единый формат)
@@ -146,6 +149,7 @@ if SERVER then
             roles = f.RoleSpawnPoints or {},
             departments = f.DepartmentSpawnPoints or {},
             subdepartments = f.SubdeptSpawnPoints or {},
+            positions = f.PositionSpawnPoints or {},
         }
     end
 
@@ -214,18 +218,21 @@ if SERVER then
                         f.RoleSpawnPoints = {}
                         f.DepartmentSpawnPoints = {}
                         f.SubdeptSpawnPoints = {}
+                        f.PositionSpawnPoints = {}
                         needResave = true
                     else
                         f.SpawnPoints = istable(entry.points) and entry.points or {}
                         f.RoleSpawnPoints = istable(entry.roles) and entry.roles or {}
                         f.DepartmentSpawnPoints = istable(entry.departments) and entry.departments or {}
                         f.SubdeptSpawnPoints = istable(entry.subdepartments) and entry.subdepartments or {}
+                        f.PositionSpawnPoints = istable(entry.positions) and entry.positions or {}
                     end
                 else
                     f.SpawnPoints = {}
                     f.RoleSpawnPoints = {}
                     f.DepartmentSpawnPoints = {}
                     f.SubdeptSpawnPoints = {}
+                    f.PositionSpawnPoints = {}
                 end
             end
         end
@@ -321,11 +328,25 @@ if SERVER then
                     end)
                 end
 
+                -- Должности (ось v5) в снимок дерева точек спавна.
+                local posList = {}
+                if GRM.Positions and GRM.Positions.List then
+                    for _, pos in ipairs(GRM.Positions.List(f)) do
+                        posList[#posList + 1] = {
+                            id = pos.id, name = pos.name, node = pos.node,
+                            kindName = (GRM.Positions.KindName or {})[pos.kind] or pos.kind,
+                            nodeName = GRM.Positions.NodeDisplayName(f, pos.node),
+                        }
+                    end
+                end
+
                 data.factions[name] = {
                     points = f.SpawnPoints or {},
                     roles = f.RoleSpawnPoints or {},
                     departments = f.DepartmentSpawnPoints or {},
                     subdepartments = f.SubdeptSpawnPoints or {},
+                    positions = f.PositionSpawnPoints or {},
+                    posList = posList,
                     rolesList = roles,
                     roleNames = roleNames,
                     departmentsList = depts,
@@ -439,6 +460,50 @@ if SERVER then
         saveAllFactionSpawnPoints()
         return true
     end
+
+    -- === ТОЧКИ ДЛЯ ДОЛЖНОСТЕЙ (ось v5) ===
+    function AddSpawnPointForPosition(factionName, positionID, pos, ang)
+        if not Factions or not Factions[factionName] then return false, "Фракция не найдена" end
+        local f = Factions[factionName]
+        if not (GRM.Positions and GRM.Positions.Get and GRM.Positions.Get(f, positionID)) then
+            return false, "Должность «" .. tostring(positionID) .. "» не существует во фракции «" .. factionName .. "»"
+        end
+        ensureFactionSpawnPoints(f)
+        positionID = tostring(positionID)
+        if not f.PositionSpawnPoints[positionID] then f.PositionSpawnPoints[positionID] = {} end
+        table.insert(f.PositionSpawnPoints[positionID], { pos = vecToTable(pos), ang = angToTable(ang) })
+        saveAllFactionSpawnPoints()
+        return true
+    end
+
+    function RemoveSpawnPointFromPosition(factionName, positionID, index)
+        if not Factions or not Factions[factionName] then return false end
+        local f = Factions[factionName]
+        positionID = tostring(positionID)
+        if not f.PositionSpawnPoints or not f.PositionSpawnPoints[positionID] then return false end
+        table.remove(f.PositionSpawnPoints[positionID], index)
+        if #f.PositionSpawnPoints[positionID] == 0 then f.PositionSpawnPoints[positionID] = nil end
+        saveAllFactionSpawnPoints()
+        return true
+    end
+
+    function GetSpawnPointsForPosition(factionName, positionID)
+        if not Factions or not Factions[factionName] then return {} end
+        local f = Factions[factionName]
+        positionID = tostring(positionID or "")
+        if not f.PositionSpawnPoints or not f.PositionSpawnPoints[positionID] then return {} end
+        return f.PositionSpawnPoints[positionID]
+    end
+
+    --[[ Должность удалили — её точки спавна больше некому использовать. ]]
+    hook.Add("GRM_FactionPositionChanged", "GRM_SpawnPoints_PositionGone",
+        function(factionName, positionID, _, kind)
+            if kind ~= "delete" then return end
+            local f = Factions and Factions[factionName]
+            if not (istable(f) and istable(f.PositionSpawnPoints) and f.PositionSpawnPoints[positionID]) then return end
+            f.PositionSpawnPoints[positionID] = nil
+            saveAllFactionSpawnPoints()
+        end)
 
     function GetSpawnPointsForRole(factionName, roleName)
         if not Factions or not Factions[factionName] then return {} end
@@ -574,6 +639,16 @@ if SERVER then
                 return tableToVec(point.pos), tableToAng(point.ang)
             end
             return nil
+        end
+
+        --[[ ПРИОРИТЕТ 0: Точки ДОЛЖНОСТИ — самый узкий уровень (ось v5).
+             Тот же порядок, что и у формы: должность точнее подотдела. ]]
+        if memberData and tostring(memberData.Position or "") ~= "" then
+            local posPoints = GetSpawnPointsForPosition(factionName, memberData.Position)
+            if #posPoints > 0 then
+                local point = posPoints[math.random(1, #posPoints)]
+                return tableToVec(point.pos), tableToAng(point.ang)
+            end
         end
 
         -- ПРИОРИТЕТ 1: Точки подотдела (самый узкий уровень)

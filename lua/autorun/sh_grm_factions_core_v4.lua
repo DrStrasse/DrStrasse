@@ -63,6 +63,22 @@ if SERVER then
  hook.Add("GRM_FactionMemberJoined","GRM_FactionCore_PersonnelJoin",function(factionName,key,rec,actor,source)local p=normalizePersonnel(rec,key,source);p.joinedAt=os.time();p.hiredBy=charKey(actor);p.status="active";pushHistory(rec,"joined",actor,"Принят во фракцию",{source=source});C.Touch(factionName,"member.joined",{characterKey=key})end)
  hook.Add("GRM_FactionMemberRemoved","GRM_FactionCore_PersonnelRemoved",function(factionName,key,rec,actor,reason)local f=faction(factionName);if not(f and istable(rec))then return end;local p=normalizePersonnel(rec,key);p.status="dismissed";p.leftAt=os.time();pushHistory(rec,"dismissed",actor,"Уволен из фракции",{reason=reason});f.PersonnelArchive=f.PersonnelArchive or{};f.PersonnelArchive[key]=table.Copy(rec);C.Touch(factionName,"member.removed",{characterKey=key,reason=reason})end)
  hook.Add("GRM_FactionMemberRoleChanged","GRM_FactionCore_PersonnelRole",function(factionName,key,rec,oldRole,newRole,actor)pushHistory(rec,"role_changed",actor,"Изменена должность",{from=oldRole,to=newRole});C.Touch(factionName,"member.role",{characterKey=key,from=oldRole,to=newRole})end)
+ --[[ Назначение на должность и снятие — событие кадрового дела наравне с
+      переводом в отдел. Раньше в истории было видно только смену звания, и
+      «за что человека сняли с начальника» нигде не хранилось. ]]
+ hook.Add("GRM_FactionMemberPositionChanged","GRM_FactionCore_PersonnelPosition",function(factionName,key,rec,oldPos,newPos,actor)
+  local f=faction(factionName);local function nameOf(id)
+   if not id or id=="" then return "" end
+   local pos=GRM.Positions and GRM.Positions.Get and GRM.Positions.Get(f or factionName,id)
+   return pos and pos.name or tostring(id)
+  end
+  local text
+  if (newPos or "")=="" then text="Снят с должности «"..nameOf(oldPos).."»"
+  elseif (oldPos or "")=="" then text="Назначен на должность «"..nameOf(newPos).."»"
+  else text="Переведён с должности «"..nameOf(oldPos).."» на «"..nameOf(newPos).."»" end
+  pushHistory(rec,"position_changed",actor,text,{from=oldPos or "",to=newPos or ""})
+  C.Touch(factionName,"member.position",{characterKey=key,from=oldPos or "",to=newPos or ""})
+ end)
  hook.Add("GRM_FactionMemberDepartmentChanged","GRM_FactionCore_PersonnelDepartment",function(factionName,key,rec,oldDept,newDept,actor)pushHistory(rec,"department_changed",actor,"Переведён в другой отдел",{from=oldDept,to=newDept});C.Touch(factionName,"member.department",{characterKey=key,from=oldDept,to=newDept})end)
  hook.Add("GRM_FactionMemberSubdepartmentChanged","GRM_FactionCore_PersonnelSubdepartment",function(factionName,key,rec,oldSub,newSub,actor)local subDisp=C.SubdepartmentDisplayName(factionName,newSub);local txt=newSub~=""and("Назначен в подотдел «"..subDisp.."»")or"Выведен из подотдела";pushHistory(rec,"subdepartment_changed",actor,txt,{from=oldSub,to=newSub});C.Touch(factionName,"member.subdepartment",{characterKey=key,from=oldSub,to=newSub})end)
  hook.Add("GRM_FactionDutyChanged","GRM_FactionCore_PersonnelDuty",function(ply,onDuty,factionName)local key=charKey(ply);local f=faction(factionName);local rec=f and f.Members and f.Members[key];if not rec then return end;pushHistory(rec,onDuty and"duty_started"or"duty_ended",ply,onDuty and"Вышел на службу"or"Завершил службу",{});C.Touch(factionName,"member.duty",{characterKey=key,onDuty=onDuty});if FactionsAPI and FactionsAPI.Save then FactionsAPI.Save()end end)

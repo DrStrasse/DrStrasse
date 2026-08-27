@@ -803,9 +803,31 @@ function UI.Open(requestedFaction, requestedTab)
             end
         end
 
+        --[[ Укомплектованность штата (ось v5): сколько мест по должностям
+             занято и сколько свободно. Свободные места — это и есть
+             вакансии организации, видные без захода в раздел должностей. ]]
+        local posTaken, posSlots, posFree, posUnlimited = 0, 0, 0, false
+        if GRM.Positions and GRM.Positions.List then
+            for _, pos in ipairs(GRM.Positions.List(fac)) do
+                local st = GRM.Positions.Staffing(fac, pos.id)
+                posTaken = posTaken + st.taken
+                if st.unlimited then posUnlimited = true
+                else
+                    posSlots = posSlots + st.slots
+                    posFree = posFree + st.free
+                end
+            end
+        end
+
         addStat(1, "СОТРУДНИКОВ В ШТАТЕ", memCount, C.accent)
         addStat(2, "ОТДЕЛОВ / ПОДОТДЕЛОВ", tostring(deptCount) .. " / " .. tostring(subCount), C.green)
-        addStat(3, "ДОЛЖНОСТЕЙ", roleCount, C.gold)
+        if posSlots > 0 or posTaken > 0 then
+            addStat(3, posFree > 0 and "ШТАТ · СВОБОДНО МЕСТ" or "ШТАТ УКОМПЛЕКТОВАН",
+                tostring(posTaken) .. " / " .. (posUnlimited and "∞" or tostring(posSlots)),
+                posFree > 0 and C.green or C.gold)
+        else
+            addStat(3, "ЗВАНИЙ", roleCount, C.gold)
+        end
         -- Валюта сборки — GRM (Groennerland Reich Money), рублей на сервере нет.
         addStat(4, "КАЗНА И БЮДЖЕТ",
             (GRM.Format and GRM.Format(budget)) or (tostring(budget) .. " GRM"), C.gold)

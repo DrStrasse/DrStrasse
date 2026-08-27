@@ -65,8 +65,9 @@ ok(has(fac, "if parent and parent ~= \"\" and f.Members[key].Department ~= paren
     "назначение подотдела подтягивает родительский отдел")
 
 print("\n=== 5. ШАПКА НАД ИГРОКОМ ===")
-ok(has(fac, "local full = GRM.Factions.ChannelTag(fdata, rec.Department, rec.Subdepartment, tag)"),
-    "HUD над игроком берёт теги отдела и подотдела")
+-- Пятым аргументом идёт должность (ось v5): в шапке видно и её тег.
+ok(has(fac, "local full = GRM.Factions.ChannelTag(fdata, rec.Department, rec.Subdepartment, tag, rec.Position)"),
+    "HUD над игроком берёт теги отдела, подотдела и должности")
 ok(has(fac, 'local nwTag = ply:GetNWString("GRM_ChannelTag", "")'),
     "при публичном синке шапка берётся с NW-строки игрока")
 
