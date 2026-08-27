@@ -44,9 +44,10 @@ local MODEL = "models/groennerlandinfantry/male_07.mdl"
 local FAC   = "828-th Airborne Groennerland Battalion"
 
 print("\n=== 1. КЛЮЧИ И ОБЛАСТИ ===")
-ok(BG.Key(MODEL, FAC, "", "") == MODEL .. "|" .. FAC .. "||", "ключ склеивается из четырёх полей",
+-- Пятое поле — должность (ось v5). Пустое = «любая».
+ok(BG.Key(MODEL, FAC, "", "") == MODEL .. "|" .. FAC .. "|||", "ключ склеивается из пяти полей",
    BG.Key(MODEL, FAC, "", ""))
-ok(BG.Key("MoDeLs/A.MDL", "", "", "") == "models/a.mdl|||", "путь модели приводится к нижнему регистру",
+ok(BG.Key("MoDeLs/A.MDL", "", "", "") == "models/a.mdl||||", "путь модели приводится к нижнему регистру",
    BG.Key("MoDeLs/A.MDL", "", "", ""))
 local m, f2, d2, r2 = BG.ParseKey(BG.Key(MODEL, FAC, "Штаб", "Сержант"))
 ok(m == MODEL and f2 == FAC and d2 == "Штаб" and r2 == "Сержант", "ключ разбирается обратно без потерь",

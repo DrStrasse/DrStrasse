@@ -63,14 +63,18 @@ local NET_ACT  = "GRM_BGRules_Act"
 local function low(s) return string.lower(string.Trim(tostring(s or ""))) end
 local function tag(s) return string.Trim(tostring(s or "")) end
 
---- Ключ правила. Пустое поле = «любой».
-function BG.Key(model, faction, dept, role)
-    return low(model) .. "|" .. tag(faction) .. "|" .. tag(dept) .. "|" .. tag(role)
+--[[ Ключ правила. Пустое поле = «любой».
+     Пятая часть — ДОЛЖНОСТЬ (ось v5). Правила старого формата из четырёх
+     частей читаются как есть: им дописывается пустая пятая часть, поэтому
+     уже настроенные правила не пропадают. ]]
+function BG.Key(model, faction, dept, role, position)
+    return low(model) .. "|" .. tag(faction) .. "|" .. tag(dept) .. "|"
+        .. tag(role) .. "|" .. tag(position)
 end
 
 function BG.ParseKey(key)
     local parts = string.Explode("|", tostring(key or ""))
-    return parts[1] or "", parts[2] or "", parts[3] or "", parts[4] or ""
+    return parts[1] or "", parts[2] or "", parts[3] or "", parts[4] or "", parts[5] or ""
 end
 
 --- Нормализация одной настройки группы.
@@ -105,20 +109,36 @@ function BG.NormalizeGroups(groups)
 end
 
 --[[ Разрешение правил для конкретной модели и контекста игрока.
-     ctx = { faction=..., dept=..., sub=..., role=... }
-     Возвращает { [номерГруппы] = spec } — уже слитый по приоритету. ]]
+     ctx = { faction=..., dept=..., sub=..., role=..., position=... }
+
+     Порядок цепочки — от общего к точному, следующее звено перекрывает
+     предыдущее. ДОЛЖНОСТЬ идёт последней, то есть она сильнее ранга:
+     у начальника отдела нашивка на месте, у рядового того же отдела с тем
+     же званием та же строка скрыта. ]]
 function BG.Resolve(model, ctx)
     ctx = istable(ctx) and ctx or {}
-    local faction, dept, sub, role = tag(ctx.faction), tag(ctx.dept), tag(ctx.sub), tag(ctx.role)
-    local chain = { BG.Key(model, "", "", "") }
+    local faction, dept, sub = tag(ctx.faction), tag(ctx.dept), tag(ctx.sub)
+    local role, position = tag(ctx.role), tag(ctx.position)
+    local chain = { BG.Key(model, "", "", "", "") }
     if faction ~= "" then
-        chain[#chain + 1] = BG.Key(model, faction, "", "")
-        if dept ~= "" then chain[#chain + 1] = BG.Key(model, faction, dept, "") end
-        if sub ~= "" then chain[#chain + 1] = BG.Key(model, faction, sub, "") end
+        chain[#chain + 1] = BG.Key(model, faction, "", "", "")
+        if dept ~= "" then chain[#chain + 1] = BG.Key(model, faction, dept, "", "") end
+        if sub ~= "" then chain[#chain + 1] = BG.Key(model, faction, sub, "", "") end
         if role ~= "" then
-            chain[#chain + 1] = BG.Key(model, faction, "", role)
-            if dept ~= "" then chain[#chain + 1] = BG.Key(model, faction, dept, role) end
-            if sub ~= "" then chain[#chain + 1] = BG.Key(model, faction, sub, role) end
+            chain[#chain + 1] = BG.Key(model, faction, "", role, "")
+            if dept ~= "" then chain[#chain + 1] = BG.Key(model, faction, dept, role, "") end
+            if sub ~= "" then chain[#chain + 1] = BG.Key(model, faction, sub, role, "") end
+        end
+        -- Должность: сильнее ранга, поэтому её звенья идут последними.
+        if position ~= "" then
+            chain[#chain + 1] = BG.Key(model, faction, "", "", position)
+            if dept ~= "" then chain[#chain + 1] = BG.Key(model, faction, dept, "", position) end
+            if sub ~= "" then chain[#chain + 1] = BG.Key(model, faction, sub, "", position) end
+            if role ~= "" then
+                chain[#chain + 1] = BG.Key(model, faction, "", role, position)
+                if dept ~= "" then chain[#chain + 1] = BG.Key(model, faction, dept, role, position) end
+                if sub ~= "" then chain[#chain + 1] = BG.Key(model, faction, sub, role, position) end
+            end
         end
     end
     local out = {}
@@ -220,11 +240,33 @@ function BG.ContextFor(ply, characterKey)
                     dept = tostring(member.Department or ""),
                     sub = tostring(member.Subdepartment or member.Subdept or ""),
                     role = tostring(member.Role or ""),
+                    position = tostring(member.Position or ""),
                 }
             end
         end
     end
-    return { faction = "", dept = "", sub = "", role = "" }
+    return { faction = "", dept = "", sub = "", role = "", position = "" }
+end
+
+--[[ МИГРАЦИЯ КЛЮЧЕЙ. До появления должностей ключ состоял из четырёх
+     частей: модель|организация|узел|ранг. Теперь их пять. Старые правила
+     дочитываются как «должность не указана», то есть продолжают работать
+     ровно как раньше. ]]
+function BG.UpgradeKey(key)
+    key = tostring(key or "")
+    if key == "" then return key end
+    local parts = string.Explode("|", key)
+    if #parts >= 5 then return key end
+    for i = #parts + 1, 5 do parts[i] = "" end
+    return table.concat(parts, "|")
+end
+
+function BG.UpgradeRules(rules)
+    local out = {}
+    for key, groups in pairs(istable(rules) and rules or {}) do
+        if isstring(key) and istable(groups) then out[BG.UpgradeKey(key)] = groups end
+    end
+    return out
 end
 
 --- Есть ли для модели хоть одно правило (для подсветки в редакторе).
@@ -255,7 +297,7 @@ if SERVER then
         if not file.Exists(BG.File, "DATA") then return end
         local t = jsonT(file.Read(BG.File, "DATA") or "")
         if not istable(t) then return end
-        local raw = istable(t.rules) and t.rules or t
+        local raw = BG.UpgradeRules(istable(t.rules) and t.rules or t)
         for key, groups in pairs(raw) do
             if isstring(key) and istable(groups) then
                 local norm, count = BG.NormalizeGroups(groups)
@@ -295,10 +337,10 @@ if SERVER then
     end)
 
     --- Записать/удалить правило одной области.
-    function BG.SetRule(model, faction, dept, role, groups)
+    function BG.SetRule(model, faction, dept, role, groups, position)
         model = low(model)
         if model == "" then return false, "Модель не указана" end
-        local key = BG.Key(model, faction, dept, role)
+        local key = BG.Key(model, faction, dept, role, position)
         local norm, count = BG.NormalizeGroups(groups)
         if count == 0 then
             BG.Rules[key] = nil
@@ -352,8 +394,20 @@ if SERVER then
                 local row = {
                     name = name,
                     display = (GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(f, name)) or name,
-                    roles = {}, depts = {}, models = {},
+                    roles = {}, depts = {}, models = {}, positions = {},
                 }
+                -- Должности организации (ось v5): нужны редактору правил,
+                -- чтобы можно было закрыть часть формы конкретной должности.
+                if GRM.Positions and GRM.Positions.List then
+                    for _, pos in ipairs(GRM.Positions.List(f)) do
+                        local nodeName = GRM.Positions.NodeDisplayName(f, pos.node)
+                        local kindName = GRM.Positions.KindName[pos.kind] or pos.kind
+                        row.positions[#row.positions + 1] = {
+                            key = pos.id,
+                            display = pos.name .. "  (" .. kindName .. " • " .. nodeName .. ")",
+                        }
+                    end
+                end
                 for _, roleKey in ipairs(istable(f.Roles) and f.Roles or {}) do
                     row.roles[#row.roles + 1] = { key = roleKey,
                         display = (GRM.Factions and GRM.Factions.RoleDisplayName and GRM.Factions.RoleDisplayName(f, roleKey)) or roleKey }
@@ -427,7 +481,8 @@ if SERVER then
         local action = tostring(payload.action or "")
         local ok, msg = false, "Неизвестное действие"
         if action == "save" then
-            ok, msg = BG.SetRule(payload.model, payload.faction, payload.dept, payload.role, payload.groups)
+            ok, msg = BG.SetRule(payload.model, payload.faction, payload.dept, payload.role,
+                payload.groups, payload.position)
         elseif action == "delete" then
             ok, msg = BG.DeleteRule(payload.key)
         end
@@ -470,7 +525,7 @@ if CLIENT then
         local data = net.ReadData(len)
         local txt = util.Decompress(data, rawLen + 64) or ""
         local ok, t = pcall(util.JSONToTable, txt, false, true)
-        BG.Rules = (ok and istable(t)) and t or {}
+        BG.Rules = BG.UpgradeRules((ok and istable(t)) and t or {})
         hook.Run("GRM_BodygroupRulesSynced")
     end)
 
@@ -521,7 +576,7 @@ if CLIENT then
         BG.Rules = rules
 
         -- Текущая область правки.
-        local sel = { faction = "", dept = "", role = "", model = "" }
+        local sel = { faction = "", dept = "", role = "", position = "", model = "" }
         local draftGroups = {}          -- [индексСтрокой] = spec (черновик, до «Сохранить»)
         local modelInfo = {}            -- сканирование модели: [i] = { name, total }
 
@@ -567,15 +622,20 @@ if CLIENT then
         local roleCombo = vgui.Create("DComboBox", left)
         roleCombo:SetPos(12, 108) roleCombo:SetSize(336, 28)
         roleCombo:SetSortItems(false)
+        -- Должность — отдельная ось: сильнее ранга. Начальник отдела и
+        -- рядовой того же отдела с тем же званием получают разные правила.
+        local posCombo = vgui.Create("DComboBox", left)
+        posCombo:SetPos(12, 144) posCombo:SetSize(336, 28)
+        posCombo:SetSortItems(false)
 
-        head(left, "2. Модель", 146)
+        head(left, "2. Модель", 182)
         local search = vgui.Create("DTextEntry", left)
-        search:SetPos(12, 172) search:SetSize(336, 26)
+        search:SetPos(12, 208) search:SetSize(336, 26)
         search:SetPlaceholderText("Поиск по пути модели…")
         search:SetUpdateOnType(true)
 
         local modelList = vgui.Create("DScrollPanel", left)
-        modelList:SetPos(12, 206) modelList:SetSize(336, left:GetTall() - 340)
+        modelList:SetPos(12, 242) modelList:SetSize(336, left:GetTall() - 376)
 
         local rulesHead = vgui.Create("DLabel", left)
         rulesHead:SetFont("GRMBG_Sub") rulesHead:SetTextColor(C.yellow)
@@ -637,12 +697,13 @@ if CLIENT then
 
         --- Правило текущей области (без наследования) из BG.Rules.
         local function currentKey()
-            return BG.Key(sel.model, sel.faction, sel.dept, sel.role)
+            return BG.Key(sel.model, sel.faction, sel.dept, sel.role, sel.position)
         end
 
         --- Наследованные правила (что действует, если в области пусто).
         local function inherited()
-            local scope = { faction = sel.faction, dept = sel.dept, role = sel.role }
+            local scope = { faction = sel.faction, dept = sel.dept, role = sel.role,
+                position = sel.position }
             return BG.Resolve(sel.model, scope)
         end
 
@@ -712,7 +773,8 @@ if CLIENT then
             local parts = {}
             parts[#parts + 1] = sel.faction == "" and "все организации" or sel.faction
             if sel.dept ~= "" then parts[#parts + 1] = "отдел/подотдел: " .. sel.dept end
-            if sel.role ~= "" then parts[#parts + 1] = "должность: " .. sel.role end
+            if sel.role ~= "" then parts[#parts + 1] = "звание: " .. sel.role end
+            if sel.position ~= "" then parts[#parts + 1] = "должность: " .. sel.position end
             return "Область: " .. table.concat(parts, " • ")
         end
 
@@ -732,12 +794,13 @@ if CLIENT then
                 return
             end
             for _, key in ipairs(keys) do
-                local _, fac, dept, role = BG.ParseKey(key)
+                local _, fac, dept, role, position = BG.ParseKey(key)
                 local row = vgui.Create("DPanel", savedList)
                 row:Dock(TOP) row:SetTall(26) row:DockMargin(0, 0, 4, 4)
                 local label = (fac == "" and "все организации" or fac)
                     .. (dept ~= "" and (" / " .. dept) or "")
                     .. (role ~= "" and (" / " .. role) or "")
+                    .. (position ~= "" and (" / ★" .. position) or "")
                 row.Paint = function(_, pw, ph)
                     draw.RoundedBox(4, 0, 0, pw, ph, C.panel2)
                     draw.SimpleText(label, "GRMBG_Small", 8, ph / 2, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
@@ -908,8 +971,10 @@ if CLIENT then
         local function fillDeptRole()
             deptCombo:Clear()
             roleCombo:Clear()
+            posCombo:Clear()
             deptCombo:AddChoice("Все отделы и подотделы", "", sel.dept == "")
-            roleCombo:AddChoice("Все должности", "", sel.role == "")
+            roleCombo:AddChoice("Все звания", "", sel.role == "")
+            posCombo:AddChoice("Все должности", "", sel.position == "")
             for _, row in ipairs(factions) do
                 if row.name == sel.faction then
                     for _, d in ipairs(row.depts) do
@@ -918,11 +983,15 @@ if CLIENT then
                     for _, r in ipairs(row.roles) do
                         roleCombo:AddChoice(r.display, r.key, sel.role == r.key)
                     end
+                    for _, pos in ipairs(row.positions or {}) do
+                        posCombo:AddChoice(pos.display, pos.key, sel.position == pos.key)
+                    end
                 end
             end
             if sel.faction == "" then
                 deptCombo:SetValue("Все отделы и подотделы")
-                roleCombo:SetValue("Все должности")
+                roleCombo:SetValue("Все звания")
+                posCombo:SetValue("Все должности")
             end
         end
 
@@ -932,7 +1001,7 @@ if CLIENT then
         end
         facCombo.OnSelect = function(_, _, _, data)
             sel.faction = tostring(data or "")
-            sel.dept, sel.role = "", ""
+            sel.dept, sel.role, sel.position = "", "", ""
             fillDeptRole()
             draftGroups = {}
             rebuildModels()
@@ -945,6 +1014,11 @@ if CLIENT then
         end
         roleCombo.OnSelect = function(_, _, _, data)
             sel.role = tostring(data or "")
+            draftGroups = {}
+            rebuildGroups()
+        end
+        posCombo.OnSelect = function(_, _, _, data)
+            sel.position = tostring(data or "")
             draftGroups = {}
             rebuildGroups()
         end
@@ -963,7 +1037,7 @@ if CLIENT then
             end
             net.Start(NET_ACT)
                 net.WriteTable({ action = "save", model = sel.model, faction = sel.faction,
-                    dept = sel.dept, role = sel.role, groups = own })
+                    dept = sel.dept, role = sel.role, position = sel.position, groups = own })
             net.SendToServer()
             draftGroups = {}
         end
@@ -979,7 +1053,10 @@ if CLIENT then
         rebuildGroups()
         rebuildSaved()
 
-        f._grmRestore = function() return { faction = sel.faction, dept = sel.dept, role = sel.role, model = sel.model } end
+        f._grmRestore = function()
+            return { faction = sel.faction, dept = sel.dept, role = sel.role,
+                position = sel.position, model = sel.model }
+        end
     end
 
     net.Receive(NET_OPEN, function()

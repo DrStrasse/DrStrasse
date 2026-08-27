@@ -593,12 +593,21 @@ if SERVER then
         if IsValid(ply) and ply:GetNWBool("GRM_FactionOffDuty", false) then return DefaultModels end
         local factionName, member, f = getFactionMemberByPlayer(ply)
         if not factionName or not f then return DefaultModels end
+        --[[ Порядок выбора формы объявлен ОДИН раз в GRM.Positions:
+                 должность → подотдел → отдел → ранг → организация
+             Раньше он был продублирован здесь и в меню персонажа, причём
+             по-разному: превью не учитывало подотдел вовсе, из-за чего
+             сотрудник подотдела видел одну форму, а надевали ему другую. ]]
+        if GRM.Positions and GRM.Positions.ResolveLoadout then
+            local list = GRM.Positions.ResolveLoadout(f, member, "models")
+            if istable(list) and #list > 0 then return list end
+            return DefaultModels
+        end
+
+        -- Фолбэк на случай, если модуль должностей не загрузился.
         local role = member.Role
         local dept = member.Department
         local sub = tostring(member.Subdepartment or member.Subdept or "")
-        -- Приоритет: ПОДОТДЕЛ → ОТДЕЛ → роль → фракция.
-        -- Перевод в отдел/подотдел должен надевать их форму, даже если
-        -- у должности тоже есть модели (иначе перевод «ничего не меняет»).
         if sub ~= "" and istable(f.Subdepartments) and istable(f.Subdepartments[sub])
             and istable(f.Subdepartments[sub].models) and #f.Subdepartments[sub].models > 0 then
             return f.Subdepartments[sub].models

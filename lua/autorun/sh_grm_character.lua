@@ -822,10 +822,24 @@ if SERVER then
         if context.factionName and context.faction then
             if context.onDuty == false then return istable(DefaultModels) and DefaultModels or {} end
             local f, member = context.faction, context.member or {}
-            local role, department = member.Role, member.Department
-            if role and istable(f.RoleModels) and istable(f.RoleModels[role]) and #f.RoleModels[role] > 0 then return f.RoleModels[role] end
-            if department and istable(f.DepartmentModels) and istable(f.DepartmentModels[department]) and #f.DepartmentModels[department] > 0 then return f.DepartmentModels[department] end
-            if istable(f.Models) and #f.Models > 0 then return f.Models end
+            --[[ Тот же порядок, что и при выдаче формы в мир (GRM.Positions):
+                     должность → подотдел → отдел → ранг → организация
+                 Раньше здесь был СВОЙ порядок без подотдела, и превью в меню
+                 персонажа расходилось с тем, во что игрока реально одевали. ]]
+            if GRM.Positions and GRM.Positions.ResolveLoadout then
+                local list = GRM.Positions.ResolveLoadout(f, member, "models")
+                if istable(list) and #list > 0 then return list end
+            else
+                local role, department = member.Role, member.Department
+                local sub = tostring(member.Subdepartment or member.Subdept or "")
+                if sub ~= "" and istable(f.Subdepartments) and istable(f.Subdepartments[sub])
+                    and istable(f.Subdepartments[sub].models) and #f.Subdepartments[sub].models > 0 then
+                    return f.Subdepartments[sub].models
+                end
+                if department and istable(f.DepartmentModels) and istable(f.DepartmentModels[department]) and #f.DepartmentModels[department] > 0 then return f.DepartmentModels[department] end
+                if role and istable(f.RoleModels) and istable(f.RoleModels[role]) and #f.RoleModels[role] > 0 then return f.RoleModels[role] end
+                if istable(f.Models) and #f.Models > 0 then return f.Models end
+            end
         end
         return istable(DefaultModels) and DefaultModels or {}
     end
@@ -979,6 +993,9 @@ if SERVER then
             factionRole = member and tostring(member.Role or "") or "",
             factionDepartment = member and tostring(member.Department or "") or "",
             factionSubdepartment = member and tostring(member.Subdepartment or member.Subdept or "") or "",
+            -- Должность нужна правилам бодигрупп: у начальника отдела своя
+            -- форма и свои разрешённые части, у рядового того же отдела — свои.
+            factionPosition = member and tostring(member.Position or "") or "",
             onDuty = onDuty,
         }
     end
@@ -2279,6 +2296,7 @@ if CLIENT then
                     dept = payload.factionDepartment or "",
                     sub = payload.factionSubdepartment or "",
                     role = payload.factionRole or "",
+                    position = payload.factionPosition or "",
                 }) or {}
             end
             -- Значения, закреплённые правилами, применяем к черновику сразу:

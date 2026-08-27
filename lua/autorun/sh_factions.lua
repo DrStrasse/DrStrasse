@@ -453,7 +453,7 @@ if SERVER then
                     -- Номер персонажа в госреестре: по нему кадровик и /pcboard
                     -- находят человека, не зная SteamID.
                     _cid = (GRM.Registry and GRM.Registry.CID and GRM.Registry.CID(key)) or "",
-                    Role=rec.Role,Department=rec.Department,Subdepartment=tostring(rec.Subdepartment or rec.Subdept or""),Personnel=rec.Personnel and{joinedAt=rec.Personnel.joinedAt,status=rec.Personnel.status,probationUntil=rec.Personnel.probationUntil}or nil,
+                    Role=rec.Role,Department=rec.Department,Subdepartment=tostring(rec.Subdepartment or rec.Subdept or""),Position=tostring(rec.Position or""),Personnel=rec.Personnel and{joinedAt=rec.Personnel.joinedAt,status=rec.Personnel.status,probationUntil=rec.Personnel.probationUntil}or nil,
                     _characterKey = key, _rpName = rp, _online = online, _steamNick = steamNick,
                     _dutyStatus=dutyStatus, _location=location,
                 }
@@ -557,6 +557,11 @@ if SERVER then
                     -- v3.1.1: зеркалируем доступ-модели/оружие/госновости для
                     -- вкладки «Расширенные настройки» (синк с /models_admin,
                     -- /weapons_admin, setGNewsAccess — те же серверные поля)
+                    -- Должности организации (GRM.Positions): клиенту нужны
+                    -- и сами должности, и их наборы моделей/оружия.
+                    Positions        = f.Positions,
+                    PositionModels   = f.PositionModels,
+                    PositionWeapons  = f.PositionWeapons,
                     Models           = f.Models,
                     RoleModels       = f.RoleModels,
                     DepartmentModels = f.DepartmentModels,
