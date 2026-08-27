@@ -447,6 +447,16 @@ if SERVER then
                 factions[#factions + 1] = row
             end
         end
+        --[[ Модель могли убрать из фракции ПОСЛЕ того, как для неё завели
+             правило. Тогда её не было ни в одном списке: правило продолжало
+             действовать на игроков, а открыть и снять его в редакторе было
+             негде — со стороны это выглядело как «структура багается».
+             Поэтому любая модель с правилами всегда попадает в список. ]]
+        for key in pairs(BG.Rules or {}) do
+            local path = tostring(string.Explode("|", key)[1] or "")
+            if path ~= "" then addModel(path, "есть правила") end
+        end
+
         table.sort(factions, function(a, b) return string.lower(a.display) < string.lower(b.display) end)
         table.sort(models, function(a, b) return a.path < b.path end)
 
@@ -491,7 +501,12 @@ if SERVER then
                 dept = payload.dept, role = payload.role, ok = ok })
         end
         ply:PrintMessage(HUD_PRINTTALK, "[Бодигруппы] " .. tostring(msg))
-        BG.OpenEditor(ply)
+        --[[ Раньше здесь заново открывался ВЕСЬ редактор. Окно уничтожалось
+             и создавалось с нуля, поэтому после каждого сохранения или
+             удаления правила сбрасывались выбранная организация, отдел,
+             должность и модель — админ каждый раз возвращался в начало.
+             Правила уже разосланы через BG.Sync внутри SetRule/DeleteRule,
+             и клиент обновит списки на месте, не трогая выбор. ]]
     end)
 
     concommand.Add("grm_bodygroups_admin", function(ply) BG.OpenEditor(ply) end)
@@ -526,6 +541,15 @@ if CLIENT then
         local txt = util.Decompress(data, rawLen + 64) or ""
         local ok, t = pcall(util.JSONToTable, txt, false, true)
         BG.Rules = BG.UpgradeRules((ok and istable(t)) and t or {})
+        --[[ Редактор открыт — обновляем его СОДЕРЖИМОЕ, не трогая окно и
+             выбранную область. Это и есть замена прежнему пересозданию. ]]
+        if BG._editorRefresh then
+            local okRefresh, err = pcall(BG._editorRefresh)
+            if not okRefresh then
+                BG._editorRefresh = nil
+                ErrorNoHalt("[GRM Bodygroups] обновление редактора: " .. tostring(err) .. "\n")
+            end
+        end
         hook.Run("GRM_BodygroupRulesSynced")
     end)
 
@@ -743,30 +767,48 @@ if CLIENT then
             end
         end
 
+        --[[ Модель в DModelPanel появляется НЕ мгновенно: сразу после
+             SetModel список бодигрупп ещё пуст, и правая колонка писала
+             «нет настраиваемых частей» — выглядело как «модель не
+             назначается». Одной проверки через 0.05 с не хватало на тяжёлых
+             моделях. Теперь ждём появления частей несколькими попытками и
+             прекращаем, как только модель прочиталась. ]]
+        local modelToken = 0
+        local function awaitModel(token, tries)
+            if not IsValid(f) or token ~= modelToken then return end
+            scanModel()
+            applyPreviewRules()
+            rebuildGroups()
+            local ent = IsValid(preview) and preview:GetEntity() or nil
+            local ready = IsValid(ent) and (ent:GetNumBodyGroups() or 0) > 0
+            if ready or tries <= 0 then return end
+            timer.Simple(0.1, function() awaitModel(token, tries - 1) end)
+        end
+
+        local function frameCamera()
+            local ent = IsValid(preview) and preview:GetEntity() or nil
+            if not IsValid(ent) then return end
+            local mn, mx = ent:GetRenderBounds()
+            local mid = (mn + mx) * 0.5
+            local hgt = math.max(16, mx.z - mn.z)
+            local dist = (hgt * 0.55) / math.tan(math.rad(17))
+            preview:SetLookAt(Vector(0, 0, mid.z))
+            preview:SetCamPos(Vector(dist, dist * 0.2, mid.z + hgt * 0.05))
+        end
+
         local function setModel(path)
             sel.model = low(path)
             draftGroups = {}
+            modelToken = modelToken + 1
             preview:SetModel(sel.model)
-            local ent = preview:GetEntity()
-            if IsValid(ent) then
-                local mn, mx = ent:GetRenderBounds()
-                local mid = (mn + mx) * 0.5
-                local hgt = math.max(16, mx.z - mn.z)
-                local dist = (hgt * 0.55) / math.tan(math.rad(17))
-                preview:SetLookAt(Vector(0, 0, mid.z))
-                preview:SetCamPos(Vector(dist, dist * 0.2, mid.z + hgt * 0.05))
-            end
+            frameCamera()
             previewNote:SetText(sel.model)
-            timer.Simple(0.05, function()
-                if not IsValid(f) then return end
-                scanModel()
-                applyPreviewRules()
-                rebuildGroups()
-            end)
             scanModel()
             rebuildGroups()
             rebuildSaved()
             rebuildModels()
+            -- до 12 попыток (~1.2 с): хватает и тяжёлым моделям
+            awaitModel(modelToken, 12)
         end
 
         local function scopeText()
@@ -953,8 +995,22 @@ if CLIENT then
             end
 
             if facRow and #facRow.models > 0 then
+                local listed = {}
                 for _, path in ipairs(facRow.models) do
+                    listed[path] = true
                     add(path, BG.HasAnyRule(path) and "правила" or "", BG.HasAnyRule(path))
+                end
+                --[[ Модель убрали из организации, а правило для неё осталось.
+                     Показываем её здесь же, иначе снять правило можно было бы
+                     только через «Все организации» — и админ его не находил. ]]
+                local orphan = {}
+                for key in pairs(BG.Rules or {}) do
+                    local parts = string.Explode("|", key)
+                    local path, fac = tostring(parts[1] or ""), tostring(parts[2] or "")
+                    if path ~= "" and not listed[path] and fac == sel.faction and not orphan[path] then
+                        orphan[path] = true
+                        add(path, "правило вне списка", true)
+                    end
                 end
             else
                 for _, row in ipairs(models) do
@@ -1056,6 +1112,26 @@ if CLIENT then
         f._grmRestore = function()
             return { faction = sel.faction, dept = sel.dept, role = sel.role,
                 position = sel.position, model = sel.model }
+        end
+
+        --[[ Точечное обновление после ответа сервера: перерисовываем только
+             списки, выбранная область и модель остаются на месте. Именно это
+             заменило пересоздание окна после каждой правки. ]]
+        BG._editorRefresh = function()
+            if not IsValid(f) then BG._editorRefresh = nil return end
+            draftGroups = {}
+            rebuildSaved()
+            rebuildModels()
+            applyPreviewRules()
+            rebuildGroups()
+        end
+        --[[ GRM.UI.Track тоже вешает OnRemove (снимает окно с учёта живых
+             окон). Затирать его нельзя — цепляемся следом за ним. ]]
+        local prevOnRemove = f.OnRemove
+        f.OnRemove = function(self)
+            if prevOnRemove then pcall(prevOnRemove, self) end
+            BG._editorRefresh = nil
+            if editor == self then editor = nil end
         end
     end
 
