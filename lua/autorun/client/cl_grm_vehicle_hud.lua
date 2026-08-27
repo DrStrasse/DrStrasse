@@ -33,10 +33,19 @@ surface.CreateFont("GRMVeh_Mid", { font = "Roboto", size = 15, weight = 700, ext
 surface.CreateFont("GRMVeh_Sm", { font = "Roboto", size = 12, weight = 600, extended = true })
 surface.CreateFont("GRMVeh_Seat", { font = "Roboto", size = 13, weight = 600, extended = true })
 
+--[[ Корневой транспорт сиденья. Возвращает nil для обычного стула:
+     раньше фолбэк отдавал сам стул, и приборник simfphys рисовался при
+     посадке в любое кресло (находка 27.08). ]]
 local function rootVeh(ent)
     if GRM.Fuel and GRM.Fuel.RootVehicle then return GRM.Fuel.RootVehicle(ent) end
-    if IsValid(ent) and IsValid(ent:GetParent()) then return ent:GetParent() end
-    return ent
+    if not IsValid(ent) then return nil end
+    local parent = ent:GetParent()
+    if IsValid(parent) then return parent end
+    -- Без модуля топлива опознаём транспорт по явным признакам баз.
+    if ent.IsSimfphysCar or ent.LVS or ent.IsLVSVehicle or ent.IsGlideVehicle then return ent end
+    local cls = string.lower(ent:GetClass() or "")
+    if cls == "prop_vehicle_jeep" or cls == "prop_vehicle_airboat" then return ent end
+    return nil
 end
 
 local function lerpCol(a, b, t)

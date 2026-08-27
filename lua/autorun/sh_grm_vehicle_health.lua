@@ -11,13 +11,17 @@ H.RepairPrice = 45
 H.WrenchPerSec = 12
 H.WrenchPrice = 8
 
+--[[ Корень транспорта. Для обычного стула возвращает nil: прежний фолбэк
+     отдавал сам стул, и модуль принимал кресло за автомобиль. ]]
 local function root(ent)
     if GRM.Fuel and GRM.Fuel.RootVehicle then return GRM.Fuel.RootVehicle(ent) end
-    if IsValid(ent) and ent.GetParent then
-        local p = ent:GetParent()
-        if IsValid(p) then return p end
-    end
-    return ent
+    if not (IsValid(ent) and ent.GetParent) then return nil end
+    local p = ent:GetParent()
+    if IsValid(p) then return p end
+    if ent.IsSimfphysCar or ent.LVS or ent.IsLVSVehicle or ent.IsGlideVehicle then return ent end
+    local cls = string.lower(ent:GetClass() or "")
+    if cls == "prop_vehicle_jeep" or cls == "prop_vehicle_airboat" then return ent end
+    return nil
 end
 
 local function isVeh(ent)

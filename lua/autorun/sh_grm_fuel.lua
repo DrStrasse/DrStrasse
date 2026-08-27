@@ -21,20 +21,58 @@ function F.UID(ent)
     return ""
 end
 
+--[[ НАСТОЯЩИЙ ЛИ ЭТО ТРАНСПОРТ (находка 27.08).
+
+     Симптом: игрок садится в обычный стул или кресло — и получает полный
+     приборник simfphys: скорость, бак, «Не заводится: поломана».
+
+     Причина: в GMod сиденье это тоже vehicle (prop_vehicle_prisoner_pod),
+     поэтому ply:InVehicle() и ent:IsVehicle() для стула возвращают true.
+     RootVehicle, не найдя родителя-машины, возвращал САМ СТУЛ — и все
+     модули дальше работали с ним как с автомобилем.
+
+     Стул отличается от машины тем, что он одиночный: у него нет ни
+     признаков simfphys/LVS, ни родителя-транспорта. ]]
+function F.IsRealVehicle(ent)
+    if not IsValid(ent) then return false end
+    if ent.IsSimfphysCar or ent.Simfphys or ent.IsSimfphys then return true end
+    if ent.LVS or ent.IsLVSVehicle or ent.IsLFSVehicle or ent.LFS then return true end
+    if ent.IsGlideVehicle or ent.VD_ID then return true end
+
+    local cls = string.lower(ent:GetClass() or "")
+    if string.find(cls, "^simfphys_") or string.find(cls, "^gcx_")
+        or string.find(cls, "^gmod_sent_vehicle_fphysics")
+        or string.find(cls, "^lvs_") or string.find(cls, "^lfs_")
+        or string.find(cls, "^lunasflightschool_") then
+        return true
+    end
+
+    --[[ Ванильные машины (jeep, airboat) — настоящий транспорт.
+         А вот prop_vehicle_prisoner_pod сам по себе — это стул: машиной он
+         считается только когда прицеплен к корпусу simfphys/LVS. ]]
+    if cls == "prop_vehicle_jeep" or cls == "prop_vehicle_airboat" then return true end
+    return false
+end
+
+--- Корневой транспорт сиденья. nil, если это просто стул.
 function F.RootVehicle(ent)
     if not IsValid(ent) then return nil end
-    if IsValid(ent.GetParent and ent:GetParent()) then
-        local p = ent:GetParent()
+
+    local parent = ent.GetParent and ent:GetParent()
+    if IsValid(parent) then
         local VK = GRM.VehicleKeys or _G.VK
-        if VK and VK.IsVehicle and VK.IsVehicle(p) then return p end
-        if p.IsSimfphysCar or p.LVS or p.IsLVSVehicle then return p end
+        if VK and VK.IsVehicle and VK.IsVehicle(parent) then return parent end
+        if F.IsRealVehicle(parent) then return parent end
     end
     for _, name in ipairs({ "BaseVehicle", "SimfphysVehicle", "LVS", "Vehicle" }) do
         local b = ent.GetNWEntity and ent:GetNWEntity(name)
         if IsValid(b) then return b end
         if IsValid(ent[name]) then return ent[name] end
     end
-    return ent
+
+    -- Сам объект — транспорт только если он им действительно является.
+    if F.IsRealVehicle(ent) then return ent end
+    return nil
 end
 
 function F.GuessType(ent)
