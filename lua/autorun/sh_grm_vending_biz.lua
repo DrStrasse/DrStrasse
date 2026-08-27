@@ -85,6 +85,12 @@ function VB.Claim(ply, ent)
     if cur ~= "" and cur ~= keyOf(ply) and not ply:IsSuperAdmin() then
         return false, "Автомат уже принадлежит другому"
     end
+    --[[ Правило владельца: одиночная точка выкупается лично, а точка
+         внутри бизнес-зоны или в скоплении — только через бизнес. ]]
+    if GRM.Estate and GRM.Estate.CanOwnStandalone and cur == "" and not ply:IsSuperAdmin() then
+        local can, why = GRM.Estate.CanOwnStandalone(ent)
+        if not can then return false, tostring(why or "Нужна бизнес-зона") end
+    end
     local price = VB.BuyPrice
     if cur == "" then
         if GRM.HasMoney and not GRM.HasMoney(ply, price) then
@@ -101,6 +107,18 @@ function VB.Claim(ply, ent)
 end
 
 function VB.Withdraw(ply, ent)
+    --[[ Автомат внутри оформленной бизнес-зоны принадлежит бизнесу: его
+         касса снимается через окно бизнеса. Иначе прежний владелец
+         автомата обходил бы владельца зоны и забирал выручку себе. ]]
+    if GRM.Estate and GRM.Estate.ZoneAt and IsValid(ent) then
+        local zone = GRM.Estate.ZoneAt(ent:GetPos())
+        if zone and GRM.Estate.IsBusiness(zone) then
+            if not (GRM.Estate.IsOwner(ply, zone) or (IsValid(ply) and ply:IsSuperAdmin())) then
+                return false, "Автомат принадлежит бизнесу «" .. tostring(zone.name or "") .. "»"
+            end
+            return GRM.Estate.Collect(ply, zone)
+        end
+    end
     if not VB.IsOwner(ply, ent) then return false, "Это не ваш автомат" end
     local cash = VB.GetCash(ent)
     if cash <= 0 then return false, "Касса пуста" end

@@ -443,6 +443,18 @@ if SERVER then
     end
 
     function F.Withdraw(ply, pump)
+        --[[ Колонка внутри бизнес-зоны принадлежит бизнесу: касса
+             снимается через окно бизнеса вместе с остальными точками.
+             Иначе прежний владелец колонки обходил бы владельца зоны. ]]
+        if GRM.Estate and GRM.Estate.ZoneAt and IsValid(pump) then
+            local zone = GRM.Estate.ZoneAt(pump:GetPos())
+            if zone and GRM.Estate.IsBusiness(zone) then
+                if not (GRM.Estate.IsOwner(ply, zone) or (IsValid(ply) and ply:IsSuperAdmin())) then
+                    return false, "Колонка принадлежит бизнесу «" .. tostring(zone.name or "") .. "»"
+                end
+                return GRM.Estate.Collect(ply, zone)
+            end
+        end
         if not F.IsOwner(ply, pump) then return false, "Это не ваша колонка" end
         local sid = pump:GetStationID()
         local sum = 0

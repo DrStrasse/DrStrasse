@@ -362,6 +362,166 @@ if SERVER then
     end)
 
     -----------------------------------------------------------------
+    -- ОБЩАЯ КАССА БИЗНЕСА (фаза 4)
+    -----------------------------------------------------------------
+    --[[ Раньше касса была у каждого автомата и каждой колонки своя: чтобы
+         собрать выручку сети, владелец обходил все точки. Теперь бизнес —
+         одна касса: деньги точек внутри зоны снимаются разом.
+
+         Сами точки продолжают копить выручку как раньше (их модули не
+         переписываем), а бизнес просто собирает её из них. ]]
+
+    --- Сколько лежит в точках бизнеса прямо сейчас.
+    function ES.CashInZone(rec)
+        local scan = ES.ScanCached(rec, 2)
+        local total = 0
+        for _, ent in ipairs(scan.entities) do
+            if IsValid(ent) then
+                local cls = ent:GetClass()
+                if cls == "grm_vending_machine" and GRM.VendingBiz and GRM.VendingBiz.GetCash then
+                    total = total + (GRM.VendingBiz.GetCash(ent) or 0)
+                elseif cls == "grm_fuel_pump" and ent.GetCash then
+                    total = total + (tonumber(ent:GetCash()) or 0)
+                end
+            end
+        end
+        return math.max(0, math.floor(total))
+    end
+
+    --- Итоги бизнеса за всё время: продано штук и заработано.
+    function ES.StatsInZone(rec)
+        local scan = ES.ScanCached(rec, 5)
+        local sold, earned = 0, 0
+        for _, ent in ipairs(scan.entities) do
+            if IsValid(ent) and GRM.VendingBiz and GRM.VendingBiz.GetStats then
+                local s, e = GRM.VendingBiz.GetStats(ent)
+                sold = sold + (s or 0)
+                earned = earned + (e or 0)
+            end
+        end
+        return sold, earned
+    end
+
+    --- Владелец ли игрок этого объекта.
+    function ES.IsOwner(ply, rec)
+        if not (IsValid(ply) and istable(rec)) then return false end
+        if tostring(rec.ownerType or "none") ~= "character" then return false end
+        local key = (GRM.Identity and GRM.Identity.CharacterKey
+            and GRM.Identity.CharacterKey(ply)) or ply:SteamID64()
+        return tostring(rec.ownerKey or "") == tostring(key or "")
+    end
+
+    --[[ Снять кассу бизнеса. Долг по коммуналке гасится ПЕРВЫМ: иначе
+         владелец копил бы пеню и снимал выручку мимо неё. ]]
+    function ES.Collect(ply, rec)
+        if not (IsValid(ply) and istable(rec)) then return false, "Нет объекта" end
+        if not (ES.IsOwner(ply, rec) or ply:IsSuperAdmin()) then
+            return false, "Это не ваш объект"
+        end
+        if not ES.IsBusiness(rec) then return false, "Жильё выручки не приносит" end
+
+        ES.InvalidateScan(rec)
+        local scan = ES.ScanZone(rec)
+        local total = 0
+        for _, ent in ipairs(scan.entities) do
+            if IsValid(ent) then
+                local cls = ent:GetClass()
+                if cls == "grm_vending_machine" and GRM.VendingBiz then
+                    local cash = GRM.VendingBiz.GetCash and GRM.VendingBiz.GetCash(ent) or 0
+                    if cash > 0 then
+                        total = total + cash
+                        GRM.VendingBiz.SetCash(ent, 0)
+                    end
+                elseif cls == "grm_fuel_pump" and ent.GetCash and ent.SetCash then
+                    local cash = tonumber(ent:GetCash()) or 0
+                    if cash > 0 then
+                        total = total + math.floor(cash)
+                        ent:SetCash(0)
+                    end
+                end
+            end
+        end
+        if total <= 0 then return false, "Касса пуста" end
+
+        -- Сначала долг, остаток — владельцу.
+        local debt = math.max(0, math.floor(tonumber(rec.utilityDebt) or 0))
+        local paid = 0
+        if debt > 0 then
+            paid = math.min(debt, total)
+            rec.utilityDebt = debt - paid
+            total = total - paid
+            if rec.utilityDebt == 0 then rec.estatePenalty = 0 end
+        end
+
+        if total > 0 and GRM.GiveMoney then
+            GRM.GiveMoney(ply, total, "касса бизнеса «" .. tostring(rec.name or "") .. "»")
+        end
+        local P = GRM.Property
+        if P and P.Save then pcall(P.Save, "estate-collect") end
+        if GRM.VendingBiz and GRM.VendingBiz.Persist then pcall(GRM.VendingBiz.Persist, true) end
+        if GRM.Fuel and GRM.Fuel.SavePumps then pcall(GRM.Fuel.SavePumps) end
+        hook.Run("GRM_EstateCollected", ply, rec, total, paid)
+
+        if paid > 0 and total > 0 then
+            return true, ("Снято %d GRM · погашен долг %d GRM"):format(total, paid)
+        elseif paid > 0 then
+            return true, ("Вся выручка (%d GRM) ушла на погашение долга"):format(paid)
+        end
+        return true, "Снято " .. total .. " GRM"
+    end
+
+    --[[ Доход за сутки. Считаем по накопленной выручке точек и возрасту
+         объекта: точной статистики по времени пока не ведём, но владельцу
+         нужен порядок цифры, а не бухгалтерия. ]]
+    function ES.DailyEstimate(rec)
+        local _, earned = ES.StatsInZone(rec)
+        if earned <= 0 then return 0 end
+        local since = math.max(1, os.time() - (tonumber(rec.estateSince) or os.time()))
+        local days = math.max(1, since / 86400)
+        return math.floor(earned / days)
+    end
+
+    --- Сводка по объекту для интерфейсов.
+    function ES.Summary(rec)
+        local kind = ES.KindOf(rec)
+        local sold, earned = 0, 0
+        local cash = 0
+        if kind == "business" then
+            sold, earned = ES.StatsInZone(rec)
+            cash = ES.CashInZone(rec)
+        end
+        return {
+            id = tostring(rec.id or ""),
+            name = tostring(rec.name or ""),
+            kind = kind,
+            vacant = ES.IsVacant(rec),
+            owner = tostring(rec.ownerName or ""),
+            cash = cash,
+            sold = sold,
+            earned = earned,
+            daily = kind == "business" and ES.DailyEstimate(rec) or 0,
+            debt = math.max(0, math.floor(tonumber(rec.utilityDebt) or 0)),
+            penalty = math.max(0, math.floor(tonumber(rec.estatePenalty) or 0)),
+            equipment = kind == "business" and ES.ScanCached(rec, 10).total or 0,
+            summary = kind == "business" and ES.EquipmentSummary(rec) or "",
+            area = ES.ZoneArea(rec),
+            price = math.max(0, math.floor(tonumber(rec.purchasePrice) or 0)),
+        }
+    end
+
+    --[[ Отметка начала владения: от неё считается средний доход в сутки.
+         Ставится при смене владельца, чтобы прошлые продажи не искажали
+         статистику нового хозяина. ]]
+    hook.Add("GRM_PropertyOwnerChanged", "GRM_Estate_OwnStamp", function(rec, act)
+        if not istable(rec) then return end
+        if act == "buy" or act == "rent" or act == "admin_update" then
+            rec.estateSince = os.time()
+        elseif act == "release" or act == "evict" or act == "rent_expired" then
+            rec.estateSince = nil
+        end
+    end)
+
+    -----------------------------------------------------------------
     -- ТУЛ «GRM: БИЗНЕС-ЗОНА» (фаза 3)
     -----------------------------------------------------------------
     --[[ Тул выделяет зону прямо на месте и сразу показывает, что внутри.
@@ -498,6 +658,84 @@ if SERVER then
         end
         return false, "Здесь нет зоны"
     end
+
+    -----------------------------------------------------------------
+    -- ОКНО БИЗНЕСА: подход к зоне и снятие кассы
+    -----------------------------------------------------------------
+    local NET_PANEL = "GRM_Estate_Panel"
+    local NET_ACT   = "GRM_Estate_Act"
+    util.AddNetworkString(NET_PANEL)
+    util.AddNetworkString(NET_ACT)
+
+    --- Объект, в зоне которого стоит игрок.
+    function ES.ZoneOfPlayer(ply)
+        if not IsValid(ply) then return nil end
+        return ES.ZoneAt(ply:GetPos())
+    end
+
+    function ES.OpenPanel(ply, rec)
+        if not (IsValid(ply) and istable(rec)) then return false end
+        local data = ES.Summary(rec)
+        data.isOwner = ES.IsOwner(ply, rec) or ply:IsSuperAdmin()
+        data.limit = ES.Limit()
+        data.owned = ES.CountOwned((GRM.Identity and GRM.Identity.CharacterKey
+            and GRM.Identity.CharacterKey(ply)) or ply:SteamID64())
+        net.Start(NET_PANEL)
+            net.WriteTable(data)
+        net.Send(ply)
+        return true
+    end
+
+    net.Receive(NET_ACT, function(_, ply)
+        if not IsValid(ply) then return end
+        if GRM.Net and GRM.Net.Guard
+            and not GRM.Net.Guard(ply, "estate.act", { rate = 0.4, burst = 3 }, {}) then return end
+        local action = net.ReadString()
+        local id = net.ReadString()
+        local P = GRM.Property
+        local rec = P and istable(P.Records) and P.Records[id]
+        if not istable(rec) then return end
+        -- Все действия только вблизи объекта: управлять бизнесом издалека нельзя.
+        if not ply:IsSuperAdmin() and not ES.PointInZone(rec, ply:GetPos()) then
+            if GRM.Notify then GRM.Notify(ply, "Подойдите к объекту", 255, 160, 90) end
+            return
+        end
+
+        local ok, msg = false, "Неизвестное действие"
+        if action == "collect" then
+            ok, msg = ES.Collect(ply, rec)
+        elseif action == "refresh" then
+            ES.InvalidateScan(rec)
+            ok, msg = true, nil
+        end
+        if msg and GRM.Notify then
+            GRM.Notify(ply, tostring(msg), ok and 100 or 255, ok and 215 or 150, ok and 125 or 110)
+        end
+        ES.OpenPanel(ply, rec)
+    end)
+
+    --- Открыть окно объекта, в зоне которого стоит игрок.
+    concommand.Add("grm_business", function(ply)
+        if not IsValid(ply) then return end
+        local rec = ES.ZoneOfPlayer(ply)
+        if not rec or ES.KindOf(rec) == "none" then
+            if GRM.Notify then GRM.Notify(ply, "Вы не внутри бизнес-зоны или жилья", 255, 170, 90) end
+            return
+        end
+        ES.OpenPanel(ply, rec)
+    end)
+
+    hook.Add("PlayerSay", "GRM_Estate_Chat", function(ply, text)
+        local low = string.lower(string.Trim(tostring(text or "")))
+        if low == "/business" or low == "/бизнес" then
+            local rec = ES.ZoneOfPlayer(ply)
+            if rec and ES.KindOf(rec) ~= "none" then ES.OpenPanel(ply, rec)
+            elseif GRM.Notify then
+                GRM.Notify(ply, "Вы не внутри бизнес-зоны или жилья", 255, 170, 90)
+            end
+            return ""
+        end
+    end)
 
     --- Диагностика: grm_estate
     concommand.Add("grm_estate", function(ply)
@@ -645,6 +883,133 @@ if CLIENT then
                         Color(210, 220, 232), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 200))
                 end
             end
+        end
+    end)
+
+    -----------------------------------------------------------------
+    -- ОКНО ОБЪЕКТА: касса, доход, долг
+    -----------------------------------------------------------------
+    surface.CreateFont("GRMEstate_Head",  { font = "Roboto", size = 21, weight = 800, extended = true, antialias = true })
+    surface.CreateFont("GRMEstate_Val",   { font = "Roboto", size = 26, weight = 800, extended = true, antialias = true })
+    surface.CreateFont("GRMEstate_Row",   { font = "Roboto", size = 14, weight = 500, extended = true, antialias = true })
+
+    local UI = {
+        bg     = Color(18, 23, 32, 250),
+        panel  = Color(30, 38, 51, 245),
+        gold   = Color(245, 200, 60),
+        green  = Color(70, 200, 120),
+        red    = Color(215, 85, 75),
+        text   = Color(238, 243, 250),
+        dim    = Color(155, 168, 186),
+    }
+
+    local panelFrame
+
+    local function estateButton(parent, text, col, w, h)
+        local b = vgui.Create("DButton", parent)
+        b:SetText("")
+        if w and h then b:SetSize(w, h) end
+        b.Paint = function(self, pw, ph)
+            local c = col
+            if not self:IsEnabled() then c = Color(70, 78, 92)
+            elseif self:IsHovered() then
+                c = Color(math.min(255, col.r + 26), math.min(255, col.g + 26), math.min(255, col.b + 26))
+            end
+            draw.RoundedBox(6, 0, 0, pw, ph, c)
+            draw.SimpleText(text, "GRMEstate_Row", pw / 2, ph / 2, color_white,
+                TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+        return b
+    end
+
+    net.Receive("GRM_Estate_Panel", function()
+        local d = net.ReadTable() or {}
+        if IsValid(panelFrame) then panelFrame:Remove() end
+
+        local isBiz = d.kind == "business"
+        local h = isBiz and 400 or 250
+        local f = vgui.Create("DFrame")
+        panelFrame = f
+        f:SetSize(460, h) f:Center() f:MakePopup() f:SetTitle("") f:ShowCloseButton(false)
+        if GRM.UI and GRM.UI.Track then GRM.UI.Track("estate.panel", f) end
+        f.Paint = function(_, w, hh)
+            draw.RoundedBox(10, 0, 0, w, hh, UI.bg)
+            draw.RoundedBoxEx(10, 0, 0, w, 56, UI.panel, true, true, false, false)
+            local col = isBiz and UI.gold or UI.green
+            draw.SimpleText(tostring(d.name or ""), "GRMEstate_Head", 20, 16, col)
+            local sub = (isBiz and "Бизнес" or "Жильё") .. "  ·  " .. tostring(d.area or 0) .. " м²"
+            if d.vacant then
+                sub = sub .. "  ·  СВОБОДНО"
+            elseif tostring(d.owner or "") ~= "" then
+                sub = sub .. "  ·  " .. d.owner
+            end
+            draw.SimpleText(sub, "GRMEstate_Row", 20, 38, UI.dim)
+        end
+
+        local close = estateButton(f, "ЗАКРЫТЬ", UI.red, 96, 26)
+        close:SetPos(348, 15)
+        close.DoClick = function() f:Remove() end
+
+        local y = 72
+        local function row(label, value, col)
+            local p = vgui.Create("DPanel", f)
+            p:SetPos(16, y) p:SetSize(428, 34)
+            p.Paint = function(_, w, hh)
+                draw.RoundedBox(6, 0, 0, w, hh, UI.panel)
+                draw.SimpleText(label, "GRMEstate_Row", 12, hh / 2, UI.dim,
+                    TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.SimpleText(value, "GRMEstate_Row", w - 12, hh / 2, col or UI.text,
+                    TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            end
+            y = y + 40
+        end
+
+        if isBiz then
+            -- Касса крупно: это главное, зачем сюда заходят.
+            local cashPnl = vgui.Create("DPanel", f)
+            cashPnl:SetPos(16, y) cashPnl:SetSize(428, 62)
+            cashPnl.Paint = function(_, w, hh)
+                draw.RoundedBox(6, 0, 0, w, hh, UI.panel)
+                draw.SimpleText("В КАССЕ", "GRMEstate_Row", 14, 12, UI.dim)
+                draw.SimpleText(tostring(d.cash or 0) .. " GRM", "GRMEstate_Val", 14, 30,
+                    (d.cash or 0) > 0 and UI.green or UI.dim)
+            end
+            y = y + 70
+
+            row("Оборудование", (d.equipment or 0) > 0 and tostring(d.summary) or "нет", UI.text)
+            row("Продано за всё время", tostring(d.sold or 0) .. " шт.", UI.text)
+            row("Заработано всего", tostring(d.earned or 0) .. " GRM", UI.text)
+            row("Примерно в сутки", tostring(d.daily or 0) .. " GRM", UI.text)
+            if (d.debt or 0) > 0 then
+                --[[ Долг показываем отдельно: при снятии он гасится первым,
+                     и владелец должен понимать, почему получил меньше. ]]
+                local extra = (d.penalty or 0) > 0 and ("  (пеня " .. d.penalty .. ")") or ""
+                row("Долг по коммунальным", tostring(d.debt) .. " GRM" .. extra, UI.red)
+            end
+        else
+            row("Площадь", tostring(d.area or 0) .. " м²", UI.text)
+            row("Точка входа", "доступна при заходе в игру", UI.green)
+            if (d.debt or 0) > 0 then
+                row("Долг по коммунальным", tostring(d.debt) .. " GRM", UI.red)
+            end
+        end
+
+        if isBiz and d.isOwner then
+            local collect = estateButton(f, "СНЯТЬ КАССУ", UI.green, 428, 38)
+            collect:SetPos(16, h - 52)
+            collect:SetEnabled((d.cash or 0) > 0)
+            collect.DoClick = function()
+                net.Start("GRM_Estate_Act")
+                    net.WriteString("collect")
+                    net.WriteString(tostring(d.id or ""))
+                net.SendToServer()
+            end
+        elseif d.vacant then
+            local hint = vgui.Create("DLabel", f)
+            hint:SetPos(16, h - 46) hint:SetSize(428, 32)
+            hint:SetFont("GRMEstate_Row") hint:SetTextColor(UI.dim) hint:SetWrap(true)
+            hint:SetText("Объект свободен. Цена: " .. tostring(d.price or 0)
+                .. " GRM. Покупка — через администрацию.")
         end
     end)
 
