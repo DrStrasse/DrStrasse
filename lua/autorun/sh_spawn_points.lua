@@ -707,7 +707,15 @@ if SERVER then
         return true, pos, ang
     end
 
+    --[[ БАГ (жалоба владельца 27.08): «почему когда персонаж не выбран,
+         он уже стоит на карте?». Виноват был именно этот хук: он ставил
+         на фракционную точку ЛЮБОГО заспавнившегося игрока, в том числе
+         сидящего в лимбе до выбора персонажа. Модуль персонажей уносил
+         его за карту, а мы тут же возвращали обратно.
+         Теперь пока персонаж не подтверждён — не трогаем игрока вообще,
+         его позицией управляет только лимб. ]]
     hook.Add("PlayerSpawn", "SpawnAtFactionPoint", function(ply)
+        if IsValid(ply) and GRM.Char and GRM.Char.IsPending and GRM.Char.IsPending(ply) then return end
         GRM_MovePlayerToSpawnPoint(ply)
     end)
 

@@ -497,13 +497,32 @@ if SERVER then
          /spawnmenu), иначе на общую. ]]
     CH.LimboPos = Vector(0, 0, 15500)
 
-    function CH.SendToLimbo(ply)
-        if not IsValid(ply) or ply.GRMCharLimbo then return end
+    --[[ Игрок ещё не подтвердил персонажа? Тогда он обязан быть в лимбе.
+         Отдельная публичная проверка нужна другим модулям (в первую
+         очередь sh_spawn_points), чтобы они НЕ трогали такого игрока. ]]
+    function CH.IsPending(ply)
+        if not IsValid(ply) then return false end
+        if ply.GRMCharConfirmed == true then return false end
+        return CH.PendingSelection[sid64(ply)] == true or ply.GRMCharLimbo == true
+    end
+
+    --[[ Удержание в лимбе — ДЕШЁВАЯ часть: только позиция и флаги.
+
+         БАГ (жалоба владельца 27.08: «персонаж не выбран, а он уже стоит
+         на карте»). Раньше SendToLimbo выходил по `if ply.GRMCharLimbo`,
+         то есть срабатывал РОВНО ОДИН РАЗ. А в том же PlayerSpawn после
+         нас отрабатывал хук SpawnAtFactionPoint (sh_spawn_points.lua),
+         который безусловно делал SetPos на фракционную точку. Игрок
+         оказывался физически на карте, а все страховочные вызовы
+         SendToLimbo молча ничего не делали — флаг-то уже стоял.
+         Теперь удержание идемпотентно: сколько раз позвали — столько раз
+         вернули за карту. ]]
+    function CH.EnforceLimbo(ply)
+        if not IsValid(ply) then return end
         ply.GRMCharLimbo = true
-        ply.GRMCharLimboWeapons = true
-        ply:StripWeapons()
-        ply:SetMoveType(MOVETYPE_NOCLIP)
+        if ply:GetMoveType() ~= MOVETYPE_NOCLIP then ply:SetMoveType(MOVETYPE_NOCLIP) end
         ply:SetPos(CH.LimboPos)
+        ply:SetVelocity(-ply:GetVelocity())
         ply:SetNoDraw(true)
         ply:DrawShadow(false)
         ply:SetNotSolid(true)
@@ -511,6 +530,36 @@ if SERVER then
         ply:GodEnable()
         ply:Freeze(true)
     end
+
+    function CH.SendToLimbo(ply)
+        if not IsValid(ply) then return end
+        -- Тяжёлое (снять оружие) делаем только при первом заходе в лимб,
+        -- дальше работает дешёвое удержание.
+        if ply.GRMCharLimbo ~= true then
+            ply.GRMCharLimboWeapons = true
+            ply:StripWeapons()
+        end
+        CH.EnforceLimbo(ply)
+    end
+
+    --[[ СТОРОЖ ЛИМБА. Позицию игрока двигает не только наш модуль:
+         точки спавна, фракции, админ-действия, сторонние аддоны. Ловить
+         каждый источник по отдельности бессмысленно — проще раз в
+         полсекунды проверить, что неподтверждённые игроки всё ещё за
+         картой, и вернуть отставших. Проход идёт только когда в лимбе
+         реально кто-то есть, поэтому на пустом сервере стоимость нулевая. ]]
+    CH.LimboGuardRadius = 512
+    timer.Create("GRM_Char_LimboGuard", 0.5, 0, function()
+        local list = (GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()
+        for _, ply in ipairs(list) do
+            if IsValid(ply) and CH.IsPending(ply) then
+                local d = ply:GetPos():DistToSqr(CH.LimboPos)
+                if d > CH.LimboGuardRadius * CH.LimboGuardRadius then
+                    CH.EnforceLimbo(ply)
+                end
+            end
+        end
+    end)
 
     --- Поставить игрока на его точку спавна (фракционную или общую).
     function CH.PlaceOnSpawnPoint(ply)

@@ -32,7 +32,7 @@ function Angle(p, y, r) return { p = p or 0, y = y or 0, r = r or 0 } end
 function ErrorNoHalt() end
 game = { GetMap = function() return "rp_city" end }
 hook = { Add = function() end, Run = function() end }
-timer = { Simple = function() end }
+timer = { Simple = function() end, Create = function() end, Remove = function() end }
 concommand = { Add = function() end }
 util = { AddNetworkString = function() end }
 file = { Exists = function() return false end, Read = function() return "" end, Write = function() end }
@@ -148,8 +148,12 @@ local inLimbo = mkPly({}) inLimbo.GRMCharLimbo = true
 ok(SP.CanRemember(inLimbo) == false, "игрок в лимбе не сохраняет позицию")
 ok(SP.CanRemember(mkPly({ nw = { GRM_CharacterPending = true } })) == false,
    "не выбравший персонажа тоже")
-ok(SP.CanRemember(mkPly({ inVehicle = true })) == false,
-   "в транспорте не сохраняем: появиться внутри машины нельзя")
+--[[ Поведение изменено 27.08 по жалобе владельца «где вышел не запоминает»:
+     раньше выход из игры в машине не сохранялся ВООБЩЕ, то есть вся поездка
+     пропадала. Теперь запоминаем позицию самой машины (SP.RememberPos),
+     а игрока ставим рядом на землю. ]]
+ok(SP.CanRemember(mkPly({ inVehicle = true })) == true,
+   "выход из игры в машине теперь запоминается (берём позицию машины)")
 ok(SP.CanRemember(mkPly({})) == true, "обычный игрок сохраняет нормально")
 
 print("\n=== 4. ЧУЖОЕ ЗАКРЫТОЕ ПОМЕЩЕНИЕ ===")

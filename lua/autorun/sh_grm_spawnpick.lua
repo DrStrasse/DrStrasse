@@ -82,16 +82,34 @@ if SERVER then
         SP.Data = {}
         if not file.Exists(SP.File, "DATA") then return end
         local t = jsonT(file.Read(SP.File, "DATA") or "")
-        if istable(t) then SP.Data = t end
+        if not istable(t) then return end
+        -- Протухшие записи не тянем в память: файл не должен расти вечно.
+        local now, kept = os.time(), {}
+        for key, rec in pairs(t) do
+            if istable(rec) and istable(rec.pos)
+                and (now - (tonumber(rec.at) or 0)) <= SP.LastLifetime then
+                kept[key] = rec
+            end
+        end
+        SP.Data = kept
     end
 
-    function SP.Save(reason)
+    --[[ БАГ (жалоба владельца 27.08): «где вышел — не запоминает».
+         Сохранение всегда шло через Coalesce с задержкой в секунду. На
+         выходе одного игрока это работало, а вот на ShutDown и смене
+         карты — нет: сервер умирал раньше, чем срабатывал отложенный
+         таймер, и весь накопленный список точек терялся.
+         Теперь есть режим immediate: критичные моменты (дисконнект,
+         выключение сервера, смена персонажа) пишут файл сразу, а частые
+         автоснимки позиции по-прежнему коалесцируются. ]]
+    function SP.Save(reason, immediate)
         local function write()
             local ok, txt = pcall(util.TableToJSON, SP.Data or {}, true)
             if ok and txt then file.Write(SP.File, txt)
             else ErrorNoHalt("[GRM SpawnPick] не удалось сохранить (" .. tostring(reason) .. ")\n") end
         end
-        if GRM.Perf and GRM.Perf.Coalesce then GRM.Perf.Coalesce("grm_spawnpick_save", 1, write)
+        if immediate == true then write() return end
+        if GRM.Perf and GRM.Perf.Coalesce then GRM.Perf.Coalesce("grm_spawnpick_save", 5, write)
         else write() end
     end
 
@@ -173,22 +191,41 @@ if SERVER then
         if ply.Alive and not ply:Alive() then return false end
         if ply:GetNWBool("GRM_Arrested", false) then return false end
         if ply:GetNWBool("GRM_CharacterPending", false) then return false end
-        if ply:InVehicle() then return false end
+        --[[ Раньше сидящий в машине игрок пропускался целиком — и вся
+             поездка не запоминалась. Но позиция машины это ровно то место,
+             где человек «вышел»; запоминаем её, просто ставим на землю. ]]
         return true
     end
 
-    function SP.Remember(ply)
-        if not SP.CanRemember(ply) then return end
+    --[[ Где именно стоит игрок для целей «где вышел». В транспорте берём
+         позицию самой машины и приподнимаем, чтобы не воткнуть в кузов. ]]
+    function SP.RememberPos(ply)
+        local pos = ply:GetPos()
+        if ply.InVehicle and ply:InVehicle() then
+            local veh = ply:GetVehicle()
+            if IsValid(veh) then
+                if GRM.Fuel and GRM.Fuel.RootVehicle then
+                    veh = GRM.Fuel.RootVehicle(veh) or veh
+                end
+                pos = veh:GetPos() + Vector(0, 0, 16)
+            end
+        end
+        return pos
+    end
+
+    function SP.Remember(ply, immediate)
+        if not SP.CanRemember(ply) then return false end
         local key = charKey(ply)
-        if key == "" then return end
-        local pos, ang = ply:GetPos(), ply:EyeAngles()
+        if key == "" then return false end
+        local pos, ang = SP.RememberPos(ply), ply:EyeAngles()
         SP.Data[key] = {
             pos = { x = pos.x, y = pos.y, z = pos.z },
             ang = { y = ang.y or 0 },
             at = os.time(),
             map = string.lower(game.GetMap() or ""),
         }
-        SP.Save("remember")
+        SP.Save("remember", immediate)
+        return true
     end
 
     --[[ Не даём вернуться в чужое закрытое помещение: игрок мог выйти
@@ -258,10 +295,26 @@ if SERVER then
         return true
     end
 
+    --[[ Кому экран выбора не положен вообще.
+
+         НАЙДЕНО ПРИ РАЗБОРЕ (смежный баг того же класса): арестованного
+         игрока модуль ареста ставит в камеру на спавне, а следом мы
+         предлагали ему «выберите точку входа» — и он спокойно уходил из
+         камеры домой или в штаб. Побег в один клик. ]]
+    function SP.Blocked(ply)
+        if not IsValid(ply) then return true end
+        if ply:GetNWBool("GRM_Arrested", false) then return true end
+        if ply:GetNWBool("GRM_911_Downed", false) then return true end
+        if ply:GetNWBool("GRM_CharacterPending", false) then return true end
+        if ply.GRMCharLimbo == true then return true end
+        return false
+    end
+
     --[[ Показать экран выбора. Возвращает true, если экран действительно
          нужен: при одном варианте выбирать нечего, ставим сразу. ]]
     function SP.Offer(ply)
         if not IsValid(ply) then return false end
+        if SP.Blocked(ply) then return false end
         local options = SP.Options(ply)
         if #options == 0 then return false end
         if #options == 1 then
@@ -278,6 +331,8 @@ if SERVER then
     net.Receive(SP.NET.PICK, function(_, ply)
         if not IsValid(ply) then return end
         if not ply.GRMSpawnPickPending then return end
+        -- Состояние могло измениться, пока экран висел (успели арестовать).
+        if SP.Blocked(ply) then ply.GRMSpawnPickPending = nil return end
         local kind = net.ReadString()
         -- Выбрать можно только реально доступный вариант.
         local allowed = false
@@ -300,9 +355,24 @@ if SERVER then
         end)
     end)
 
-    -- Запоминаем место выхода.
+    -- Запоминаем место выхода. Дисконнект — пишем на диск немедленно.
     hook.Add("PlayerDisconnected", "GRM_SpawnPick_Remember", function(ply)
-        SP.Remember(ply)
+        SP.Remember(ply, true)
+    end)
+
+    --[[ АВТОСНИМОК ПОЗИЦИИ.
+
+         Одного PlayerDisconnected мало: при падении сервера, вылете
+         игрока по таймауту или жёсткой смене карты хук может не успеть
+         отработать, и точка выхода теряется — ровно то, на что жаловался
+         владелец («где вышел — не запоминает»). Поэтому раз в 30 секунд
+         тихо запоминаем, где игрок сейчас. В худшем случае вернётся туда,
+         где был полминуты назад, а не «никуда». Запись на диск при этом
+         коалесцируется, так что на 30 игроков это один file.Write. ]]
+    SP.SnapshotInterval = 30
+    timer.Create("GRM_SpawnPick_Snapshot", SP.SnapshotInterval, 0, function()
+        local list = (GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()
+        for _, ply in ipairs(list) do SP.Remember(ply, false) end
     end)
     -- И при смене персонажа: у каждого своё место.
     hook.Add("GRM_CharacterChanged", "GRM_SpawnPick_RememberSwap", function(ply, oldKey)
@@ -315,11 +385,14 @@ if SERVER then
             at = os.time(),
             map = string.lower(game.GetMap() or ""),
         }
-        SP.Save("swap")
+        SP.Save("swap", true)
     end)
 
+    --[[ Выключение сервера: собираем всех и пишем ОДИН раз напрямую.
+         Отложенная запись здесь не работает — процесс уже умирает. ]]
     hook.Add("ShutDown", "GRM_SpawnPick_SaveAll", function()
-        for _, ply in ipairs(player.GetAll()) do SP.Remember(ply) end
+        for _, ply in ipairs(player.GetAll()) do SP.Remember(ply, false) end
+        SP.Save("shutdown", true)
     end)
 
     --- Диагностика: grm_spawnpick
