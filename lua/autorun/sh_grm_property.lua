@@ -35,6 +35,13 @@ function P.Normalize(r)
  if istable(r.housingSpawn) and tonumber(r.housingSpawn.x) then
   r.housingSpawn={x=tonumber(r.housingSpawn.x) or 0,y=tonumber(r.housingSpawn.y) or 0,z=tonumber(r.housingSpawn.z) or 0,yaw=tonumber(r.housingSpawn.yaw) or 0}
  else r.housingSpawn=nil end
+ --[[ Журнал входов в жильё (фаза 3): кто заходил не своим ключом.
+      Живёт в самом объекте, потому что нужен вместе с ним и должен
+      исчезать вместе с ним — отдельный файл пришлось бы чистить от
+      «сирот» после сноса квартир. _entrySeen НЕ сохраняем: это
+      сессионная защита от повторов при дёргании дверных полотен. ]]
+ r.entryLog=istable(r.entryLog) and r.entryLog or nil
+ r._entrySeen=nil
  return r
 end
 function P.CanAdmin(p)return IsValid(p)and(p:IsSuperAdmin()or(GRM.Access and GRM.Access.Can and GRM.Access.Can(p,"property.manage")==true))end
