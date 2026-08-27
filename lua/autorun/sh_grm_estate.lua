@@ -323,10 +323,16 @@ if SERVER then
                     kind = kind,
                     name = tostring(rec.name or ""),
                     pos = { x = center.x, y = center.y, z = center.z + ES.MarkerHeight },
-                    vacant = ES.IsVacant(rec),
+                    -- Выставленный на продажу объект выглядит как свободный:
+                    -- синий значок означает «можно купить».
+                    vacant = ES.IsVacant(rec) or istable(rec.estateSale),
+                    forSale = istable(rec.estateSale) and math.max(0,
+                        math.floor(tonumber(rec.estateSale.price) or 0)) or 0,
                     owner = tostring(rec.ownerName or ""),
                     equipment = kind == "business" and scan.total or 0,
-                    price = math.max(0, math.floor(tonumber(rec.purchasePrice) or 0)),
+                    price = istable(rec.estateSale)
+                        and math.max(0, math.floor(tonumber(rec.estateSale.price) or 0))
+                        or math.max(0, math.floor(tonumber(rec.purchasePrice) or 0)),
                     area = ES.ZoneArea(rec),
                 }
             end
@@ -660,6 +666,217 @@ if SERVER then
     end
 
     -----------------------------------------------------------------
+    -- РЫНОК: покупка и продажа объектов (фаза 5)
+    -----------------------------------------------------------------
+    --[[ Продать объект можно тремя способами:
+           государству — мгновенно, но за долю цены;
+           игроку      — по договорённости, второй подтверждает;
+           на рынок    — объект висит с ценником и значок синеет.
+         Долг по коммуналке при продаже удерживается: иначе продажа
+         стала бы способом сбросить накопленную пеню. ]]
+    ES.StateBuyback = 0.6        -- доля цены при продаже государству
+    ES.OfferLifetime = 120       -- сколько живёт предложение игроку, секунд
+
+    ES.Offers = ES.Offers or {}  -- [ключПокупателя] = { id, price, from, at }
+
+    local function ownerKeyOf(ply)
+        return (GRM.Identity and GRM.Identity.CharacterKey
+            and GRM.Identity.CharacterKey(ply)) or (IsValid(ply) and ply:SteamID64()) or ""
+    end
+    ES.OwnerKeyOf = ownerKeyOf
+
+    --[[ Освободить объект. Пишем через GRM.Property, чтобы двери,
+         сотрудники и ключи очистились штатно. ]]
+    local function releaseRecord(rec)
+        rec.ownerType = "none"
+        rec.ownerKey = ""
+        rec.ownerName = ""
+        rec.tenure = "none"
+        rec.rentUntil = 0
+        rec.employees = {}
+        rec.guests = {}
+        rec.tempKeys = {}
+        rec.estateSince = nil
+        rec.estateSale = nil
+    end
+
+    --- Сколько реально получит владелец с учётом долга.
+    function ES.SalePayout(rec, price)
+        price = math.max(0, math.floor(tonumber(price) or 0))
+        local debt = math.max(0, math.floor(tonumber(rec.utilityDebt) or 0))
+        local paid = math.min(debt, price)
+        return price - paid, paid
+    end
+
+    --- Продажа государству: мгновенно, за долю цены.
+    function ES.SellToState(ply, rec)
+        if not (IsValid(ply) and istable(rec)) then return false, "Нет объекта" end
+        if not ES.IsOwner(ply, rec) then return false, "Это не ваш объект" end
+        local base = math.max(0, math.floor(tonumber(rec.purchasePrice) or 0))
+        local price = math.floor(base * ES.StateBuyback)
+        local payout, paid = ES.SalePayout(rec, price)
+
+        -- Касса не должна пропасть вместе с объектом.
+        if ES.IsBusiness(rec) and ES.CashInZone(rec) > 0 then
+            return false, "Сначала снимите кассу бизнеса"
+        end
+
+        releaseRecord(rec)
+        rec.utilityDebt = math.max(0, (tonumber(rec.utilityDebt) or 0) - paid)
+        rec.estatePenalty = rec.utilityDebt > 0 and rec.estatePenalty or 0
+        if payout > 0 and GRM.GiveMoney then
+            GRM.GiveMoney(ply, payout, "продажа объекта государству")
+        end
+        local P = GRM.Property
+        if P and P.Save then pcall(P.Save, "estate-sell-state") end
+        ES.InvalidateScan(rec)
+        ES.Sync()
+        hook.Run("GRM_PropertyOwnerChanged", rec, "release", ply)
+
+        if paid > 0 then
+            return true, ("Продано государству за %d GRM · удержан долг %d GRM"):format(payout, paid)
+        end
+        return true, "Продано государству за " .. payout .. " GRM"
+    end
+
+    --- Выставить объект на рынок с ценником (или снять с продажи).
+    function ES.SetForSale(ply, rec, price)
+        if not (IsValid(ply) and istable(rec)) then return false, "Нет объекта" end
+        if not ES.IsOwner(ply, rec) then return false, "Это не ваш объект" end
+        price = math.max(0, math.floor(tonumber(price) or 0))
+        if price <= 0 then
+            rec.estateSale = nil
+            if GRM.Property and GRM.Property.Save then pcall(GRM.Property.Save, "estate-unsale") end
+            ES.Sync()
+            return true, "Объект снят с продажи"
+        end
+        rec.estateSale = { price = price, at = os.time(), by = ownerKeyOf(ply) }
+        if GRM.Property and GRM.Property.Save then pcall(GRM.Property.Save, "estate-sale") end
+        ES.Sync()
+        return true, "Объект выставлен на продажу за " .. price .. " GRM"
+    end
+
+    --[[ Купить объект, выставленный на рынок. Деньги идут прежнему
+         владельцу, долг удерживается из его выручки. ]]
+    function ES.BuyFromMarket(ply, rec)
+        if not (IsValid(ply) and istable(rec)) then return false, "Нет объекта" end
+        local sale = istable(rec.estateSale) and rec.estateSale or nil
+        if not sale then return false, "Объект не продаётся" end
+        if ES.IsOwner(ply, rec) then return false, "Это уже ваш объект" end
+
+        local can, why = ES.CanAcquire(ply, rec)
+        if not can then return false, why end
+
+        local price = math.max(0, math.floor(tonumber(sale.price) or 0))
+        if price > 0 and GRM.HasMoney and not GRM.HasMoney(ply, price) then
+            return false, "Недостаточно наличных: нужно " .. price .. " GRM"
+        end
+
+        -- Продавец получает за вычетом долга: продажа не списывает пеню.
+        local payout, paid = ES.SalePayout(rec, price)
+        local sellerKey = tostring(rec.ownerKey or "")
+        if price > 0 and GRM.TakeMoney then
+            GRM.TakeMoney(ply, price, "покупка объекта «" .. tostring(rec.name or "") .. "»")
+        end
+        if payout > 0 and GRM.Identity and GRM.Identity.ResolveCharacter then
+            local seller = GRM.Identity.ResolveCharacter(sellerKey)
+            if IsValid(seller) and GRM.GiveMoney then
+                GRM.GiveMoney(seller, payout, "продажа объекта")
+                if GRM.Notify then
+                    GRM.Notify(seller, ("Ваш объект «%s» куплен за %d GRM"):format(
+                        tostring(rec.name or ""), payout), 100, 215, 125)
+                end
+            end
+        end
+
+        rec.utilityDebt = math.max(0, (tonumber(rec.utilityDebt) or 0) - paid)
+        rec.ownerType = "character"
+        rec.ownerKey = ownerKeyOf(ply)
+        rec.ownerName = ply:GetNWString("GRM_RPName", ply:Nick())
+        rec.tenure = "owned"
+        rec.rentUntil = 0
+        rec.employees, rec.guests, rec.tempKeys = {}, {}, {}
+        rec.estateSince = os.time()
+        rec.estateSale = nil
+        rec.lastUtilityAt = os.time()
+
+        local P = GRM.Property
+        if P and P.Save then pcall(P.Save, "estate-market-buy") end
+        ES.InvalidateScan(rec)
+        ES.Sync()
+        hook.Run("GRM_PropertyOwnerChanged", rec, "buy", ply)
+        return true, "Объект куплен за " .. price .. " GRM"
+    end
+
+    --- Предложить объект конкретному игроку.
+    function ES.OfferTo(ply, rec, target, price)
+        if not (IsValid(ply) and IsValid(target) and istable(rec)) then return false, "Нет игрока" end
+        if not ES.IsOwner(ply, rec) then return false, "Это не ваш объект" end
+        if target == ply then return false, "Нельзя предложить самому себе" end
+        price = math.max(0, math.floor(tonumber(price) or 0))
+        ES.Offers[ownerKeyOf(target)] = {
+            id = tostring(rec.id or ""), price = price,
+            from = ownerKeyOf(ply), at = os.time(),
+        }
+        if GRM.Notify then
+            GRM.Notify(target, ("Вам предлагают «%s» за %d GRM. Примите: /business_accept"):format(
+                tostring(rec.name or ""), price), 120, 200, 255)
+        end
+        return true, "Предложение отправлено"
+    end
+
+    --- Принять предложение.
+    function ES.AcceptOffer(ply)
+        if not IsValid(ply) then return false, "Нет игрока" end
+        local key = ownerKeyOf(ply)
+        local offer = ES.Offers[key]
+        if not istable(offer) then return false, "Вам ничего не предлагали" end
+        if (os.time() - (tonumber(offer.at) or 0)) > ES.OfferLifetime then
+            ES.Offers[key] = nil
+            return false, "Предложение истекло"
+        end
+        local P = GRM.Property
+        local rec = P and istable(P.Records) and P.Records[offer.id]
+        if not istable(rec) then
+            ES.Offers[key] = nil
+            return false, "Объект больше не существует"
+        end
+        -- Владелец мог смениться, пока покупатель думал.
+        if tostring(rec.ownerKey or "") ~= tostring(offer.from or "") then
+            ES.Offers[key] = nil
+            return false, "Объект уже сменил владельца"
+        end
+        -- Пропускаем сделку через ту же проверку, что и рынок.
+        local saved = rec.estateSale
+        rec.estateSale = { price = offer.price, at = offer.at, by = offer.from }
+        local ok, msg = ES.BuyFromMarket(ply, rec)
+        if not ok then rec.estateSale = saved end
+        ES.Offers[key] = nil
+        return ok, msg
+    end
+
+    --- Список объектов, выставленных на продажу.
+    function ES.MarketList()
+        local out = {}
+        local P = GRM.Property
+        for _, rec in pairs((P and P.Records) or {}) do
+            if istable(rec.estateSale) and ES.KindOf(rec) ~= "none" then
+                out[#out + 1] = {
+                    id = tostring(rec.id or ""),
+                    name = tostring(rec.name or ""),
+                    kind = ES.KindOf(rec),
+                    price = math.max(0, math.floor(tonumber(rec.estateSale.price) or 0)),
+                    owner = tostring(rec.ownerName or ""),
+                    area = ES.ZoneArea(rec),
+                    equipment = ES.IsBusiness(rec) and ES.ScanCached(rec, 30).total or 0,
+                }
+            end
+        end
+        table.sort(out, function(a, b) return a.price < b.price end)
+        return out
+    end
+
+    -----------------------------------------------------------------
     -- ОКНО БИЗНЕСА: подход к зоне и снятие кассы
     -----------------------------------------------------------------
     local NET_PANEL = "GRM_Estate_Panel"
@@ -677,6 +894,10 @@ if SERVER then
         if not (IsValid(ply) and istable(rec)) then return false end
         local data = ES.Summary(rec)
         data.isOwner = ES.IsOwner(ply, rec) or ply:IsSuperAdmin()
+        -- Состояние рынка: выставлен ли объект и по какой цене.
+        data.forSale = istable(rec.estateSale) and math.max(0,
+            math.floor(tonumber(rec.estateSale.price) or 0)) or 0
+        data.stateOffer = math.floor((tonumber(rec.purchasePrice) or 0) * ES.StateBuyback)
         data.limit = ES.Limit()
         data.owned = ES.CountOwned((GRM.Identity and GRM.Identity.CharacterKey
             and GRM.Identity.CharacterKey(ply)) or ply:SteamID64())
@@ -704,6 +925,14 @@ if SERVER then
         local ok, msg = false, "Неизвестное действие"
         if action == "collect" then
             ok, msg = ES.Collect(ply, rec)
+        elseif action == "buy" then
+            ok, msg = ES.BuyFromMarket(ply, rec)
+        elseif action == "sell_state" then
+            ok, msg = ES.SellToState(ply, rec)
+        elseif action == "sale_on" then
+            ok, msg = ES.SetForSale(ply, rec, net.ReadUInt(32))
+        elseif action == "sale_off" then
+            ok, msg = ES.SetForSale(ply, rec, 0)
         elseif action == "refresh" then
             ES.InvalidateScan(rec)
             ok, msg = true, nil
@@ -725,8 +954,39 @@ if SERVER then
         ES.OpenPanel(ply, rec)
     end)
 
+    concommand.Add("grm_business_accept", function(ply)
+        local ok, msg = ES.AcceptOffer(ply)
+        if GRM.Notify then
+            GRM.Notify(ply, tostring(msg), ok and 100 or 255, ok and 215 or 150, ok and 125 or 110)
+        end
+    end)
+
+    --- Витрина рынка: что вообще продаётся на карте.
+    concommand.Add("grm_market", function(ply)
+        if not IsValid(ply) then return end
+        local rows = ES.MarketList()
+        ply:PrintMessage(HUD_PRINTTALK, "[Рынок] объектов в продаже: " .. #rows)
+        for _, row in ipairs(rows) do
+            ply:PrintMessage(HUD_PRINTTALK, ("  %s «%s» — %d GRM · %d м²%s"):format(
+                row.kind == "business" and "БИЗНЕС" or "ЖИЛЬЁ",
+                row.name, row.price, row.area,
+                row.equipment > 0 and (" · точек: " .. row.equipment) or ""))
+        end
+        if #rows == 0 then
+            ply:PrintMessage(HUD_PRINTTALK, "  Никто ничего не продаёт.")
+        end
+    end)
+
     hook.Add("PlayerSay", "GRM_Estate_Chat", function(ply, text)
         local low = string.lower(string.Trim(tostring(text or "")))
+        if low == "/market" or low == "/рынок" then
+            ply:ConCommand("grm_market")
+            return ""
+        end
+        if low == "/business_accept" then
+            ply:ConCommand("grm_business_accept")
+            return ""
+        end
         if low == "/business" or low == "/бизнес" then
             local rec = ES.ZoneOfPlayer(ply)
             if rec and ES.KindOf(rec) ~= "none" then ES.OpenPanel(ply, rec)
@@ -927,7 +1187,7 @@ if CLIENT then
         if IsValid(panelFrame) then panelFrame:Remove() end
 
         local isBiz = d.kind == "business"
-        local h = isBiz and 400 or 250
+        local h = isBiz and 440 or 300
         local f = vgui.Create("DFrame")
         panelFrame = f
         f:SetSize(460, h) f:Center() f:MakePopup() f:SetTitle("") f:ShowCloseButton(false)
@@ -994,22 +1254,64 @@ if CLIENT then
             end
         end
 
-        if isBiz and d.isOwner then
-            local collect = estateButton(f, "СНЯТЬ КАССУ", UI.green, 428, 38)
-            collect:SetPos(16, h - 52)
-            collect:SetEnabled((d.cash or 0) > 0)
-            collect.DoClick = function()
-                net.Start("GRM_Estate_Act")
-                    net.WriteString("collect")
-                    net.WriteString(tostring(d.id or ""))
-                net.SendToServer()
+        local function act(name, extra)
+            net.Start("GRM_Estate_Act")
+                net.WriteString(name)
+                net.WriteString(tostring(d.id or ""))
+                if extra then extra() end
+            net.SendToServer()
+        end
+
+        if d.isOwner then
+            -- Владелец: касса, продажа государству и выставление на рынок.
+            local bx = 16
+            if isBiz then
+                local collect = estateButton(f, "СНЯТЬ КАССУ", UI.green, 210, 36)
+                collect:SetPos(16, h - 92)
+                collect:SetEnabled((d.cash or 0) > 0)
+                collect.DoClick = function() act("collect") end
+                bx = 234
             end
+
+            local state = estateButton(f, "ПРОДАТЬ ГОСУДАРСТВУ", UI.panel, isBiz and 210 or 428, 36)
+            state:SetPos(bx, h - 92)
+            state.DoClick = function()
+                Derma_Query(("Продать «%s» государству за %d GRM?\nЭто примерно %d%% от цены объекта."):format(
+                        tostring(d.name or ""), d.stateOffer or 0, 60),
+                    "Продажа объекта", "Продать", function() act("sell_state") end,
+                    "Отмена", function() end)
+            end
+
+            if (d.forSale or 0) > 0 then
+                --[[ Объект уже на рынке: показываем цену и даём снять
+                     с продажи одним нажатием. ]]
+                local off = estateButton(f, "СНЯТЬ С ПРОДАЖИ (" .. d.forSale .. " GRM)", UI.red, 428, 36)
+                off:SetPos(16, h - 50)
+                off.DoClick = function() act("sale_off") end
+            else
+                local sell = estateButton(f, "ВЫСТАВИТЬ НА ПРОДАЖУ", UI.gold, 428, 36)
+                sell:SetPos(16, h - 50)
+                sell.DoClick = function()
+                    Derma_StringRequest("Продажа объекта",
+                        "Цена в GRM. Покупатель найдёт объект по синему значку и в /market.",
+                        tostring(d.price or 0),
+                        function(txt)
+                            local price = math.max(0, math.floor(tonumber(txt) or 0))
+                            act("sale_on", function() net.WriteUInt(price, 32) end)
+                        end)
+                end
+            end
+        elseif (d.forSale or 0) > 0 then
+            -- Объект продаётся другим игроком: можно выкупить прямо тут.
+            local buy = estateButton(f, "КУПИТЬ ЗА " .. d.forSale .. " GRM", UI.green, 428, 38)
+            buy:SetPos(16, h - 52)
+            buy.DoClick = function() act("buy") end
         elseif d.vacant then
             local hint = vgui.Create("DLabel", f)
             hint:SetPos(16, h - 46) hint:SetSize(428, 32)
             hint:SetFont("GRMEstate_Row") hint:SetTextColor(UI.dim) hint:SetWrap(true)
             hint:SetText("Объект свободен. Цена: " .. tostring(d.price or 0)
-                .. " GRM. Покупка — через администрацию.")
+                .. " GRM. Купить можно у одной из дверей объекта или внутри зоны.")
         end
     end)
 

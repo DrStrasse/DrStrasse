@@ -72,7 +72,17 @@ if SERVER then
  P.Save=save;load()
  local function tell(p,msg,ok)if GRM.Notify then GRM.Notify(p,msg,ok and 90 or 255,ok and 220 or 110,ok and 120 or 100)elseif IsValid(p)then p:ChatPrint("[Недвижимость] "..msg)end end
  local function doorByID(id)for _,e in ipairs(ents.GetAll())do if IsValid(e)and GRM.Doors and GRM.Doors.IsDoor(e)and GRM.Doors.GetDoorID(e)==id then return e end end end
- local function nearProperty(p,r)if not IsValid(p)then return false end;for _,id in ipairs(r.doors or{})do local e=doorByID(id);if IsValid(e)and p:GetPos():DistToSqr(e:GetPos())<=P.Config.UseDistance^2 then return true end end;return false end
+ local function nearProperty(p,r)
+  if not IsValid(p)then return false end
+  for _,id in ipairs(r.doors or{})do local e=doorByID(id);if IsValid(e)and p:GetPos():DistToSqr(e:GetPos())<=P.Config.UseDistance^2 then return true end end
+  --[[ Объект, размеченный тулом бизнес-зоны, дверей может не иметь вовсе.
+       Тогда «рядом» означает «внутри зоны», иначе такой объект нельзя
+       было бы ни купить, ни арендовать. ]]
+  if GRM.Estate and GRM.Estate.PointInZone and istable(r.zone) then
+   if GRM.Estate.PointInZone(r,p:GetPos())then return true end
+  end
+  return false
+ end
  local function lockAll(r,on)for _,id in ipairs(r.doors)do local e=doorByID(id);if IsValid(e)and GRM.Doors.LockDoor then GRM.Doors.LockDoor(e,on)end end end
  local function zoneFromDoors(ids)local mn,mx;for _,id in ipairs(ids or{})do local e=doorByID(id);if IsValid(e)and e.WorldSpaceAABB then local a,b=e:WorldSpaceAABB();if a and b then mn=mn and Vector(math.min(mn.x,a.x),math.min(mn.y,a.y),math.min(mn.z,a.z))or a;mx=mx and Vector(math.max(mx.x,b.x),math.max(mx.y,b.y),math.max(mx.z,b.z))or b end end end;if not mn then return nil end;local pad=Vector(192,192,96);mn=mn-pad;mx=mx+pad;return{mins={x=mn.x,y=mn.y,z=mn.z},maxs={x=mx.x,y=mx.y,z=mx.z}}end
  local function setDoorPolicy(r)if not(GRM.Doors and GRM.Doors.GetRecord)then return end;for _,id in ipairs(r.doors)do local e=doorByID(id);if IsValid(e)then local rec=GRM.Doors.GetRecord(e);if rec then rec.ownable=false;rec.title=r.name;rec.id=id;rec._ephemeral=nil end end end;if GRM.Doors.SaveDoors then GRM.Doors.SaveDoors()end end
@@ -116,7 +126,14 @@ if SERVER then
   end
   if not r then return end
   if act=="buy"or act=="rent"then
-   if not nearProperty(p,r)then tell(p,"Подойдите к одной из дверей объекта.",false)return end;if r.ownerType~="none"then tell(p,"Объект уже занят.",false)return end;if r.sealed then tell(p,"Объект опечатан.",false)return end;local price=act=="buy"and r.purchasePrice or r.rentPrice
+   if not nearProperty(p,r)then tell(p,"Подойдите к одной из дверей объекта.",false)return end;if r.ownerType~="none"then tell(p,"Объект уже занят.",false)return end;if r.sealed then tell(p,"Объект опечатан.",false)return end
+   --[[ Лимит бизнесов в одни руки (решение владельца: 2-3). Жильё
+        в лимит не входит и покупается свободно. ]]
+   if GRM.Estate and GRM.Estate.CanAcquire then
+    local canBuy,whyBuy=GRM.Estate.CanAcquire(p,r)
+    if not canBuy then tell(p,tostring(whyBuy),false)return end
+   end
+   local price=act=="buy"and r.purchasePrice or r.rentPrice
    if price>0 and GRM.HasMoney and not GRM.HasMoney(p,price)then tell(p,"Недостаточно наличных.",false)return end;if price>0 and GRM.TakeMoney then GRM.TakeMoney(p,price,act=="buy"and"Покупка недвижимости"or"Аренда недвижимости")end
    r.ownerType="character";r.ownerKey=ck(p);r.ownerName=p:GetNWString("GRM_RPName",p:Nick());r.tenure=act=="buy"and"owned"or"rent";r.rentUntil=act=="rent"and(os.time()+P.Config.RentSeconds)or 0;r.lastUtilityAt=os.time();lockAll(r,true);save(act);audit(act,p,r,{price=price});hook.Run("GRM_PropertyOwnerChanged",r,act,p);tell(p,act=="buy"and"Объект куплен."or"Договор аренды оформлен.",true);send(p,r,false)
   elseif act=="pay_utilities"then
