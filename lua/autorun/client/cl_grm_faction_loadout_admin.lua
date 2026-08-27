@@ -334,6 +334,28 @@ local function buildModelsEditor(parent, node, list, saveFn)
                 end)
                 edit:SetPos(row:GetWide() - 156, 18) edit:SetSize(104, 30)
                 edit.Think = function(s) s:SetPos((s:GetParent():GetWide() or 0) - 156, 18) end
+
+                --[[ СВЯЗЬ С РЕДАКТОРОМ ПРАВИЛ (заказ владельца 27.08).
+                     Раньше админ ставил модель здесь, шёл в /bodygroups_admin
+                     и не находил её — области и модель приходилось искать
+                     руками, а модели должностей туда вообще не попадали.
+                     Теперь кнопка открывает правила СРАЗУ для этой модели и
+                     этого узла: организация, отдел/подотдел, звание или
+                     должность подставляются автоматически. ]]
+                local rules = mkBtn(row, "Правила", C.gold, function()
+                    if not (GRM.BGRules and GRM.BGRules.Request) then
+                        notification.AddLegacy("Модуль правил бодигрупп не загружен", NOTIFY_ERROR, 4)
+                        return
+                    end
+                    local focus = { model = entry.path, faction = node.faction or "" }
+                    if node.scope == "role" then focus.role = node.key or ""
+                    elseif node.scope == "department" then focus.dept = node.key or ""
+                    elseif node.scope == "subdepartment" then focus.dept = node.key or ""
+                    elseif node.scope == "position" then focus.position = node.key or "" end
+                    GRM.BGRules.Request(focus)
+                end)
+                rules:SetPos(row:GetWide() - 266, 18) rules:SetSize(104, 30)
+                rules.Think = function(s) s:SetPos((s:GetParent():GetWide() or 0) - 266, 18) end
             end
         end)
         if list[1] and not selectedIdx then showPreview(list[1]) end

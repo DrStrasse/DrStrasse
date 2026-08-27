@@ -1011,6 +1011,15 @@ if SERVER then
             return
         end
         ply.GRMCharMenuPending = nil
+        --[[ Правила бодигрупп рассылаются отдельным сообщением через
+             несколько секунд после входа, а меню персонажа открывается
+             сразу. Игрок успевал увидеть модель БЕЗ правил — со стороны
+             это выглядело как «правила не работают, пустота».
+             Досылаем правила прямо перед окном, чтобы клиент считал их
+             ещё до сборки вкладки «Телосложение». ]]
+        if GRM.BGRules and GRM.BGRules.Sync then
+            pcall(GRM.BGRules.Sync, ply)
+        end
         net.Start(NET_OPEN)
             net.WriteTable(CH.BuildPayload(ply, { previewSlot = previewSlot }))
         net.Send(ply)
@@ -1824,6 +1833,7 @@ if CLIENT then
         CH._frame = f
         CH._frameMode = isWardrobe and "wardrobe" or "character"
         f.OnRemove = function()
+            hook.Remove("GRM_BodygroupRulesSynced", "GRM_Char_BGRulesLive")
             if CH._frame == f then
                 CH._frame, CH._frameMode, CH._liveSignature = nil, nil, nil
                 CH._actionPending, CH._actionKind = false, nil
@@ -2478,6 +2488,19 @@ if CLIENT then
         end
         timer.Simple(0.12, retryBody)
         timer.Simple(0.45, retryBody)
+
+        --[[ Правила бодигрупп могли доехать уже ПОСЛЕ сборки окна (сеть).
+             Тогда вкладка «Телосложение» осталась бы построенной по старым
+             данным, и игрок увидел бы строки, которые организация закрыла.
+             Пересобираем её, как только правила пришли. ]]
+        hook.Add("GRM_BodygroupRulesSynced", "GRM_Char_BGRulesLive", function()
+            if not (IsValid(f) and CH._frame == f) then
+                hook.Remove("GRM_BodygroupRulesSynced", "GRM_Char_BGRulesLive")
+                return
+            end
+            applyPreview(false)
+            rebuildBodygroups()
+        end)
     end
 
     local function payloadSignature(p)

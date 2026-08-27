@@ -440,6 +440,13 @@ if SERVER then
                 for subKey, sub in pairs(istable(f.Subdepartments) and f.Subdepartments or {}) do
                     if istable(sub) then addFactionModels(sub.models, row.display .. " • " .. tostring(subKey)) end
                 end
+                --[[ Модели ДОЛЖНОСТЕЙ (ось v5) не попадали в список вообще:
+                     админ ставил модель должности в models_admin, шёл в
+                     редактор правил — а модели там нет, выбрать нечего.
+                     Это и была «пустота» из отчёта 27.08. ]]
+                for posKey, list in pairs(istable(f.PositionModels) and f.PositionModels or {}) do
+                    addFactionModels(list, row.display .. " • должность " .. tostring(posKey))
+                end
 
                 table.sort(row.roles, function(a, b) return string.lower(a.display) < string.lower(b.display) end)
                 table.sort(row.depts, function(a, b) return string.lower(a.display) < string.lower(b.display) end)
@@ -463,12 +470,37 @@ if SERVER then
         return { rules = BG.Rules or {}, factions = factions, models = models }
     end
 
-    function BG.OpenEditor(ply)
+    --[[ focus = { model=, faction=, dept=, role=, position= } — редактор
+         откроется сразу на нужной модели и области. Так работает переход
+         «Правила бодигрупп» из models_admin: админ выбрал модель должности
+         и попал ровно в её правила, а не в пустой список. ]]
+    function BG.OpenEditor(ply, focus)
         if not (IsValid(ply) and ply:IsSuperAdmin()) then
             if IsValid(ply) then ply:PrintMessage(HUD_PRINTTALK, "[Бодигруппы] Редактор доступен только суперадмину.") end
             return false
         end
-        local ok, txt = pcall(util.TableToJSON, collectSnapshot())
+        local snapshot = collectSnapshot()
+        if istable(focus) then
+            snapshot.focus = {
+                model = low(focus.model),
+                faction = tag(focus.faction),
+                dept = tag(focus.dept),
+                role = tag(focus.role),
+                position = tag(focus.position),
+            }
+            -- Модель из фокуса обязана быть в списке, даже если её нигде нет.
+            if snapshot.focus.model ~= "" then
+                local found = false
+                for _, row in ipairs(snapshot.models) do
+                    if row.path == snapshot.focus.model then found = true break end
+                end
+                if not found then
+                    snapshot.models[#snapshot.models + 1] =
+                        { path = snapshot.focus.model, owners = { "из редактора моделей" } }
+                end
+            end
+        end
+        local ok, txt = pcall(util.TableToJSON, snapshot)
         if not ok or not txt then return false end
         local data = util.Compress(txt)
         net.Start(NET_OPEN)
@@ -482,7 +514,8 @@ if SERVER then
     net.Receive(NET_REQ, function(_, ply)
         if not (IsValid(ply) and ply:IsSuperAdmin()) then return end
         if GRM.Perf and GRM.Perf.Throttle and not GRM.Perf.Throttle("bgrules.open." .. ply:EntIndex(), 0.5) then return end
-        BG.OpenEditor(ply)
+        local focus = net.ReadTable()
+        BG.OpenEditor(ply, istable(focus) and focus or nil)
     end)
 
     net.Receive(NET_ACT, function(_, ply)
@@ -510,6 +543,9 @@ if SERVER then
     end)
 
     concommand.Add("grm_bodygroups_admin", function(ply) BG.OpenEditor(ply) end)
+
+    --- Открыть правила конкретной модели и области (зовёт models_admin).
+    function BG.OpenFor(ply, focus) return BG.OpenEditor(ply, focus) end
 
     hook.Add("PlayerSay", "GRM_BGRules_Cmd", function(ply, text)
         local low2 = string.lower(string.Trim(tostring(text or "")))
@@ -1109,6 +1145,44 @@ if CLIENT then
         rebuildGroups()
         rebuildSaved()
 
+        --[[ ФОКУС из models_admin: сразу встаём на нужную модель и область,
+             чтобы админ не искал их руками и не видел «пустоту». ]]
+        local focus = istable(snapshot.focus) and snapshot.focus or nil
+        if focus then
+            if focus.faction ~= "" then
+                sel.faction = focus.faction
+                for _, row in ipairs(factions) do
+                    if row.name == focus.faction then facCombo:SetValue(row.display) break end
+                end
+            end
+            sel.dept = focus.dept or ""
+            sel.role = focus.role or ""
+            sel.position = focus.position or ""
+            fillDeptRole()
+            -- Подписи комбобоксов под выбранную область.
+            for _, row in ipairs(factions) do
+                if row.name == sel.faction then
+                    for _, d in ipairs(row.depts) do
+                        if d.key == sel.dept then
+                            deptCombo:SetValue((d.sub and "подотдел: " or "отдел: ") .. d.display)
+                        end
+                    end
+                    for _, r in ipairs(row.roles) do
+                        if r.key == sel.role then roleCombo:SetValue(r.display) end
+                    end
+                    for _, pos in ipairs(row.positions or {}) do
+                        if pos.key == sel.position then posCombo:SetValue(pos.display) end
+                    end
+                end
+            end
+            rebuildModels()
+            if focus.model ~= "" then
+                setModel(focus.model)
+            else
+                rebuildGroups()
+            end
+        end
+
         f._grmRestore = function()
             return { faction = sel.faction, dept = sel.dept, role = sel.role,
                 position = sel.position, model = sel.model }
@@ -1156,9 +1230,14 @@ if CLIENT then
         end
     end)
 
-    concommand.Add("grm_bodygroups_admin", function()
-        net.Start(NET_REQ) net.SendToServer()
-    end)
+    --- focus необязателен: без него редактор открывается как раньше.
+    function BG.Request(focus)
+        net.Start(NET_REQ)
+            net.WriteTable(istable(focus) and focus or {})
+        net.SendToServer()
+    end
+
+    concommand.Add("grm_bodygroups_admin", function() BG.Request() end)
 
     hook.Add("PlayerSayTransform", "GRM_BGRules_Cmd", function(_, datapack)
         if not istable(datapack) then return end
@@ -1166,7 +1245,7 @@ if CLIENT then
         if not isstring(msg) then return end
         local cmd = string.lower(string.Trim(msg))
         if cmd == "/bodygroups_admin" or cmd == "!bodygroups_admin" or cmd == "/бодигруппы" then
-            net.Start(NET_REQ) net.SendToServer()
+            BG.Request()
             datapack[1] = ""
             datapack.SkipPlayerSay = true
             return false
