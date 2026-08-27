@@ -551,7 +551,13 @@ if SERVER then
         ply.GRMCharPlaceOnSpawn = true
         ply:Spawn()
         timer.Simple(0, function()
-            if IsValid(ply) then CH.PlaceOnSpawnPoint(ply) end
+            if not IsValid(ply) then return end
+            CH.PlaceOnSpawnPoint(ply)
+            --[[ Персонаж подтверждён и стоит на точке по умолчанию. Теперь
+                 модуль точек входа может предложить выбор: фракция, дом или
+                 место, где игрок вышел в прошлый раз. Если вариант всего
+                 один, экран не показывается и игрок остаётся здесь же. ]]
+            hook.Run("GRM_CharacterConfirmed", ply)
         end)
     end
 
