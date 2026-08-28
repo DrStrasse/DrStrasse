@@ -929,10 +929,20 @@ if SERVER then
         local hasPhone = MB.HasPhone(ply)
         if not hasPhone then
             MB.PushState(ply) -- sends has=false explicitly; client may show throttled hint
-            if MB.HasAnyPhone and MB.HasAnyPhone(ply) then
-                MB.ServerNotify(ply, "Телефон есть в инвентаре. Нажмите «Использовать», чтобы активировать его.")
-            else
-                MB.ServerNotify(ply, "У вас нет мобильного телефона. Купите его в /phoneshop.")
+            --[[ ВТОРОЙ РУБЕЖ ПРОТИВ СПАМА (жалоба владельца 28.08).
+
+                 Клиент теперь не шлёт запрос без телефона, но полагаться
+                 только на него нельзя: открыть телефон можно и командой,
+                 и из инвентаря, и чужим кодом через MB.Open. Поэтому
+                 сообщение показываем не чаще раза в 8 секунд — иначе
+                 чат снова забьётся одинаковыми строками. ]]
+            if CurTime() - (ply._grmMobNoPhoneAt or -999) >= 8 then
+                ply._grmMobNoPhoneAt = CurTime()
+                if MB.HasAnyPhone and MB.HasAnyPhone(ply) then
+                    MB.ServerNotify(ply, "Телефон есть в инвентаре. Нажмите «Использовать», чтобы активировать его.")
+                else
+                    MB.ServerNotify(ply, "У вас нет мобильного телефона. Купите его в /phoneshop.")
+                end
             end
             return
         end
@@ -1047,9 +1057,22 @@ if CLIENT then
     local function formFactor() return tostring(tierDef().ui or "feature") end
     local function smartForm() local f=formFactor();return f=="smartphone" or f=="touch" end
     local function now() return CurTime and CurTime() or 0 end
+    --[[ ЗАНЯТ ЛИ ВВОД (жалоба владельца 28.08: «спамится при нажатии
+         стрелки... не должно срабатывать когда игрок пишет в чате или
+         в консоли»).
+
+         Раньше проверялся только чат. Консоль и игровое меню не
+         учитывались вовсе: стрелки в консоли листают историю команд, и
+         каждое нажатие уходило в телефон. ]]
     local function chatBusy()
         if M.chatOpen == true then return true end
         if chat and chat.IsChatOpen and chat.IsChatOpen() then return true end
+        if gui then
+            if gui.IsConsoleVisible and gui.IsConsoleVisible() then return true end
+            if gui.IsGameUIVisible and gui.IsGameUIVisible() then return true end
+        end
+        -- Курсор на экране = игрок в каком-то окне, стрелки принадлежат ему.
+        if vgui and vgui.CursorVisible and vgui.CursorVisible() and not M.open then return true end
         return false
     end
     local function textInputActive()
@@ -1899,12 +1922,20 @@ if CLIENT then
     end
 
     local function keyDown(key)
-        if key==KEY_UP and not M.open and textInputActive() then return end
+        --[[ Пока телефон закрыт, любая стрелка при активном вводе — не
+             наша: раньше отсекался только KEY_UP, поэтому стрелки вниз
+             и вбок всё равно доходили до телефона. ]]
+        if not M.open and textInputActive() then return end
         if M.down[key] then return end
         if now()-(M.lastTap[key] or -999)<0.07 then return end
         M.down[key]=true;M.lastTap[key]=now();M.hold[key]=now();M.nextRepeat[key]=now()+0.45
         if not M.open then
-            if key==KEY_UP then requestServerOpen(); if hasPhone() then openPhone(false) end end
+            --[[ Сервер дёргаем ТОЛЬКО если телефон есть. Раньше запрос
+                 уходил всегда, сервер отвечал «купите в /phoneshop», и
+                 каждое нажатие стрелки давало новую строку в чат. ]]
+            if key==KEY_UP then
+                if hasPhone() then requestServerOpen() openPhone(false) else openPhone(false) end
+            end
             return
         end
         if key==KEY_UP then move(-1);return end
@@ -2007,9 +2038,9 @@ if CLIENT then
 
         local upNow = input.IsKeyDown(KEY_UP) == true
         if upNow and not M.poll.up then
-            if not M.open and not chatBusy() then
-                requestServerOpen()
-                if hasPhone() then openPhone(false) end
+            if not M.open and not textInputActive() then
+                -- Тот же принцип, что в keyDown: без телефона сервер не тревожим.
+                if hasPhone() then requestServerOpen() openPhone(false) else openPhone(false) end
             elseif M.open then move(-1) end
         end
         M.poll.up = upNow

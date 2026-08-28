@@ -1,7 +1,7 @@
 TOOL.Category = "GRM";TOOL.Name = "#tool.grm_quest_tool.name";TOOL.Command=nil;TOOL.ConfigName=""
 TOOL.ClientConVar={mode="npc",npc_id="guide",npc_name="Проводник",npc_model="models/Humans/Group01/Male_07.mdl",quest_id="intro",step="1",phase="accept"}
 if CLIENT then
- language.Add("tool.grm_quest_tool.name", "GRM Квесты — конструктор");language.Add("tool.grm_quest_tool.desc","NPC, зоны целей и точки кат-сцен");language.Add("tool.grm_quest_tool.0","Режим выбирается в панели инструмента")
+ language.Add("tool.grm_quest_tool.name", "GRM Квесты — конструктор");language.Add("tool.grm_quest_tool.desc","NPC, зоны целей и точки кат-сцен");language.Add("tool.grm_quest_tool.0","ЛКМ / ПКМ по режиму · панель инструмента слева")
  local preview={id="",nextBuild=0,zones={},nodes={}}
  local function rebuildPreview(id)
   preview.id=id;preview.nextBuild=CurTime()+.5;preview.zones={};preview.nodes={};local def
@@ -31,11 +31,46 @@ function TOOL:RightClick(tr)
  return false
 end
 function TOOL:Reload(tr)if CLIENT then return true end;local p=self:GetOwner();if not p:IsSuperAdmin()or not questNPC(tr.Entity)then return false end;tr.Entity:Remove();GRM.Quests.SaveDefinitions();GRM.Notify(p,"Квестовый NPC удалён",255,160,90);return true end
+--[[ РЕВИЗИЯ ПАНЕЛИ (заказ владельца 28.08: «инструмент квестов
+     поредактируй, приведи в соответствие, мб есть что либо лишнее»).
+
+     Убрано:
+       • «создайте квест в /grm_quests_admin» — команда осталась, но
+         студия давно открывается ПКМ по NPC и из F4; ссылка на консоль
+         сбивала с толку;
+       • ручной слайдер «Номер этапа» — теперь его выставляет сама
+         студия при нажатии «Задать зону тулом». Руками его выставляли
+         неверно, и зона уезжала в чужой этап;
+       • поля NPC показываются только в режиме NPC, поля кат-сцены —
+         только в своём: раньше все семь висели всегда.
+
+     Оставлено ровно то, что нужно в конкретном режиме. ]]
 if CLIENT then function TOOL.BuildCPanel(p)
- p:AddControl("Header",{Description="GRM Quest Studio: создайте квест в /grm_quests_admin, затем разместите NPC, зоны и кадры."})
+ p:AddControl("Header",{Description="Расстановка в мире: NPC, зоны целей и камеры. Сам квест собирается в Quest Studio (ПКМ по NPC)."})
  local combo=p:ComboBox("Режим","grm_quest_tool_mode");combo:AddChoice("Квестовый NPC","npc");combo:AddChoice("Зона этапа visit","zone");combo:AddChoice("Точка кат-сцены","cutscene")
- p:TextEntry("ID NPC","grm_quest_tool_npc_id");p:TextEntry("Имя NPC","grm_quest_tool_npc_name");p:TextEntry("Модель NPC","grm_quest_tool_npc_model")
- p:TextEntry("ID квеста","grm_quest_tool_quest_id");p:NumSlider("Номер этапа","grm_quest_tool_step",1,64,0)
+
+ --[[ Показываем поля по режиму. GMod не пересобирает панель при смене
+      конвара, поэтому прячем через Think — иначе пришлось бы заставлять
+      игрока переоткрывать тул. ]]
+ local mode=GetConVar("grm_quest_tool_mode")
+ local npcFields={p:TextEntry("ID NPC","grm_quest_tool_npc_id"),
+                  p:TextEntry("Имя NPC","grm_quest_tool_npc_name"),
+                  p:TextEntry("Модель NPC","grm_quest_tool_npc_model")}
+ local questField=p:TextEntry("ID квеста","grm_quest_tool_quest_id")
  local phase=p:ComboBox("Фаза кат-сцены","grm_quest_tool_phase");phase:AddChoice("При принятии","accept");phase:AddChoice("При завершении","complete")
- p:Help("NPC: ЛКМ создать, ПКМ открыть Studio, R удалить.\nЗона: ЛКМ первый угол, ПКМ второй.\nКат-сцена: встаньте в позицию камеры и нажмите ЛКМ.")
+ local help=p:Help("")
+
+ p.Think=function()
+  local m=mode and mode:GetString() or "npc"
+  for _,f in ipairs(npcFields)do if IsValid(f)then f:SetVisible(m=="npc")end end
+  if IsValid(questField)then questField:SetVisible(m~="npc")end
+  if IsValid(phase)then phase:SetVisible(m=="cutscene")end
+  if IsValid(help)then
+   help:SetText(({
+    npc="ЛКМ — создать NPC.\nПКМ по NPC — открыть Quest Studio.\nR по NPC — удалить.",
+    zone="Номер этапа выставляет Studio: нажмите там «Задать зону тулом».\nЛКМ — первый угол, ПКМ — второй.",
+    cutscene="Встаньте в позицию камеры и нажмите ЛКМ.\nПервая точка станет стартовой, следующие свяжутся автоматически.",
+   })[m] or "")
+  end
+ end
  end end

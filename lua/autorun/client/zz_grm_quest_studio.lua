@@ -752,10 +752,33 @@ function Q.OpenGraphStudio(data)
                 local tool = mkBtn(right, "Задать зону тулом", Color(70, 90, 50))
                 tool:Dock(TOP) tool:SetTall(28) tool:DockMargin(10, 4, 10, 6)
                 tool.DoClick = function()
+                    --[[ НОМЕР ЭТАПА ОБЯЗАТЕЛЕН (найдено при ревизии тула
+                         28.08). Тул пишет зону в steps[номер], а студия
+                         его не передавала — оставался номер от прошлого
+                         раза, и зона молча уезжала в ЧУЖОЙ этап.
+
+                         Считаем позицию блока среди этапов: сервер
+                         хранит их обычным массивом в том же порядке. ]]
+                    local idx = 0
+                    for _, ob in ipairs(blocks) do
+                        if ob.kind == "step" then
+                            idx = idx + 1
+                            if ob == b then break end
+                        end
+                    end
+                    --[[ Зону тул пишет в УЖЕ СОХРАНЁННЫЙ квест. Если блок
+                         только что создан, на сервере его ещё нет —
+                         сохраняем, иначе тул ответит «этап не найден». ]]
+                    local out = Q.BlocksToQuest(work, blocks)
+                    out.draft = #(out.steps or {}) == 0
+                    net.Start("GRM_Quest_AdminOp")
+                    net.WriteString("save") net.WriteTable(out) net.SendToServer()
+
                     RunConsoleCommand("grm_quest_tool_mode", "zone")
                     RunConsoleCommand("grm_quest_tool_quest_id", work.id or "")
+                    RunConsoleCommand("grm_quest_tool_step", tostring(idx))
                     RunConsoleCommand("gmod_tool", "grm_quest_tool")
-                    notification.AddLegacy("ЛКМ — первый угол, ПКМ — второй", NOTIFY_HINT, 6)
+                    notification.AddLegacy("Этап " .. idx .. ": ЛКМ — первый угол, ПКМ — второй", NOTIFY_HINT, 6)
                 end
                 -- Показываем, задана зона или нет: без неё этап не работает.
                 local zoneNote = vgui.Create("DLabel", right)
