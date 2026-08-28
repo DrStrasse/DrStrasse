@@ -26,6 +26,53 @@ end
 local function playerOp(op,id)net.Start("GRM_Quest_PlayerOp")net.WriteString(op)net.WriteString(id or "")net.SendToServer()end
 
 net.Receive("GRM_Quest_Sync",function()Q.ClientRows=net.ReadTable()or {}end)
+--[[ МУЗЫКА КВЕСТА (заказ владельца 28.08).
+
+     Зациклённый трек играем через sound.PlayURL-независимый путь —
+     обычный CreateSound по имени файла: он умеет останавливаться, в
+     отличие от surface.PlaySound, который выстреливает и забывает.
+     Пустой путь означает «выключить»: так сервер глушит фоновую музыку
+     в конце квеста. ]]
+net.Receive("GRM_Quest_Music", function()
+    local path = net.ReadString()
+    local volume = net.ReadFloat()
+    local loop = net.ReadBool()
+
+    -- Прошлый зациклённый трек всегда снимаем: иначе они наложатся.
+    if Q._musicPatch then
+        pcall(function() Q._musicPatch:Stop() end)
+        Q._musicPatch = nil
+    end
+    if path == "" then return end
+
+    if loop then
+        local lp = LocalPlayer()
+        if not IsValid(lp) then return end
+        --[[ CreateSound требует entity-владельца: привязываем к игроку,
+             чтобы трек не обрывался при смене комнаты и был слышен
+             независимо от позиции. ]]
+        if not isfunction(CreateSound) then return end
+        local ok, patch = pcall(CreateSound, lp, path)
+        if ok and patch then
+            Q._musicPatch = patch
+            pcall(function()
+                patch:SetSoundLevel(0)      -- 0 = слышно везде, без затухания
+                patch:PlayEx(math.Clamp(volume or 1, 0.1, 1), 100)
+            end)
+        end
+    else
+        surface.PlaySound(path)
+    end
+end)
+
+--[[ Смерть и смена карты не должны оставлять трек висеть. ]]
+hook.Add("PlayerDeath", "GRM_Quest_MusicStop", function(ply)
+    if ply == LocalPlayer() and Q._musicPatch then
+        pcall(function() Q._musicPatch:Stop() end)
+        Q._musicPatch = nil
+    end
+end)
+
 net.Receive("GRM_Quest_Notice",function()local ok=net.ReadBool();local msg=net.ReadString();local sound=net.ReadString();local duration=net.ReadFloat();local banner=net.ReadBool();local heading=net.ReadString();surface.PlaySound(sound~=""and sound or(ok and"buttons/button14.wav"or"buttons/button10.wav"));if notification then notification.AddLegacy(msg,ok and NOTIFY_GENERIC or NOTIFY_ERROR,duration)end;if banner then Q.NoticeToast={text=msg,heading=heading,untilAt=CurTime()+duration,started=CurTime()}end end)
 hook.Add("HUDPaint","GRM_Quest_CompletionNotice",function()local t=Q.NoticeToast;if not t then return end;if CurTime()>t.untilAt then Q.NoticeToast=nil return end;local fade=math.Clamp(math.min((CurTime()-t.started)*4,(t.untilAt-CurTime())*3),0,1);local w=math.min(620,ScrW()-60);local x=ScrW()/2-w/2;local y=105;draw.RoundedBox(12,x,y,w,78,Color(10,18,30,math.floor(235*fade)));surface.SetDrawColor(242,190,75,math.floor(255*fade));surface.DrawOutlinedRect(x,y,w,78,2);draw.SimpleText(t.heading~=""and t.heading or"УВЕДОМЛЕНИЕ","GRMQ_Small",ScrW()/2,y+16,Color(242,190,75,math.floor(255*fade)),TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER);draw.SimpleText(t.text,"GRMQ_Head",ScrW()/2,y+48,Color(245,248,252,math.floor(255*fade)),TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)end)
 

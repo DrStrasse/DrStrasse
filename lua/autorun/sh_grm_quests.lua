@@ -195,6 +195,7 @@ if SERVER then
     util.AddNetworkString("GRM_Quest_AdminOpen")
     util.AddNetworkString("GRM_Quest_AdminOp")
     util.AddNetworkString("GRM_Quest_Journal")
+    util.AddNetworkString("GRM_Quest_Music")
 
     Q.DataDir = "grm_quests"
     Q.DefFile = Q.DataDir .. "/" .. string.lower(game.GetMap() or "unknown") .. ".json"
@@ -281,6 +282,20 @@ if SERVER then
         value=istable(value)and value or{};local enabled=value.enabled==true;local id=string.lower(trim(value.id,64)):gsub("[^%w_%-%:]","_");if id==""then id="quest_"..questID end
         return{enabled=enabled,id=id,name=trim(value.name and value.name~=""and value.name or title,100),description=trim(value.description and value.description~=""and value.description or summary,300),reward=math.Clamp(math.floor(tonumber(value.reward)or 0),0,100000000),hidden=value.hidden==true}
     end
+    --[[ БЛОК МУЗЫКИ (заказ владельца 28.08). Пустой путь означает
+         «музыки нет»: возвращаем nil, чтобы не таскать мусор в файле
+         квестов и не пытаться проиграть пустоту. ]]
+    local function normalizeMusic(value)
+        if not istable(value) then return nil end
+        local sound=trim(value.sound,160)
+        if sound=="" then return nil end
+        local when=tostring(value.when or "start")
+        if when~="start" and when~="step" and when~="complete" then when="start" end
+        return {sound=sound,when=when,loop=value.loop==true,
+            volume=math.Clamp(tonumber(value.volume)or 1,.1,1),
+            _gx=math.Clamp(math.floor(tonumber(value._gx)or 0),0,20000),
+            _gy=math.Clamp(math.floor(tonumber(value._gy)or 0),0,20000)}
+    end
     function Q.NormalizeDefinition(raw)
         raw=istable(raw)and raw or {}
         local id=string.lower(trim(raw.id,64)):gsub("[^%w_%-%:]","_")
@@ -291,7 +306,7 @@ if SERVER then
         for itemID,count in pairs(istable(raw.rewards and raw.rewards.items)and raw.rewards.items or {})do rewards.items[trim(itemID,96)]=math.Clamp(math.floor(tonumber(count)or 1),1,10000)end
         local prerequisites={};for _,v in ipairs(istable(raw.prerequisites)and raw.prerequisites or {})do prerequisites[#prerequisites+1]=trim(v,64)end
         local title,summary=trim(raw.title,100),trim(raw.summary,400);local notifications=istable(raw.notifications)and raw.notifications or{}
-        return {id=id,title=title,draft=draft,summary=summary,category=trim(raw.category,48),npc=trim(raw.npc,64),repeatable=raw.repeatable==true,autoStart=raw.autoStart==true,enabled=raw.enabled~=false,requireFaction=trim(raw.requireFaction,64),requireFlag=trim(raw.requireFlag,64),requireMoney=math.Clamp(math.floor(tonumber(raw.requireMoney)or 0),0,100000000),prerequisites=prerequisites,steps=steps,rewards=rewards,achievement=normalizeAchievement(raw.achievement,id,title,summary),notifications={start=normalizeNotification(notifications.start,"Получен квест: {title}",false),step=normalizeNotification(notifications.step,"Этап выполнен: {step}",false),complete=normalizeNotification(notifications.complete,"Квест завершён: {title}",true)},dialogue=normalizeDialogue(raw.dialogue),cutscene={accept=normalizeCutscene(raw.cutscene and raw.cutscene.accept),complete=normalizeCutscene(raw.cutscene and raw.cutscene.complete)}}
+        return {id=id,title=title,draft=draft,summary=summary,category=trim(raw.category,48),npc=trim(raw.npc,64),repeatable=raw.repeatable==true,autoStart=raw.autoStart==true,enabled=raw.enabled~=false,requireFaction=trim(raw.requireFaction,64),requireFlag=trim(raw.requireFlag,64),requireMoney=math.Clamp(math.floor(tonumber(raw.requireMoney)or 0),0,100000000),prerequisites=prerequisites,steps=steps,rewards=rewards,achievement=normalizeAchievement(raw.achievement,id,title,summary),notifications={start=normalizeNotification(notifications.start,"Получен квест: {title}",false),step=normalizeNotification(notifications.step,"Этап выполнен: {step}",false),complete=normalizeNotification(notifications.complete,"Квест завершён: {title}",true)},dialogue=normalizeDialogue(raw.dialogue),music=normalizeMusic(raw.music),cutscene={accept=normalizeCutscene(raw.cutscene and raw.cutscene.accept),complete=normalizeCutscene(raw.cutscene and raw.cutscene.complete)}}
     end
 
     function Q.SaveDefinitions()
@@ -360,6 +375,29 @@ if SERVER then
     end
     Q.Sync=sync
     local function notice(ply,ok,text,opts)opts=istable(opts)and opts or{};net.Start("GRM_Quest_Notice")net.WriteBool(ok)net.WriteString(trim(text,300))net.WriteString(trim(opts.sound,160))net.WriteFloat(math.Clamp(tonumber(opts.duration)or 4,1,15))net.WriteBool(opts.banner==true)net.WriteString(trim(opts.heading,80))net.Send(ply)end
+    --[[ ВОСПРОИЗВЕДЕНИЕ МУЗЫКИ БЛОКА (заказ владельца 28.08).
+
+         Блок МУЗЫКА хранит момент: start / step / complete. Здесь мы
+         сверяем момент и шлём команду клиенту. Зациклённый трек
+         останавливаем при завершении квеста, иначе он играл бы вечно. ]]
+    local function questMusic(ply,kind,def)
+        local m=def and def.music
+        if not (IsValid(ply) and istable(m)) then return end
+        if tostring(m.when or "start")~=kind then
+            -- Конец квеста глушит зациклённый трек, даже если он не отсюда.
+            if kind=="complete" and m.loop then
+                net.Start("GRM_Quest_Music")net.WriteString("")net.WriteFloat(0)net.WriteBool(false)net.Send(ply)
+            end
+            return
+        end
+        net.Start("GRM_Quest_Music")
+            net.WriteString(trim(m.sound,160))
+            net.WriteFloat(math.Clamp(tonumber(m.volume)or 1,.1,1))
+            net.WriteBool(m.loop==true)
+        net.Send(ply)
+    end
+    Q.PlayQuestMusic=questMusic
+
     local function questNotice(ply,kind,def,step)
         local cfg=def.notifications and def.notifications[kind];if cfg and cfg.enabled==false then return end;cfg=cfg or{};local text=tostring(cfg.text or"");text=text:gsub("{title}",tostring(def.title or"")):gsub("{step}",tostring(step and step.title or"")):gsub("{count}",tostring(step and step.count or""));notice(ply,true,text,{sound=cfg.sound,duration=cfg.duration,banner=cfg.banner,heading=({start="НОВОЕ ЗАДАНИЕ",step="ЭТАП ВЫПОЛНЕН",complete="ЗАДАНИЕ ЗАВЕРШЕНО"})[kind]})
     end
@@ -393,23 +431,23 @@ if SERVER then
         GRM.Ach.Register({id=a.id,name=a.name,desc=a.description,metric="quest:"..def.id,goal=1,reward=a.reward,hidden=a.hidden,questID=def.id});GRM.Ach.Unlock(ply,GRM.Ach.Defs[a.id],GRM.Ach.RecOf(ply))
     end
     local function finishQuest(ply,def,p)
-        p.status="completed";p.completedAt=os.time();reward(ply,def);unlockQuestAchievement(ply,def);questNotice(ply,"complete",def);cutscene(ply,def.cutscene.complete);hook.Run("GRM_QuestCompleted",ply,def.id);Q.SaveProgress();sync(ply)
+        p.status="completed";p.completedAt=os.time();reward(ply,def);unlockQuestAchievement(ply,def);questNotice(ply,"complete",def);questMusic(ply,"complete",def);cutscene(ply,def.cutscene.complete);hook.Run("GRM_QuestCompleted",ply,def.id);Q.SaveProgress();sync(ply)
     end
     local function checkCurrent(ply,def,p)
         local step=def.steps[p.step or 1];if not step then finishQuest(ply,def,p)return end
-        if step.type=="item"then p.count=itemCount(ply,step.item);if p.count>=step.count then if step.consume and GRM.Inventory and GRM.Inventory.RemoveItem then GRM.Inventory.RemoveItem(ply,step.item,step.count)end;p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);checkCurrent(ply,def,p)end end
+        if step.type=="item"then p.count=itemCount(ply,step.item);if p.count>=step.count then if step.consume and GRM.Inventory and GRM.Inventory.RemoveItem then GRM.Inventory.RemoveItem(ply,step.item,step.count)end;p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);questMusic(ply,"step",def);checkCurrent(ply,def,p)end end
     end
     function Q.Start(ply,questID)
         local def=Q.Definitions[tostring(questID or "")];local ok,why=canStart(ply,def);if not ok then return false,why end
-        local all=progressFor(ply);all[def.id]={status="active",step=1,count=0,startedAt=os.time()};questNotice(ply,"start",def);cutscene(ply,def.cutscene.accept);checkCurrent(ply,def,all[def.id]);Q.SaveProgress();sync(ply);hook.Run("GRM_QuestStarted",ply,def.id);return true
+        local all=progressFor(ply);all[def.id]={status="active",step=1,count=0,startedAt=os.time()};questNotice(ply,"start",def);questMusic(ply,"start",def);cutscene(ply,def.cutscene.accept);checkCurrent(ply,def,all[def.id]);Q.SaveProgress();sync(ply);hook.Run("GRM_QuestStarted",ply,def.id);return true
     end
     function Q.Event(ply,eventName,target,amount,meta)
         if not IsValid(ply)then return end;eventName=trim(eventName,64);target=trim(target,96);amount=math.max(1,math.floor(tonumber(amount)or 1));local all=progressFor(ply)
-        for id,p in pairs(all)do local def=Q.Definitions[id];if def and def.enabled and not def.draft and p.status=="active"then local step=def.steps[p.step or 1];local match=step and step.type=="event"and step.event==eventName and(step.target==""or step.target==target);if match then p.count=math.min(step.count,(tonumber(p.count)or 0)+amount);if p.count>=step.count then p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);checkCurrent(ply,def,p)end end end end
+        for id,p in pairs(all)do local def=Q.Definitions[id];if def and def.enabled and not def.draft and p.status=="active"then local step=def.steps[p.step or 1];local match=step and step.type=="event"and step.event==eventName and(step.target==""or step.target==target);if match then p.count=math.min(step.count,(tonumber(p.count)or 0)+amount);if p.count>=step.count then p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);questMusic(ply,"step",def);checkCurrent(ply,def,p)end end end end
         Q.SaveProgress();sync(ply)
     end
     function Q.Talk(ply,npcID)
-        local all=progressFor(ply);for id,p in pairs(all)do local def=Q.Definitions[id];local step=def and def.steps[p.step or 1];if def and def.enabled and not def.draft and p.status=="active"and step and step.type=="talk"and step.npc==npcID then p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);checkCurrent(ply,def,p)end end;Q.SaveProgress();sync(ply)
+        local all=progressFor(ply);for id,p in pairs(all)do local def=Q.Definitions[id];local step=def and def.steps[p.step or 1];if def and def.enabled and not def.draft and p.status=="active"and step and step.type=="talk"and step.npc==npcID then p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);questMusic(ply,"step",def);checkCurrent(ply,def,p)end end;Q.SaveProgress();sync(ply)
     end
 
     local function inZone(pos,step)
@@ -420,7 +458,7 @@ if SERVER then
         local changed,changedPlayers=false,{}
         for _,ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll())do if IsValid(ply)and ply:Alive()then local all=progressFor(ply);for id,p in pairs(all)do local def=Q.Definitions[id];local step=def and def.steps[p.step or 1]
             if def and def.enabled and not def.draft and p.status=="active"and step then
-                if step.type=="visit"and inZone(ply:GetPos(),step)then p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);checkCurrent(ply,def,p);changed=true;changedPlayers[ply]=true
+                if step.type=="visit"and inZone(ply:GetPos(),step)then p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);questMusic(ply,"step",def);checkCurrent(ply,def,p);changed=true;changedPlayers[ply]=true
                 elseif step.type=="item"then local before=p.count;checkCurrent(ply,def,p);if before~=p.count then changed=true;changedPlayers[ply]=true end end
             end
         end end end

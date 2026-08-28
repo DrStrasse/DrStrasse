@@ -680,6 +680,17 @@ function Q.OpenGraphStudio(data)
             end
 
         elseif b.kind == "step" then
+            --[[ ПОЛНАЯ НАСТРОЙКА ЭТАПА (дозаполнено 28.08).
+
+                 Раньше панель показывала только тип, название, одну цель
+                 и количество. Поля target / radius / consume / описание
+                 существовали в формате квеста и в старом редакторе, но в
+                 узловой панели их не было — этап нельзя было донастроить,
+                 не открывая старую студию.
+
+                 Поля показываем ПО ТИПУ этапа: у «принести предмет» нет
+                 радиуса, у «посетить место» нет счётчика событий. Так
+                 автор не гадает, какие из восьми полей относятся к делу. ]]
             local typ = vgui.Create("DComboBox", right)
             typ:Dock(TOP) typ:SetTall(26) typ:DockMargin(10, 6, 10, 0)
             for _, k in ipairs({ { "Посетить место", "visit" }, { "Поговорить с NPC", "talk" },
@@ -687,21 +698,49 @@ function Q.OpenGraphStudio(data)
                 typ:AddChoice(k[1], k[2], d.type == k[2])
             end
             typ.OnSelect = function(_, _, _, v) d.type = v rebuildProps() end
+
             local ti = field(right, "Название для игрока", d.title)
-            local tgt = field(right, d.type == "talk" and "ID NPC"
-                or (d.type == "item" and "ID предмета" or "Событие"),
-                d.npc or d.item or d.event)
+            local ds = field(right, "Пояснение (необязательно)", d.description)
+
+            -- Главная цель этапа: смысл поля зависит от типа.
+            local tgt, tgt2, rad, cons
+            if d.type == "talk" then
+                tgt = field(right, "ID NPC", d.npc)
+            elseif d.type == "item" then
+                tgt = field(right, "ID предмета", d.item)
+                cons = vgui.Create("DCheckBoxLabel", right)
+                cons:Dock(TOP) cons:SetTall(22) cons:DockMargin(10, 8, 10, 0)
+                cons:SetText("Изъять предметы при сдаче") cons:SetTextColor(COL.text)
+                cons:SetValue(d.consume == true)
+                cons.OnChange = function(_, v) d.consume = v end
+            elseif d.type == "visit" then
+                rad = field(right, "Радиус точки", tostring(d.radius or 120))
+            else
+                tgt = field(right, "Событие", d.event)
+                --[[ Цель события: пустая означает «любая». Без этого поля
+                     нельзя было сделать «добыть именно железо». ]]
+                tgt2 = field(right, "Цель события (пусто = любая)", d.target)
+            end
+
             local cnt = field(right, "Количество", tostring(d.count or 1))
+
             local apply = mkBtn(right, "Применить", COL.green)
             apply:Dock(TOP) apply:SetTall(30) apply:DockMargin(10, 10, 10, 6)
             apply.DoClick = function()
                 d.title = ti:GetValue()
+                d.description = ds:GetValue()
                 d.count = math.max(1, math.floor(tonumber(cnt:GetValue()) or 1))
                 if d.type == "talk" then d.npc = tgt:GetValue()
                 elseif d.type == "item" then d.item = tgt:GetValue()
-                else d.event = tgt:GetValue() end
+                elseif d.type == "visit" then
+                    d.radius = math.Clamp(math.floor(tonumber(rad:GetValue()) or 120), 24, 10000)
+                else
+                    d.event = tgt:GetValue()
+                    d.target = tgt2:GetValue()
+                end
                 rebuildCards()
             end
+
             if d.type == "visit" then
                 local tool = mkBtn(right, "Задать зону тулом", Color(70, 90, 50))
                 tool:Dock(TOP) tool:SetTall(28) tool:DockMargin(10, 4, 10, 6)
@@ -711,14 +750,37 @@ function Q.OpenGraphStudio(data)
                     RunConsoleCommand("gmod_tool", "grm_quest_tool")
                     notification.AddLegacy("ЛКМ — первый угол, ПКМ — второй", NOTIFY_HINT, 6)
                 end
+                -- Показываем, задана зона или нет: без неё этап не работает.
+                local zoneNote = vgui.Create("DLabel", right)
+                zoneNote:Dock(TOP) zoneNote:SetTall(34) zoneNote:DockMargin(10, 2, 10, 6)
+                zoneNote:SetWrap(true) zoneNote:SetFont("GRMQS_Small")
+                local hasZone = istable(d.min) and istable(d.max) or istable(d.pos)
+                zoneNote:SetTextColor(hasZone and COL.green or COL.red)
+                zoneNote:SetText(hasZone and "Зона задана." or "Зона НЕ задана — этап не выполнится.")
             end
 
+            local hintEv = vgui.Create("DLabel", right)
+            hintEv:Dock(TOP) hintEv:SetTall(46) hintEv:DockMargin(10, 4, 10, 6)
+            hintEv:SetWrap(true) hintEv:SetFont("GRMQS_Small") hintEv:SetTextColor(COL.dim)
+            hintEv:SetText("Событие: mining, factory_produce, inventory_gain, ore_sell и любое из API. Этапы выполняются строго по порядку сверху вниз.")
+
         elseif b.kind == "cutscene" then
+            --[[ ПОЛНАЯ НАСТРОЙКА КАМЕР (дозаполнено 28.08).
+
+                 Раньше у камеры правились только титр и длительность.
+                 FOV, тип перехода и время пролёта существовали в формате
+                 и в старой студии, но здесь их не было — снять
+                 кинематографичный проезд было нельзя.
+
+                 Камеры редактируем по одной: выбранная разворачивается в
+                 полный набор полей. Показывать восемь полей у каждой из
+                 десяти камер сразу — панель превратится в простыню. ]]
             local ph = vgui.Create("DComboBox", right)
             ph:Dock(TOP) ph:SetTall(26) ph:DockMargin(10, 6, 10, 0)
             ph:AddChoice("При принятии квеста", "accept", d.phase ~= "complete")
             ph:AddChoice("При завершении квеста", "complete", d.phase == "complete")
             ph.OnSelect = function(_, _, _, v) d.phase = v rebuildCards() end
+
             local add = mkBtn(right, "+ Камера из взгляда", COL.green)
             add:Dock(TOP) add:SetTall(30) add:DockMargin(10, 8, 10, 4)
             add.DoClick = function()
@@ -727,26 +789,90 @@ function Q.OpenGraphStudio(data)
                     id = "camera_" .. (#d.cams + 1), next = "",
                     transition = #d.cams == 0 and "cut" or "move",
                     moveDuration = 1, duration = 3, fov = 75, caption = "",
+                    sound = "", image = "",
                     pos = { x = EyePos().x, y = EyePos().y, z = EyePos().z },
                     ang = { p = EyeAngles().p, y = EyeAngles().y, r = EyeAngles().r },
                 }
                 if d.cams[#d.cams - 1] then d.cams[#d.cams - 1].next = d.cams[#d.cams].id end
+                b._cam = #d.cams
                 rebuildCards() rebuildProps()
             end
+
+            --[[ Список камер: строка — одна камера. Клик разворачивает
+                 её настройки ниже. Первая всегда стартовая, это видно. ]]
             for ci, cam in ipairs(d.cams or {}) do
-                local row = vgui.Create("DPanel", right)
-                row:Dock(TOP) row:SetTall(58) row:DockMargin(10, 4, 10, 0)
-                row.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, COL.card) end
-                local cap = vgui.Create("DTextEntry", row) cap:SetPos(6, 6) cap:SetSize(230, 22)
-                cap:SetText(cam.caption or "") cap:SetPlaceholderText("титр")
-                cap.OnChange = function(e) cam.caption = e:GetValue() end
-                local dur = vgui.Create("DNumberWang", row) dur:SetPos(6, 32) dur:SetSize(64, 20)
-                dur:SetMin(0.25) dur:SetMax(30) dur:SetValue(cam.duration or 3)
-                dur.OnValueChanged = function(_, v) cam.duration = v end
-                local del = mkBtn(row, "×", COL.red) del:SetPos(244, 6) del:SetSize(26, 22)
-                del.DoClick = function() table.remove(d.cams, ci) rebuildCards() rebuildProps() end
+                local row = vgui.Create("DButton", right)
+                row:Dock(TOP) row:SetTall(30) row:DockMargin(10, 3, 10, 0) row:SetText("")
+                row.Paint = function(s, w, h)
+                    local sel = b._cam == ci
+                    draw.RoundedBox(5, 0, 0, w, h, sel and COL.nodeSel or COL.card)
+                    local mark = ci == 1 and "СТАРТ" or (cam.transition == "move" and "пролёт" or "склейка")
+                    draw.SimpleText(ci .. ". " .. (tostring(cam.caption or "") ~= "" and cam.caption or "без титра"),
+                        "GRMQS_Small", 8, h / 2, COL.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    draw.SimpleText(mark, "GRMQS_Small", w - 34, h / 2, COL.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                end
+                row.DoClick = function() b._cam = ci rebuildProps() end
+                local del = mkBtn(row, "×", COL.red) del:SetPos(276, 4) del:SetSize(24, 22)
+                del.DoClick = function()
+                    table.remove(d.cams, ci)
+                    b._cam = nil
+                    rebuildCards() rebuildProps()
+                end
             end
-            local play = mkBtn(right, "▶ Просмотр", COL.gold)
+
+            local cam = (d.cams or {})[b._cam or 0]
+            if cam then
+                local box = vgui.Create("DPanel", right)
+                box:Dock(TOP) box:SetTall(24) box:DockMargin(10, 10, 10, 0)
+                box.Paint = function(_, w, h)
+                    draw.RoundedBox(5, 0, 0, w, h, Color(20, 30, 44))
+                    draw.SimpleText("КАМЕРА " .. tostring(b._cam), "GRMQS_Small", 8, h / 2,
+                        COL.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                end
+
+                local cap = field(right, "Титр на экране", cam.caption)
+                local dur = field(right, "Показ точки, сек", tostring(cam.duration or 3))
+                local fov = field(right, "FOV (20-120, меньше = ближе)", tostring(cam.fov or 75))
+
+                --[[ Тип перехода. У первой камеры он всегда «мгновенно»:
+                     сцена стартует в ней, лететь неоткуда. ]]
+                local tr
+                if b._cam > 1 then
+                    tr = vgui.Create("DComboBox", right)
+                    tr:Dock(TOP) tr:SetTall(26) tr:DockMargin(10, 8, 10, 0)
+                    tr:AddChoice("Мгновенно (склейка)", "cut", cam.transition ~= "move")
+                    tr:AddChoice("Плавный пролёт", "move", cam.transition == "move")
+                    tr.OnSelect = function(_, _, _, v) cam.transition = v rebuildProps() end
+                end
+                local mv
+                if b._cam > 1 and cam.transition == "move" then
+                    mv = field(right, "Время пролёта, сек", tostring(cam.moveDuration or 1))
+                end
+
+                local snd = field(right, "Звук в этой точке", cam.sound)
+                local img = field(right, "Картинка (материал)", cam.image)
+
+                local applyCam = mkBtn(right, "Применить камеру", COL.green)
+                applyCam:Dock(TOP) applyCam:SetTall(28) applyCam:DockMargin(10, 10, 10, 4)
+                applyCam.DoClick = function()
+                    cam.caption = cap:GetValue()
+                    cam.duration = math.Clamp(tonumber(dur:GetValue()) or 3, 0.25, 30)
+                    cam.fov = math.Clamp(tonumber(fov:GetValue()) or 75, 20, 120)
+                    if mv then cam.moveDuration = math.Clamp(tonumber(mv:GetValue()) or 1, 0.05, 30) end
+                    cam.sound, cam.image = snd:GetValue(), img:GetValue()
+                    rebuildCards()
+                end
+
+                local reaim = mkBtn(right, "Переснять с текущего взгляда", Color(70, 90, 50))
+                reaim:Dock(TOP) reaim:SetTall(26) reaim:DockMargin(10, 2, 10, 4)
+                reaim.DoClick = function()
+                    cam.pos = { x = EyePos().x, y = EyePos().y, z = EyePos().z }
+                    cam.ang = { p = EyeAngles().p, y = EyeAngles().y, r = EyeAngles().r }
+                    notification.AddLegacy("Камера " .. tostring(b._cam) .. " переснята", NOTIFY_GENERIC, 3)
+                end
+            end
+
+            local play = mkBtn(right, "▶ Просмотр всей сцены", COL.gold)
             play:Dock(TOP) play:SetTall(28) play:DockMargin(10, 8, 10, 6)
             play.DoClick = function()
                 if #(d.cams or {}) == 0 then
@@ -757,15 +883,44 @@ function Q.OpenGraphStudio(data)
                 if Q.Cutscene then Q.Cutscene.restoreFrame = f end
             end
 
+            local tool = mkBtn(right, "Ставить точки тулом в мире", Color(58, 82, 112))
+            tool:Dock(TOP) tool:SetTall(26) tool:DockMargin(10, 2, 10, 6)
+            tool.DoClick = function()
+                RunConsoleCommand("grm_quest_tool_mode", "cutscene")
+                RunConsoleCommand("grm_quest_tool_quest_id", work.id or "")
+                RunConsoleCommand("grm_quest_tool_phase", d.phase or "accept")
+                RunConsoleCommand("gmod_tool", "grm_quest_tool")
+            end
+
         elseif b.kind == "music" then
+            --[[ МОМЕНТ ВОСПРОИЗВЕДЕНИЯ (дозаполнено 28.08).
+
+                 Раньше блок хранил только путь к звуку, и было неясно,
+                 когда он заиграет. Теперь момент выбирается явно и
+                 сохраняется в квест — движок читает его при событии. ]]
+            local when = vgui.Create("DComboBox", right)
+            when:Dock(TOP) when:SetTall(26) when:DockMargin(10, 6, 10, 0)
+            for _, k in ipairs({ { "При принятии квеста", "start" },
+                                 { "При завершении этапа", "step" },
+                                 { "При завершении квеста", "complete" } }) do
+                when:AddChoice(k[1], k[2], (d.when or "start") == k[2])
+            end
+            when.OnSelect = function(_, _, _, v) d.when = v rebuildCards() end
+
             local snd = field(right, "Путь к звуку", d.sound)
+            local vol = field(right, "Громкость 0.1 - 1.0", tostring(d.volume or 1))
             local lp = vgui.Create("DCheckBoxLabel", right)
             lp:Dock(TOP) lp:SetTall(22) lp:DockMargin(10, 8, 10, 0)
-            lp:SetText("Зациклить") lp:SetTextColor(COL.text) lp:SetValue(d.loop == true)
+            lp:SetText("Зациклить (фоновая музыка)") lp:SetTextColor(COL.text) lp:SetValue(d.loop == true)
             lp.OnChange = function(_, v) d.loop = v end
+
             local apply = mkBtn(right, "Применить", COL.green)
             apply:Dock(TOP) apply:SetTall(30) apply:DockMargin(10, 10, 10, 4)
-            apply.DoClick = function() d.sound = snd:GetValue() rebuildCards() end
+            apply.DoClick = function()
+                d.sound = snd:GetValue()
+                d.volume = math.Clamp(tonumber(vol:GetValue()) or 1, 0.1, 1)
+                rebuildCards()
+            end
             local test = mkBtn(right, "▶ Прослушать", COL.card)
             test:Dock(TOP) test:SetTall(26) test:DockMargin(10, 4, 10, 6)
             test.DoClick = function()
@@ -773,9 +928,9 @@ function Q.OpenGraphStudio(data)
                 if path ~= "" then surface.PlaySound(path) end
             end
             local note = vgui.Create("DLabel", right)
-            note:Dock(TOP) note:SetTall(50) note:DockMargin(10, 4, 10, 6)
+            note:Dock(TOP) note:SetTall(58) note:DockMargin(10, 4, 10, 6)
             note:SetWrap(true) note:SetFont("GRMQS_Small") note:SetTextColor(COL.dim)
-            note:SetText("Пример: music/hl2_song20_submix0.mp3 или ambient/atmosphere/city_beat1.wav")
+            note:SetText("Пример: music/hl2_song20_submix0.mp3 или ambient/atmosphere/city_beat1.wav\nЗациклённый трек останавливается в конце квеста.")
 
         elseif b.kind == "reward" then
             local mon = field(right, "Деньги за квест", tostring(d.money or 0))
@@ -813,6 +968,10 @@ function Q.OpenGraphStudio(data)
             note:SetText("Выдаётся автоматически при закрытии последнего этапа. Подключать ничего не нужно.")
 
         elseif b.kind == "achieve" then
+            --[[ ID выведен наружу (дозаполнено 28.08): раньше он молча
+                 подставлялся из ID квеста, и две ачивки разных квестов
+                 могли столкнуться, а переименовать было негде. ]]
+            local aid = field(right, "ID достижения (только латиница)", d.id ~= "" and d.id or ("quest_" .. tostring(work.id or "")))
             local nm = field(right, "Название", d.name)
             local ds = field(right, "Описание", d.description, true)
             local rw = field(right, "Деньги за ачивку", tostring(d.reward or 0))
@@ -825,19 +984,31 @@ function Q.OpenGraphStudio(data)
             apply.DoClick = function()
                 d.name, d.description = nm:GetValue(), ds:GetValue()
                 d.reward = math.max(0, math.floor(tonumber(rw:GetValue()) or 0))
-                if tostring(d.id or "") == "" then d.id = "quest_" .. tostring(work.id or "") end
+                -- ID чистим так же, как сервер: иначе он молча изменится при сохранении.
+                local raw = string.lower(string.Trim(aid:GetValue() or "")):gsub("[^%w_%-%:]", "_")
+                d.id = raw ~= "" and raw or ("quest_" .. tostring(work.id or ""))
                 rebuildCards()
             end
             local note = vgui.Create("DLabel", right)
             note:Dock(TOP) note:SetTall(46) note:DockMargin(10, 4, 10, 6)
             note:SetWrap(true) note:SetFont("GRMQS_Small") note:SetTextColor(COL.dim)
-            note:SetText("Выдаётся сразу после награды квеста. Её деньги — отдельная сумма.")
+            note:SetText("Выдаётся сразу после награды квеста. Её деньги — отдельная сумма.\n\nID пишите латиницей: кириллица в нём заменяется подчёркиваниями.")
 
         elseif b.kind == "start" then
             local note = vgui.Create("DLabel", right)
             note:Dock(TOP) note:SetTall(80) note:DockMargin(10, 4, 10, 6)
             note:SetWrap(true) note:SetFont("GRMQS_Small") note:SetTextColor(COL.dim)
             note:SetText("Соедини СТАРТ с первой репликой фазы «до принятия». Именно её игрок услышит, подойдя к NPC.")
+
+        elseif b.kind == "finish" then
+            --[[ У ФИНИША не было панели вовсе — блок выглядел сломанным.
+                 Настраивать в нём нечего, но объяснить, что происходит в
+                 этот момент, обязательно: это и был вопрос владельца
+                 «к чему сделано — до квеста / вовремя / после». ]]
+            local note = vgui.Create("DLabel", right)
+            note:Dock(TOP) note:SetTall(150) note:DockMargin(10, 4, 10, 6)
+            note:SetWrap(true) note:SetFont("GRMQS_Small") note:SetTextColor(COL.dim)
+            note:SetText("Конец квеста. Настраивать здесь нечего — блок отмечает, чем всё заканчивается.\n\nКогда игрок закрывает последний этап, по порядку происходит:\n1) награда из блока НАГРАДА;\n2) ачивка и её отдельная выплата;\n3) уведомление игроку;\n4) кат-сцена с фазой «при завершении».")
         end
 
         -- Удаление блока: у СТАРТ и ФИНИШ его нет, они каркас графа.
