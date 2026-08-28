@@ -275,20 +275,47 @@ if SERVER then
         return true
     end
 
-    function SP.LastPoint(ply)
+    --[[ Почему точка выхода недоступна. Возвращает точку ИЛИ причину
+         отказа — чтобы «где вышел не работает» можно было диагностировать
+         командой, а не гаданием (жалоба владельца 28.08). ]]
+    function SP.LastPointWhy(ply)
         local key = charKey(ply)
-        local rec = key ~= "" and SP.Data[key]
-        if not istable(rec) or not istable(rec.pos) then return nil end
-        -- Точка с другой карты бессмысленна.
-        if tostring(rec.map or "") ~= string.lower(game.GetMap() or "") then return nil end
-        if (os.time() - (tonumber(rec.at) or 0)) > SP.LastLifetime then return nil end
-        local pos = Vector(rec.pos.x or 0, rec.pos.y or 0, rec.pos.z or 0)
-        if not SP.PointAllowed(ply, pos) then return nil end
+        if key == "" then return nil, "нет ключа персонажа" end
+        local rec = SP.Data[key]
+        if not istable(rec) then
+            return nil, "нет записи для " .. key .. " (всего записей: "
+                .. table.Count(SP.Data or {}) .. ")"
+        end
+        if not istable(rec.pos) then return nil, "запись без координат" end
+
+        --[[ Карту сравниваем в нижнем регистре С ОБЕИХ сторон. Записи,
+             сделанные до этой правки, могли лечь с исходным регистром
+             имени карты, и тогда точка молча отбраковывалась. ]]
+        local recMap = string.lower(tostring(rec.map or ""))
+        local curMap = string.lower(game.GetMap() or "")
+        if recMap ~= "" and recMap ~= curMap then
+            return nil, "точка с другой карты (" .. recMap .. " вместо " .. curMap .. ")"
+        end
+
+        local age = os.time() - (tonumber(rec.at) or 0)
+        if age > SP.LastLifetime then
+            return nil, "точка протухла (" .. math.floor(age / 3600) .. " ч назад)"
+        end
+
+        local pos = Vector(tonumber(rec.pos.x) or 0, tonumber(rec.pos.y) or 0,
+            tonumber(rec.pos.z) or 0)
+        if not SP.PointAllowed(ply, pos) then
+            return nil, "точка внутри чужого закрытого помещения"
+        end
         return {
             pos = pos,
-            ang = Angle(0, (rec.ang and rec.ang.y) or 0, 0),
+            ang = Angle(0, (rec.ang and tonumber(rec.ang.y)) or 0, 0),
             label = "Последнее место",
         }
+    end
+
+    function SP.LastPoint(ply)
+        return (SP.LastPointWhy(ply))
     end
 
     -----------------------------------------------------------------
@@ -440,6 +467,28 @@ if SERVER then
         local list = (GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()
         for _, ply in ipairs(list) do SP.Remember(ply, false) end
     end)
+
+    --[[ ЗАПОМИНАНИЕ ПЕРЕД СМЕРТЬЮ.
+
+         Мёртвый игрок точку не сохраняет (иначе спавн на собственном
+         трупе). Но и терять место гибели нельзя: человек умер, вышел, а
+         при возвращении «где вышел» указывало бы на позицию получасовой
+         давности либо не существовало вовсе. Запоминаем ПОСЛЕДНЕЕ живое
+         положение прямо перед смертью. ]]
+    hook.Add("PlayerDeath", "GRM_SpawnPick_RememberBeforeDeath", function(ply)
+        if not IsValid(ply) then return end
+        if ply.GRMCharLimbo or ply:GetNWBool("GRM_Arrested", false) then return end
+        local key = charKey(ply)
+        if key == "" then return end
+        local pos = SP.RememberPos(ply)
+        SP.Data[key] = {
+            pos = { x = pos.x, y = pos.y, z = pos.z },
+            ang = { y = (ply:EyeAngles().y) or 0 },
+            at = os.time(),
+            map = string.lower(game.GetMap() or ""),
+        }
+        SP.Save("death", false)
+    end)
     -- И при смене персонажа: у каждого своё место.
     hook.Add("GRM_CharacterChanged", "GRM_SpawnPick_RememberSwap", function(ply, oldKey)
         if not (IsValid(ply) and isstring(oldKey) and oldKey ~= "") then return end
@@ -464,11 +513,39 @@ if SERVER then
     --- Диагностика: grm_spawnpick
     concommand.Add("grm_spawnpick", function(ply)
         if not IsValid(ply) then return end
+        local function say(t) ply:PrintMessage(HUD_PRINTTALK, t) end
         local options = SP.Options(ply)
-        ply:PrintMessage(HUD_PRINTTALK, "[Точка входа] доступно вариантов: " .. #options)
+        say("[Точка входа] доступно вариантов: " .. #options)
         for _, opt in ipairs(options) do
-            ply:PrintMessage(HUD_PRINTTALK, "  " .. opt.title .. " — " .. tostring(opt.label))
+            say("  " .. opt.title .. " — " .. tostring(opt.label))
         end
+
+        --[[ Разбор именно «где вышел»: владелец жаловался, что вариант не
+             работает, а по одному списку вариантов причину не понять. ]]
+        local key = charKey(ply)
+        say("  ключ персонажа: " .. (key ~= "" and key or "ПУСТОЙ"))
+        say("  записей в базе: " .. table.Count(SP.Data or {})
+            .. " · карта: " .. string.lower(game.GetMap() or ""))
+        local pt, why = SP.LastPointWhy(ply)
+        if pt then
+            say(("  «где вышел»: %.0f %.0f %.0f"):format(pt.pos.x, pt.pos.y, pt.pos.z))
+        else
+            say("  «где вышел» НЕДОСТУПНО: " .. tostring(why))
+        end
+        local mine = SP.Data[key]
+        if istable(mine) then
+            say(("  запись: карта %s, возраст %d мин"):format(
+                tostring(mine.map), math.floor((os.time() - (tonumber(mine.at) or 0)) / 60)))
+        end
+    end)
+
+    --- Принудительно запомнить текущую позицию (проверка на живом сервере).
+    concommand.Add("grm_spawnpick_save", function(ply)
+        if not IsValid(ply) then return end
+        local okSave = SP.Remember(ply, true)
+        ply:PrintMessage(HUD_PRINTTALK, okSave
+            and "[Точка входа] Текущее место запомнено."
+            or "[Точка входа] Сейчас запоминать нельзя (лимб, смерть или арест).")
     end)
 
     if GRM.Modules and GRM.Modules.Register then
