@@ -199,7 +199,17 @@ function Q.QuestToBlocks(work)
             if phase == "offer" and not firstOffer then firstOffer = b end
         end
     end
-    if firstOffer then
+    --[[ Авто-связь СТАРТ → первая реплика ставим ТОЛЬКО когда своей
+         раскладки ещё нет (исправлено 29.08, найдено стендом).
+
+         У блока СТАРТ один выход. Если автоматически занять его
+         репликой, сохранённая связь «старт → кат-сцена» при загрузке
+         отбрасывалась как дубль порта — владелец соединял блоки, а
+         после переоткрытия линия пропадала. Сохранённая раскладка
+         всегда приоритетнее догадки. ]]
+    local hasSavedGraph = istable(work.graph) and istable(work.graph.links)
+        and #work.graph.links > 0
+    if firstOffer and not hasSavedGraph then
         startBlock.links[#startBlock.links + 1] = { to = firstOffer.uid, port = 0 }
     end
 
@@ -264,6 +274,30 @@ function Q.QuestToBlocks(work)
     local fx, fy = place(5)
     add("finish", {}, fx, fy, "finish")
 
+    --[[ ВОССТАНОВЛЕНИЕ СВЯЗЕЙ ГРАФА.
+
+         Диалоговые связи уже собраны выше из самих реплик — их не
+         дублируем. Здесь поднимаем всё остальное: старт → кат-сцена,
+         кат-сцена → награда и т.д.
+
+         Ссылки на исчезнувшие блоки пропускаем: иначе граф нарисует
+         линию в пустоту. ]]
+    local byUID = {}
+    for _, b in ipairs(blocks) do byUID[b.uid] = b end
+
+    for _, l in ipairs((istable(work.graph) and work.graph.links) or {}) do
+        local from, to = byUID[tostring(l.from or "")], byUID[tostring(l.to or "")]
+        if from and to and from ~= to then
+            local port = math.floor(tonumber(l.port) or 0)
+            -- Диалоговые связи уже восстановлены из next/choices.
+            local dup = false
+            for _, ex in ipairs(from.links) do
+                if (ex.port or 0) == port then dup = true break end
+            end
+            if not dup then from.links[#from.links + 1] = { to = to.uid, port = port } end
+        end
+    end
+
     return blocks
 end
 
@@ -309,6 +343,26 @@ function Q.BlocksToQuest(work, blocks)
             out.achievement = table.Copy(d)
             out.achievement.enabled = true
             out.achievement._gx, out.achievement._gy = math.floor(b.x or 0), math.floor(b.y or 0)
+        end
+    end
+
+    --[[ СВЯЗИ ГРАФА (исправлено 29.08: «связь в графе с кат-сценой не
+         устанавливается»).
+
+         Переходы между репликами живут в самих репликах, поэтому они
+         сохранялись. А связи с кат-сценой, музыкой, наградой и ачивкой
+         не хранились НИГДЕ: соединил блоки, сохранил, переоткрыл — линий
+         нет. Складываем всю раскладку связей отдельным полем.
+
+         Пишем по uid: блоки можно двигать и удалять, порядок не важен. ]]
+    out.graph = { links = {} }
+    for _, b in ipairs(blocks or {}) do
+        for _, l in ipairs(b.links or {}) do
+            out.graph.links[#out.graph.links + 1] = {
+                from = tostring(b.uid or ""),
+                to = tostring(l.to or ""),
+                port = math.floor(tonumber(l.port) or 0),
+            }
         end
     end
 
@@ -987,8 +1041,19 @@ function Q.OpenGraphStudio(data)
                 if #(d.cams or {}) == 0 then
                     notification.AddLegacy("Сначала добавьте камеры", NOTIFY_HINT, 3) return
                 end
+                --[[ ЗАПУСК ПРОСМОТРА (исправлено 29.08).
+
+                     Раньше кнопка только слала пакет серверу, а тот
+                     настраивал видимость мира и обратно ничего не
+                     присылал — сцена не начиналась. Теперь запускаем
+                     локально через Q.StartCutscene, а он сам сообщит
+                     серверу о просмотре. ]]
+                if not isfunction(Q.StartCutscene) then
+                    notification.AddLegacy("Модуль кат-сцен не загружен", NOTIFY_ERROR, 4)
+                    return
+                end
                 f:SetVisible(false)
-                net.Start("GRM_Quest_CutscenePreview") net.WriteTable(d.cams) net.SendToServer()
+                Q.StartCutscene(table.Copy(d.cams), true)
                 if Q.Cutscene then Q.Cutscene.restoreFrame = f end
             end
 

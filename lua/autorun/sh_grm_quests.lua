@@ -296,6 +296,26 @@ if SERVER then
             _gx=math.Clamp(math.floor(tonumber(value._gx)or 0),0,20000),
             _gy=math.Clamp(math.floor(tonumber(value._gy)or 0),0,20000)}
     end
+    --[[ РАСКЛАДКА СВЯЗЕЙ ГРАФА (заказ владельца 29.08).
+
+         Нормализация пересобирает квест по полям, поэтому без явного
+         переноса связи стирались при первом же сохранении — ровно как
+         было с координатами блоков. Движок это поле не читает: оно
+         нужно только редактору, чтобы нарисовать линии. ]]
+    local function normalizeGraph(value)
+        if not istable(value) then return nil end
+        local out={links={}}
+        for _,l in ipairs(istable(value.links)and value.links or{})do
+            if #out.links>=256 then break end
+            local from,to=trim(l.from,64),trim(l.to,64)
+            if from~=""and to~=""then
+                out.links[#out.links+1]={from=from,to=to,
+                    port=math.Clamp(math.floor(tonumber(l.port)or 0),0,32)}
+            end
+        end
+        if #out.links==0 then return nil end
+        return out
+    end
     function Q.NormalizeDefinition(raw)
         raw=istable(raw)and raw or {}
         local id=string.lower(trim(raw.id,64)):gsub("[^%w_%-%:]","_")
@@ -306,7 +326,7 @@ if SERVER then
         for itemID,count in pairs(istable(raw.rewards and raw.rewards.items)and raw.rewards.items or {})do rewards.items[trim(itemID,96)]=math.Clamp(math.floor(tonumber(count)or 1),1,10000)end
         local prerequisites={};for _,v in ipairs(istable(raw.prerequisites)and raw.prerequisites or {})do prerequisites[#prerequisites+1]=trim(v,64)end
         local title,summary=trim(raw.title,100),trim(raw.summary,400);local notifications=istable(raw.notifications)and raw.notifications or{}
-        return {id=id,title=title,draft=draft,summary=summary,category=trim(raw.category,48),npc=trim(raw.npc,64),repeatable=raw.repeatable==true,autoStart=raw.autoStart==true,enabled=raw.enabled~=false,requireFaction=trim(raw.requireFaction,64),requireFlag=trim(raw.requireFlag,64),requireMoney=math.Clamp(math.floor(tonumber(raw.requireMoney)or 0),0,100000000),prerequisites=prerequisites,steps=steps,rewards=rewards,achievement=normalizeAchievement(raw.achievement,id,title,summary),notifications={start=normalizeNotification(notifications.start,"Получен квест: {title}",false),step=normalizeNotification(notifications.step,"Этап выполнен: {step}",false),complete=normalizeNotification(notifications.complete,"Квест завершён: {title}",true)},dialogue=normalizeDialogue(raw.dialogue),music=normalizeMusic(raw.music),cutscene={accept=normalizeCutscene(raw.cutscene and raw.cutscene.accept),complete=normalizeCutscene(raw.cutscene and raw.cutscene.complete)}}
+        return {id=id,title=title,draft=draft,summary=summary,category=trim(raw.category,48),npc=trim(raw.npc,64),repeatable=raw.repeatable==true,autoStart=raw.autoStart==true,enabled=raw.enabled~=false,requireFaction=trim(raw.requireFaction,64),requireFlag=trim(raw.requireFlag,64),requireMoney=math.Clamp(math.floor(tonumber(raw.requireMoney)or 0),0,100000000),prerequisites=prerequisites,steps=steps,rewards=rewards,achievement=normalizeAchievement(raw.achievement,id,title,summary),notifications={start=normalizeNotification(notifications.start,"Получен квест: {title}",false),step=normalizeNotification(notifications.step,"Этап выполнен: {step}",false),complete=normalizeNotification(notifications.complete,"Квест завершён: {title}",true)},dialogue=normalizeDialogue(raw.dialogue),music=normalizeMusic(raw.music),graph=normalizeGraph(raw.graph),cutscene={accept=normalizeCutscene(raw.cutscene and raw.cutscene.accept),complete=normalizeCutscene(raw.cutscene and raw.cutscene.complete)}}
     end
 
     function Q.SaveDefinitions()

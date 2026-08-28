@@ -195,6 +195,18 @@ local function startCutscene(nodes,adminPreview)
  Q.Cutscene={active=true,nodes=nodes,index=1,phase="hold",phaseStart=CurTime(),currentPos=firstPos,currentAng=firstAng,currentFov=firstFov,fromPos=firstPos,fromAng=firstAng,fromFov=firstFov,soundNode=0}
 end
 net.Receive("GRM_Quest_Cutscene",function()startCutscene(net.ReadTable()or{},false)end)
+
+--[[ ЭКСПОРТ ЗАПУСКА СЦЕНЫ (жалоба владельца 29.08: «не запускается
+     кат-сцена»).
+
+     startCutscene была ЛОКАЛЬНОЙ функцией этого файла. Узловой редактор
+     живёт в другом файле и дотянуться до неё не мог: кнопка «Просмотр»
+     слала пакет на сервер, а тот лишь настраивал видимость мира (PVS) и
+     обратно ничего не присылал. Сцена не начиналась вообще.
+
+     Отдаём функцию наружу — редактор запускает просмотр локально, без
+     похода на сервер. ]]
+Q.StartCutscene = startCutscene
 hook.Add("CalcView","GRM_Quest_CutsceneView",function(ply,pos,angles,fov)
  local s=Q.Cutscene;if not s.active then return end;local node=s.nodes[s.index];if not node then stopCutscene()return end
  local targetPos,targetAng,targetFov=nodeTransform(node);local origin,viewAng,viewFov=targetPos,targetAng,targetFov
