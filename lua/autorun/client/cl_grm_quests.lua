@@ -125,7 +125,12 @@ hook.Add("HUDPaint","GRM_Quest_Tracker",function()
 end)
 
 -- Cutscene nodes use server-sanitized transforms and local packaged media only.
-local function stopCutscene()local restore=Q.Cutscene and Q.Cutscene.restoreFrame;if Q.Cutscene and Q.Cutscene.active then net.Start("GRM_Quest_CutsceneStop");net.SendToServer()end;Q.Cutscene={active=false};gui.EnableScreenClicker(false);if IsValid(restore)then restore:SetVisible(true);restore:MakePopup()end end
+--[[ Завершение сцены. ВАЖНО: возвращаем чужие HUDPaint, снятые на время
+     показа. Забыть об этом — значит оставить игрока без HUD до
+     переподключения, и на любом аварийном выходе (смерть, ошибка,
+     пропуск пробелом) тоже. Поэтому восстановление стоит здесь, в
+     единственной точке выхода, а не рядом с каждым вызовом. ]]
+local function stopCutscene()local restore=Q.Cutscene and Q.Cutscene.restoreFrame;if Q.Cutscene and Q.Cutscene.active then net.Start("GRM_Quest_CutsceneStop");net.SendToServer()end;Q.Cutscene={active=false};gui.EnableScreenClicker(false);if Q.RestoreCutsceneHUD then Q.RestoreCutsceneHUD()end;if IsValid(restore)then restore:SetVisible(true);restore:MakePopup()end end
 local function linkedCutsceneNodes(nodes)
  local source=table.Copy(nodes or{});local byID={};for i,node in ipairs(source)do byID[tostring(node.id or"")]=i end
  local ordered,seen,index={}, {},1
@@ -158,9 +163,153 @@ hook.Add("CalcView","GRM_Quest_CutsceneView",function(ply,pos,angles,fov)
  end
  return{origin=origin,angles=viewAng,fov=viewFov,znear=2,zfar=32768,drawviewer=false,drawmonitors=true}
 end)
-hook.Add("HUDPaint","GRM_Quest_CutsceneHUD",function()local s=Q.Cutscene;if not s.active then return end;local n=s.nodes[s.index]or {};draw.RoundedBox(0,0,0,ScrW(),62,Color(0,0,0,235));draw.RoundedBox(0,0,ScrH()-82,ScrW(),82,Color(0,0,0,235));if n.image and n.image~=""then local m=Q._cutsceneMats;if not m then m={}Q._cutsceneMats=m end;local mat=m[n.image];if not mat then mat=Material(n.image,"smooth")m[n.image]=mat end;surface.SetMaterial(mat);surface.SetDrawColor(255,255,255,220);surface.DrawTexturedRect(ScrW()/2-80,70,160,90)end;draw.SimpleText(n.caption or "","GRMQ_Head",ScrW()/2,ScrH()-42,C.text,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER);draw.SimpleText("ПРОБЕЛ — пропустить","GRMQ_Small",ScrW()-18,ScrH()-18,C.dim,TEXT_ALIGN_RIGHT,TEXT_ALIGN_CENTER)end)
+--[[ ЧЁРНЫЕ ПОЛОСЫ И ЧИСТЫЙ ЭКРАН (заказ владельца 28.08).
+
+     «Когда проигрываются кат-сцены, полоски чёрные должны быть чёрными,
+      а не прозрачными, и худ не должен рисоваться. Во время кат-сцены
+      ничего лишнего быть не должно.»
+
+     Что было не так:
+       • полосы рисовались с альфой 235 — сквозь них просвечивал мир;
+       • HUDPaint кат-сцены шёл в общей очереди, поэтому чужие HUDPaint
+         (наш HUD, чат, метки) рисовались ПОВЕРХ полос;
+       • стандартный HUD Source (здоровье, патроны, селектор оружия)
+         никто не выключал.
+
+     Полосы теперь полностью непрозрачные, а весь остальной HUD на время
+     сцены снимается. Рисуем кат-сцену в HUDPaintBackground И в HUDPaint:
+     первый идёт раньше чужих хуков, второй кладёт полосы поверх тех,
+     кто всё-таки прорвался. ]]
+
+--- Вспомогательное: рамка кат-сцены. Одна точка правды для обоих проходов.
+local function drawCutsceneBars()
+    local s = Q.Cutscene
+    if not s.active then return end
+    local n = s.nodes[s.index] or {}
+    local w, h = ScrW(), ScrH()
+
+    --[[ Высота полос — доля экрана, а не константа: на 1920x1080 прежние
+         62 пикселя выглядели узкой каймой, а на маленьком разрешении
+         съедали пол-экрана. 12% сверху и снизу дают киношный кадр 2.35:1. ]]
+    local barTop = math.floor(h * 0.12)
+    local barBottom = math.floor(h * 0.15)
+
+    -- ПОЛНОСТЬЮ непрозрачный чёрный: мир сквозь полосы просвечивать не должен.
+    surface.SetDrawColor(0, 0, 0, 255)
+    surface.DrawRect(0, 0, w, barTop)
+    surface.DrawRect(0, h - barBottom, w, barBottom)
+
+    if n.image and n.image ~= "" then
+        local m = Q._cutsceneMats
+        if not m then m = {} Q._cutsceneMats = m end
+        local mat = m[n.image]
+        if not mat then mat = Material(n.image, "smooth") m[n.image] = mat end
+        surface.SetMaterial(mat)
+        surface.SetDrawColor(255, 255, 255, 220)
+        surface.DrawTexturedRect(w / 2 - 80, barTop + 8, 160, 90)
+    end
+
+    -- Подпись и подсказка живут ВНУТРИ нижней полосы, а не на кадре.
+    draw.SimpleText(n.caption or "", "GRMQ_Head", w / 2, h - barBottom / 2 - 8,
+        C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    draw.SimpleText("ПРОБЕЛ — пропустить", "GRMQ_Small", w - 18, h - 16,
+        C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+end
+
+hook.Add("HUDPaintBackground", "GRM_Quest_CutsceneHUD", drawCutsceneBars)
+hook.Add("HUDPaint", "GRM_Quest_CutsceneHUDTop", drawCutsceneBars)
+
+--[[ Стандартный HUD Source: здоровье, патроны, СЕЛЕКТОР ОРУЖИЯ, прицел.
+     Возврат false прячет элемент. Чат не трогаем: он рисуется поверх
+     полос, но лишать человека переписки на минуту ролика неправильно. ]]
+local CUTSCENE_HIDE_HUD = {
+    CHudHealth = true, CHudBattery = true, CHudAmmo = true, CHudSecondaryAmmo = true,
+    CHudWeaponSelection = true, CHudCrosshair = true, CHudDamageIndicator = true,
+    CHudGeiger = true, CHudZoom = true, CHudSuitPower = true, CHudPoisonDamageIndicator = true,
+    CHudSquadStatus = true, CHudTrain = true, CHudMessage = true, CHudMenu = true,
+}
+hook.Add("HUDShouldDraw", "GRM_Quest_CutsceneHideHUD", function(name)
+    if not Q.Cutscene.active then return end
+    if CUTSCENE_HIDE_HUD[name] then return false end
+end)
+
+--[[ ЧУЖИЕ HUDPaint. HUDShouldDraw не властен над хуками аддонов: наш
+     собственный HUD, метки над головами и прочее рисуются как обычно и
+     лезли бы поверх полос. На время сцены снимаем их и возвращаем при
+     любом выходе. Приём тот же, что в CCTV — там эта задача уже решена. ]]
+local suppressedHUDPaint = {}
+local KEEP_HUDPAINT = {
+    GRM_Quest_CutsceneHUD = true,
+    GRM_Quest_CutsceneHUDTop = true,
+}
+
+local function suppressForeignHUD()
+    local hooks = hook.GetTable and hook.GetTable().HUDPaint
+    if not hooks then return end
+    local remove = {}
+    for id, fn in pairs(hooks) do
+        if not KEEP_HUDPAINT[id] and isstring(id) then
+            remove[#remove + 1] = { id = id, fn = fn }
+        end
+    end
+    for _, row in ipairs(remove) do
+        suppressedHUDPaint[row.id] = row.fn
+        hook.Remove("HUDPaint", row.id)
+    end
+end
+
+local function restoreForeignHUD()
+    for id, fn in pairs(suppressedHUDPaint) do
+        --[[ Возвращаем только если за время сцены никто не занял это имя
+             заново: иначе затрём свежий хук устаревшей функцией. ]]
+        local hooks = hook.GetTable and hook.GetTable().HUDPaint
+        if not (hooks and hooks[id]) then hook.Add("HUDPaint", id, fn) end
+    end
+    suppressedHUDPaint = {}
+end
+
+Q.RestoreCutsceneHUD = restoreForeignHUD
+
+--[[ Подхватываем и те HUDPaint, что зарегистрировались уже ПОСЛЕ начала
+     сцены: аддоны любят вешать хуки лениво, по первому событию. ]]
+hook.Add("Think", "GRM_Quest_CutsceneSuppress", function()
+    if not Q.Cutscene.active then return end
+    if GRM.Perf and GRM.Perf.Throttle and not GRM.Perf.Throttle("quest.cutscene.hud", 0.5) then return end
+    suppressForeignHUD()
+end)
+
+--[[ БЛОКИРОВКА УПРАВЛЕНИЯ (заказ владельца: «игрок не должен использовать
+     селектор оружия или какие-либо меню»).
+
+     ClearButtons в CreateMove гасит движение и стрельбу, но НЕ трогает
+     привязки: invnext/invprev листали оружие, Q открывал спавн-меню,
+     C — контекстное. Закрываем всё это отдельно. ]]
+hook.Add("PlayerBindPress", "GRM_Quest_CutsceneBinds", function(_, bind, pressed)
+    if not Q.Cutscene.active then return end
+    bind = tostring(bind or ""):lower()
+    --[[ Пропускаем только чат и консоль: человек должен иметь возможность
+         написать, что сцена сломалась, и открыть консоль. ]]
+    if bind:find("messagemode") or bind:find("toggleconsole") then return end
+    return true
+end)
+
+hook.Add("SpawnMenuOpen", "GRM_Quest_CutsceneNoSpawn", function()
+    if Q.Cutscene.active then return false end
+end)
+hook.Add("ContextMenuOpen", "GRM_Quest_CutsceneNoContext", function()
+    if Q.Cutscene.active then return false end
+end)
+--[[ Селектор оружия колесом мыши идёт мимо PlayerBindPress. ]]
+hook.Add("PlayerSwitchWeapon", "GRM_Quest_CutsceneNoSwitch", function()
+    if Q.Cutscene.active then return true end
+end)
+hook.Add("HUDShouldDraw", "GRM_Quest_CutsceneNoSelector", function(name)
+    if Q.Cutscene.active and name == "CHudWeaponSelection" then return false end
+end)
+
 hook.Add("PlayerButtonDown","GRM_Quest_CutsceneSkip",function(ply,key)if ply==LocalPlayer()and Q.Cutscene.active and key==KEY_SPACE then stopCutscene()end end)
 hook.Add("CreateMove","GRM_Quest_CutsceneLock",function(cmd)if Q.Cutscene.active then cmd:ClearMovement();cmd:ClearButtons()end end)
+
 hook.Add("PlayerDeath","GRM_Quest_CutsceneDeath",function(ply)if ply==LocalPlayer()then stopCutscene()end end)
 
 -- Quest Studio v1.1: visual constructors, no raw JSON required.
