@@ -1470,6 +1470,55 @@ if SERVER then
     end
     D.GetRecord = getRecord
 
+    --[[ ПОСТАВИТЬ ВЛАДЕЛЬЦА ДВЕРИ ИЗВНЕ (жалоба владельца 28.08:
+         «дверь как была ничья, так и осталась ничья»).
+
+         Недвижимость привязывала дверь к объекту, но САМА ЗАПИСЬ двери
+         оставалась нетронутой: owner_type = "none". Табличка на двери
+         читает NW-поле GRM_DoorOwner, которое заполняется из этой
+         записи, поэтому дверь купленной квартиры продолжала показывать
+         «Продаётся / Ничья».
+
+         Здесь одна точка, которая делает всё сразу и правильно:
+         пишет запись, гасит признак «продаётся», обновляет табличку у
+         всех полотен двери и сохраняет. Раньше каждый желающий должен
+         был знать про owner_type, ownerLabel, ApplyRecordVisual и
+         SaveDoors — и, конечно, забывал половину.
+
+         ownerType: "player" / "faction" / "none". ]]
+    function D.SetDoorOwner(ent, ownerType, key, nick, title)
+        if not IsValid(ent) then return false end
+        local rec, id = getRecord(ent)
+        if not rec then return false end
+
+        ownerType = tostring(ownerType or "none")
+        if ownerType == "none" then
+            rec.owner_type = "none"
+            rec.owner_key, rec.owner_nick, rec.owner_faction = "", "", ""
+            -- Освободили — значит снова можно приобрести.
+            rec.ownable = true
+        else
+            rec.owner_type = ownerType
+            if ownerType == "faction" then
+                rec.owner_faction = tostring(key or "")
+                rec.owner_key, rec.owner_nick = "", ""
+            else
+                rec.owner_key = tostring(key or "")
+                rec.owner_nick = utf8cut(tostring(nick or ""), 64)
+                rec.owner_faction = ""
+            end
+            --[[ Дверь принадлежит объекту недвижимости: покупать её
+                 отдельно, в обход квартиры, нельзя. ]]
+            rec.ownable = false
+        end
+        if isstring(title) and title ~= "" then rec.title = utf8cut(title, 64) end
+        rec._ephemeral = nil
+
+        D.ApplyRecordVisual(ent, rec)
+        if D.SaveDoors then D.SaveDoors() end
+        return true, rec, id
+    end
+
     local function persist(rec, id)
         if not rec or not id then return rec end
         rec.id = id

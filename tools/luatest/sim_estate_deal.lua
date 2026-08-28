@@ -104,14 +104,64 @@ GRM.Identity = {
     ResolveCharacter = function() return nil end,
 }
 
--- Двери.
+--[[ Двери-заглушки с НАСТОЯЩЕЙ семантикой: у каждой своя запись с
+     владельцем и NW-поле GRM_DoorOwner, из которого рисуется табличка.
+     Без этого стенд не увидел бы баг «дверь осталась ничья». ]]
 local SAVED_PERSIST = { vending = 0, fuel = 0 }
+local DOOR_RECS = {}
+local DOOR_SAVES = 0
+
+local function doorLabel(rec)
+    if not rec or rec.owner_type == "none" then return "" end
+    if rec.owner_type == "player" then return rec.owner_nick or "" end
+    if rec.owner_type == "faction" then return "Фракция: " .. tostring(rec.owner_faction) end
+    return ""
+end
+
 GRM.Doors = {
     IsDoor = function(e) return IsValid(e) and e._door == true end,
     GetDoorID = function(e) return e._id end,
-    LockDoor = function() end, GetRecord = function() end, SaveDoors = function() end,
+    LockDoor = function() end,
+    SaveDoors = function() DOOR_SAVES = DOOR_SAVES + 1 end,
     HasWarrant = function() return false end, HasPropertyWarrant = function() return false end,
+    GetRecord = function(e)
+        if not IsValid(e) then return nil end
+        DOOR_RECS[e._id] = DOOR_RECS[e._id] or
+            { id = e._id, owner_type = "none", owner_key = "", owner_nick = "",
+              owner_faction = "", ownable = true, title = "" }
+        return DOOR_RECS[e._id], e._id
+    end,
+    ApplyRecordVisual = function(e, rec)
+        if IsValid(e) then e._nwOwner = doorLabel(rec) end
+    end,
 }
+-- Та же функция, что и в настоящем модуле дверей.
+GRM.Doors.SetDoorOwner = function(ent, ownerType, key, nick, title)
+    if not IsValid(ent) then return false end
+    local rec = GRM.Doors.GetRecord(ent)
+    if not rec then return false end
+    ownerType = tostring(ownerType or "none")
+    if ownerType == "none" then
+        rec.owner_type = "none"
+        rec.owner_key, rec.owner_nick, rec.owner_faction = "", "", ""
+        rec.ownable = true
+    else
+        rec.owner_type = ownerType
+        if ownerType == "faction" then
+            rec.owner_faction = tostring(key or "")
+            rec.owner_key, rec.owner_nick = "", ""
+        else
+            rec.owner_key = tostring(key or "")
+            rec.owner_nick = tostring(nick or "")
+            rec.owner_faction = ""
+        end
+        rec.ownable = false
+    end
+    if isstring(title) and title ~= "" then rec.title = title end
+    GRM.Doors.ApplyRecordVisual(ent, rec)
+    GRM.Doors.SaveDoors()
+    return true, rec
+end
 GRM.Access = { Can = function() return false end, Register = function() end }
 GRM.VendingBiz = { MarkDirty = function() end,
     Persist = function() SAVED_PERSIST.vending = SAVED_PERSIST.vending + 1 end }
@@ -214,9 +264,11 @@ local function mkPump(pos)
 end
 
 local function mkDoor(id, pos)
-    local e = { _valid=true, _door=true, _id=id, _pos=pos,
+    local e = { _valid=true, _door=true, _id=id, _pos=pos, _nwOwner="",
         GetClass=function() return "prop_door_rotating" end,
-        GetPos=function(s) return s._pos end }
+        GetPos=function(s) return s._pos end,
+        -- То, что игрок видит на табличке.
+        GetNWString=function(s,k,d) if k=="GRM_DoorOwner" then return s._nwOwner end return d or "" end }
     WORLD[#WORLD+1] = e
     return e
 end
@@ -439,6 +491,82 @@ ok(est:find("GRM.EstateDeal.Open(ply, ES.KindOf(rec))", 1, true) ~= nil,
    "свободный объект открывает окно СДЕЛКИ, а не админку")
 ok(est:find("ES.OpenPanel(ply, rec)", 1, true) ~= nil,
    "а свой — панель управления")
+
+-----------------------------------------------------------------------
+print("\n=== 10. ТАБЛИЧКА НА ДВЕРИ (жалоба 28.08) ===")
+-----------------------------------------------------------------------
+--[[ «Дверь как была ничья, так и осталась ничья.» Объект куплен, двери
+     привязаны, а сама ЗАПИСЬ двери оставалась owner_type = "none" —
+     табличка читает именно её. ]]
+do
+    P.Records = {}
+    DOOR_RECS = {}
+    local home = P.Normalize({
+        id="h1", name="Жилой объект", type="apartment",
+        ownerType="none", tenure="none", purchasePrice=40000, rentPrice=4000,
+        zone={mins=Vector(4000,-100,0), maxs=Vector(4200,100,200)},
+    })
+    P.Records["h1"] = home
+    P.Reindex()
+
+    local dr = mkDoor("hd1", Vector(4100, 0, 10))
+    local owner2 = mkPly({ key="7:char1", name="Александр Фон Греннер", pos=Vector(4100,0,0) })
+    PLAYERS = { owner2 }
+    WALLET[owner2] = 500000
+
+    ok(dr:GetNWString("GRM_DoorOwner","") == "",
+       "до покупки табличка пустая — «Продаётся / Ничья»")
+
+    P.PanelAction(owner2, { action="buy", id="h1" })
+
+    ok(home.ownerKey == "7:char1", "объект куплен")
+    ok(#home.doors == 1, "дверь привязана к объекту", #home.doors)
+
+    local rec = DOOR_RECS["hd1"]
+    ok(rec and rec.owner_type == "player",
+       "ИСПРАВЛЕНО: в записи двери проставлен владелец", rec and rec.owner_type)
+    ok(rec and rec.owner_key == "7:char1", "с ключом покупателя", rec and rec.owner_key)
+    ok(rec and rec.ownable == false,
+       "и дверь больше не продаётся отдельно от квартиры")
+    ok(dr:GetNWString("GRM_DoorOwner","") == "Александр Фон Греннер",
+       "ГЛАВНОЕ: на табличке имя владельца, а не «Ничья»",
+       dr:GetNWString("GRM_DoorOwner",""))
+    ok(rec and rec.title == "Жилой объект", "и название объекта", rec and rec.title)
+
+    -- Продажа возвращает дверь в общий фонд.
+    P.PanelAction(owner2, { action="release", id="h1" })
+    rec = DOOR_RECS["hd1"]
+    ok(rec and rec.owner_type == "none",
+       "после продажи дверь снова ничья", rec and rec.owner_type)
+    ok(rec and rec.ownable == true,
+       "и снова доступна к покупке — иначе объект нельзя было бы перепродать")
+    ok(dr:GetNWString("GRM_DoorOwner","") == "",
+       "табличка опять пустая")
+end
+
+-----------------------------------------------------------------------
+print("\n=== 11. ХУК ОБНОВЛЕНИЯ ДВЕРЕЙ ===")
+-----------------------------------------------------------------------
+do
+    local prop = (function() local f=assert(io.open("lua/autorun/sh_grm_property.lua"))
+        local t=f:read("*a") f:close() return t end)()
+    ok(prop:find("GRM_Property_DoorsSync", 1, true) ~= nil,
+       "ИСПРАВЛЕНО: двери обновляются на общем хуке смены владельца")
+    ok(prop:find("GRM.Doors.SetDoorOwner", 1, true) ~= nil,
+       "недвижимость ставит владельца через единую функцию модуля дверей")
+
+    local doors = (function() local f=assert(io.open("lua/autorun/sh_grm_doors.lua"))
+        local t=f:read("*a") f:close() return t end)()
+    ok(doors:find("function D.SetDoorOwner", 1, true) ~= nil,
+       "в модуле дверей появилась публичная точка SetDoorOwner")
+    local fn = doors:match("function D%.SetDoorOwner.-\n    end")
+    ok(fn and fn:find("D.ApplyRecordVisual", 1, true) ~= nil,
+       "она обновляет табличку у ВСЕХ полотен двери")
+    ok(fn and fn:find("D.SaveDoors", 1, true) ~= nil,
+       "и сохраняет — владелец переживёт рестарт")
+    ok(fn and fn:find("rec.ownable = true", 1, true) ~= nil,
+       "при освобождении дверь снова становится покупаемой")
+end
 
 print("")
 print(string.format("ИТОГО: %d ok, %d FAIL", pass, fail))

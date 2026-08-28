@@ -101,7 +101,38 @@ if SERVER then
  end
  local function lockAll(r,on)for _,id in ipairs(r.doors)do local e=doorByID(id);if IsValid(e)and GRM.Doors.LockDoor then GRM.Doors.LockDoor(e,on)end end end
  local function zoneFromDoors(ids)local mn,mx;for _,id in ipairs(ids or{})do local e=doorByID(id);if IsValid(e)and e.WorldSpaceAABB then local a,b=e:WorldSpaceAABB();if a and b then mn=mn and Vector(math.min(mn.x,a.x),math.min(mn.y,a.y),math.min(mn.z,a.z))or a;mx=mx and Vector(math.max(mx.x,b.x),math.max(mx.y,b.y),math.max(mx.z,b.z))or b end end end;if not mn then return nil end;local pad=Vector(192,192,96);mn=mn-pad;mx=mx+pad;return{mins={x=mn.x,y=mn.y,z=mn.z},maxs={x=mx.x,y=mx.y,z=mx.z}}end
- local function setDoorPolicy(r)if not(GRM.Doors and GRM.Doors.GetRecord)then return end;for _,id in ipairs(r.doors)do local e=doorByID(id);if IsValid(e)then local rec=GRM.Doors.GetRecord(e);if rec then rec.ownable=false;rec.title=r.name;rec.id=id;rec._ephemeral=nil end end end;if GRM.Doors.SaveDoors then GRM.Doors.SaveDoors()end end
+ --[[ ВЛАДЕЛЕЦ НА САМОЙ ДВЕРИ (жалоба владельца 28.08: «дверь как была
+      ничья, так и осталась ничья»).
+
+      Раньше здесь гасился только признак «продаётся», а запись двери
+      оставалась с owner_type = "none". Табличка над дверью читает
+      именно её, поэтому дверь купленной квартиры продолжала показывать
+      «Продаётся / Ничья», хотя объект уже был куплен.
+
+      Теперь владелец объекта проставляется и на дверях. Освободили
+      объект — двери снова становятся ничьими и доступными к покупке. ]]
+ local function setDoorPolicy(r)
+  if not(GRM.Doors and GRM.Doors.GetRecord)then return end
+  local owned=tostring(r.ownerType or "none")~="none"
+  local dtype,dkey,dnick="none","",""
+  if owned then
+   if r.ownerType=="faction" then dtype,dkey="faction",tostring(r.ownerKey or "")
+   else dtype,dkey,dnick="player",tostring(r.ownerKey or ""),tostring(r.ownerName or "") end
+  end
+  for _,id in ipairs(r.doors)do
+   local e=doorByID(id)
+   if IsValid(e)then
+    if GRM.Doors.SetDoorOwner then
+     GRM.Doors.SetDoorOwner(e,dtype,dkey,dnick,r.name)
+    else
+     -- Старый модуль дверей без SetDoorOwner: хотя бы прежнее поведение.
+     local rec=GRM.Doors.GetRecord(e)
+     if rec then rec.ownable=false;rec.title=r.name;rec.id=id;rec._ephemeral=nil end
+    end
+   end
+  end
+  if GRM.Doors.SaveDoors then GRM.Doors.SaveDoors()end
+ end
  local function public(r,sensitive)return{id=r.id,name=r.name,type=r.type,typeName=P.Types[r.type],estateKind=(GRM.Estate and GRM.Estate.KindOf and GRM.Estate.KindOf(r))or"none",estatePenalty=r.estatePenalty,doors=#r.doors,ownerType=r.ownerType,ownerKey=sensitive and r.ownerKey or"",ownerName=r.ownerName,tenure=r.tenure,rentUntil=r.rentUntil,purchasePrice=r.purchasePrice,rentPrice=r.rentPrice,utilityRate=r.utilityRate,utilityDebt=r.utilityDebt,sealed=r.sealed,sealReason=r.sealReason,sealUntil=r.sealUntil,alarmNetwork=sensitive and r.alarmNetwork or"",cameraIDs=sensitive and r.cameraIDs or{},employees=sensitive and r.employees or{},guests=sensitive and r.guests or{},tempKeys=sensitive and r.tempKeys or{},zone=r.zone}end
  local function send(p,r,admin)
   if not IsValid(p)then return end;local rows={};if r then rows[1]=public(r,P.CanManage(p,r)or P.CanAdmin(p))else for _,v in pairs(P.Records)do rows[#rows+1]=public(v,P.CanAdmin(p))end;table.sort(rows,function(a,b)return a.name<b.name end)end
@@ -259,6 +290,37 @@ if SERVER then
    local now=os.time();for _,r in pairs(P.Records)do billOne(r,now)end;save("billing")
   end)
  end
+ --[[ ОБНОВЛЕНИЕ ДВЕРЕЙ ПРИ СМЕНЕ ВЛАДЕЛЬЦА.
+
+      Корень жалобы «дверь как была ничья, так и осталась ничья»:
+      setDoorPolicy звалась только при СОЗДАНИИ объекта и правке из
+      админки. Ни покупка, ни аренда, ни продажа её не дёргали, поэтому
+      таблички на дверях жили своей жизнью и всегда показывали «Ничья».
+
+      Вешаемся на общий хук: он срабатывает при любом пути — окно сделки,
+      /property, рынок, выселение, окончание аренды. Одна точка вместо
+      правок в шести местах, и ни один новый путь не будет забыт.
+
+      ВАЖНО ПРО ПОРЯДОК. Двери к объекту притягивает модуль сделок
+      (GRM.EstateDeal.AttachDoors), и он сидит на ЭТОМ ЖЕ хуке. Порядок
+      обработчиков одного хука в Lua не определён (обход pairs), поэтому
+      полагаться на «он отработает раньше» нельзя: в половине случаев мы
+      бы проставляли владельца ещё пустому списку дверей.
+
+      Поэтому здесь сначала САМИ зовём привязку, и только потом ставим
+      владельца. Повторный вызов безопасен: AttachDoors пропускает уже
+      привязанные двери. ]]
+ hook.Add("GRM_PropertyOwnerChanged","GRM_Property_DoorsSync",function(r)
+  if not istable(r)then return end
+  local owned=tostring(r.ownerType or "none")~="none"
+  -- Двери притягиваем только к объекту с хозяином.
+  if owned and GRM.EstateDeal and GRM.EstateDeal.AttachDoors then
+   GRM.EstateDeal.AttachDoors(r)
+  end
+  setDoorPolicy(r)
+  -- Занятый или опечатанный объект запирается, свободный открывается.
+  lockAll(r,r.sealed==true or owned)
+ end)
  grmBootStart("GRM_Property_DoorPolicy","early",function()timer.Simple(2,function()P.Reindex();for _,r in pairs(P.Records)do setDoorPolicy(r);if r.sealed or r.ownerType~="none"then lockAll(r,true)end end end)end)
  print("[GRM Property] v"..P.Version.." server loaded")
 end
