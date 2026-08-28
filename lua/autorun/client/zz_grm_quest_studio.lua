@@ -176,20 +176,48 @@ function Q.QuestToBlocks(work)
     local startBlock = add("start", {}, startX, startY, "start")
 
     --[[ Диалоги. Фазу храним в самом блоке: в едином графе иначе
-         непонятно, это разговор до квеста или после. ]]
-    local prevDialogue
+         непонятно, это разговор до квеста или после.
+
+         UID БЛОКА = ID РЕПЛИКИ (исправлено 29.08). Раньше uid был
+         «dlg_offer_1», а переходы в next/choices ссылаются на id вроде
+         «offer_1». Связи хранятся по uid, значит найти по ним цель было
+         невозможно — после переоткрытия квеста ВСЕ линии графа
+         пропадали. Владелец это и описал: «не запоминает диалоги,
+         сбивает их». ]]
+    local dialogueBlocks, firstOffer = {}, nil
     for _, phase in ipairs({ "offer", "active", "complete" }) do
         for i, n in ipairs(dialogueList(work, phase)) do
             local x, y = place(2)
+            local nodeID = tostring(n.id or "")
+            if nodeID == "" then nodeID = phase .. "_" .. i end
             local b = add("dialogue", {
-                phase = phase, id = n.id, speaker = n.speaker, text = n.text,
+                phase = phase, id = nodeID, speaker = n.speaker, text = n.text,
                 next = n.next, choices = table.Copy(n.choices or {}),
             }, tonumber(n._gx) ~= 0 and n._gx or x, tonumber(n._gy) ~= 0 and n._gy or y,
-               "dlg_" .. phase .. "_" .. i)
-            if phase == "offer" and not prevDialogue then
-                startBlock.links[#startBlock.links + 1] = { to = b.uid, port = 0 }
+               nodeID)
+            dialogueBlocks[nodeID] = b
+            if phase == "offer" and not firstOffer then firstOffer = b end
+        end
+    end
+    if firstOffer then
+        startBlock.links[#startBlock.links + 1] = { to = firstOffer.uid, port = 0 }
+    end
+
+    --[[ ВОССТАНОВЛЕНИЕ СВЯЗЕЙ. Переходы живут в самих репликах
+         (next и choices[i].next), а граф рисует линии по block.links.
+         Раньше links при загрузке оставались пустыми — данные были
+         целы, но граф выглядел «сбитым». ]]
+    for _, b in pairs(dialogueBlocks) do
+        local d = b.data
+        local nx = tostring(d.next or "")
+        if nx ~= "" and dialogueBlocks[nx] then
+            b.links[#b.links + 1] = { to = nx, port = 0 }
+        end
+        for ci, ch in ipairs(d.choices or {}) do
+            local cn = tostring(ch.next or "")
+            if cn ~= "" and dialogueBlocks[cn] then
+                b.links[#b.links + 1] = { to = cn, port = ci }
             end
-            prevDialogue = b
         end
     end
 
@@ -597,7 +625,17 @@ function Q.OpenGraphStudio(data)
         end
         local data = {}
         if kind == "dialogue" then
-            data = { phase = "offer", id = "node_" .. os.time() % 100000,
+            --[[ ID должен быть УНИКАЛЕН. Раньше брали os.time(): две
+                 реплики, созданные в одну секунду, получали одинаковый
+                 ID, сервер схлопывал их в одну, а переходы уводили не
+                 туда. Ищем первый свободный номер среди существующих. ]]
+            local used = {}
+            for _, ob in ipairs(blocks) do
+                if ob.kind == "dialogue" then used[tostring((ob.data or {}).id or "")] = true end
+            end
+            local n = 1
+            while used["node_" .. n] do n = n + 1 end
+            data = { phase = "offer", id = "node_" .. n,
                 speaker = work.npc or "NPC", text = "Новая реплика", next = "", choices = {} }
         elseif kind == "step" then
             data = { type = "event", title = "Новый этап", event = "generic", count = 1 }
@@ -656,11 +694,44 @@ function Q.OpenGraphStudio(data)
             local idE = field(right, "ID реплики", d.id)
             local spE = field(right, "Говорящий", d.speaker)
             local txE = field(right, "Текст реплики", d.text, true)
-            local apply = mkBtn(right, "Применить", COL.green)
+
+            --[[ ТЕКСТ ПРИМЕНЯЕТСЯ СРАЗУ (исправлено 29.08).
+
+                 Раньше значения попадали в квест только по кнопке
+                 «Применить». Набрал реплику, кликнул другой блок или
+                 сразу «Сохранить» — текст терялся, потому что панель
+                 пересобиралась из старых данных. Это и есть «не
+                 запоминает диалоги».
+
+                 Пишем в d по каждому изменению. Кнопка оставлена: она
+                 нужна для смены ID, где требуется перестроить связи. ]]
+            spE.OnChange = function(e) d.speaker = e:GetValue() end
+            txE.OnChange = function(e) d.text = e:GetValue() rebuildCards() end
+
+            local apply = mkBtn(right, "Применить ID", COL.green)
             apply:Dock(TOP) apply:SetTall(30) apply:DockMargin(10, 10, 10, 6)
             apply.DoClick = function()
-                d.id, d.speaker, d.text = idE:GetValue(), spE:GetValue(), txE:GetValue()
-                rebuildCards()
+                local oldID = tostring(d.id or "")
+                local newID = string.Trim(idE:GetValue() or "")
+                if newID == "" or newID == oldID then return end
+
+                --[[ Переименование ID обязано ПЕРЕПИСАТЬ ссылки на него.
+                     Иначе переходы других реплик указывают в пустоту, и
+                     разговор молча обрывается на середине. ]]
+                for _, ob in ipairs(blocks) do
+                    if ob.kind == "dialogue" then
+                        local od = ob.data or {}
+                        if tostring(od.next or "") == oldID then od.next = newID end
+                        for _, ch in ipairs(od.choices or {}) do
+                            if tostring(ch.next or "") == oldID then ch.next = newID end
+                        end
+                    end
+                    for _, l in ipairs(ob.links or {}) do
+                        if l.to == oldID then l.to = newID end
+                    end
+                end
+                d.id, b.uid = newID, newID
+                rebuildCards() rebuildProps()
             end
 
             local addCh = mkBtn(right, "+ Ответ игрока", COL.card)
@@ -706,8 +777,13 @@ function Q.OpenGraphStudio(data)
             end
             typ.OnSelect = function(_, _, _, v) d.type = v rebuildProps() end
 
+            --[[ Поля пишутся СРАЗУ, а не по кнопке: иначе набранное
+                 теряется при клике на другой блок. Та же причина, что
+                 и у реплик. ]]
             local ti = field(right, "Название для игрока", d.title)
+            ti.OnChange = function(e) d.title = e:GetValue() rebuildCards() end
             local ds = field(right, "Пояснение (необязательно)", d.description)
+            ds.OnChange = function(e) d.description = e:GetValue() end
 
             -- Главная цель этапа: смысл поля зависит от типа.
             local tgt, tgt2, rad, cons
@@ -861,8 +937,11 @@ function Q.OpenGraphStudio(data)
                 end
 
                 local cap = field(right, "Титр на экране", cam.caption)
+                cap.OnChange = function(e) cam.caption = e:GetValue() rebuildCards() end
                 local dur = field(right, "Показ точки, сек", tostring(cam.duration or 3))
+                dur.OnChange = function(e) cam.duration = math.Clamp(tonumber(e:GetValue()) or 3, 0.25, 30) end
                 local fov = field(right, "FOV (20-120, меньше = ближе)", tostring(cam.fov or 75))
+                fov.OnChange = function(e) cam.fov = math.Clamp(tonumber(e:GetValue()) or 75, 20, 120) end
 
                 --[[ Тип перехода. У первой камеры он всегда «мгновенно»:
                      сцена стартует в ней, лететь неоткуда. ]]
@@ -938,7 +1017,9 @@ function Q.OpenGraphStudio(data)
             when.OnSelect = function(_, _, _, v) d.when = v rebuildCards() end
 
             local snd = field(right, "Путь к звуку", d.sound)
+            snd.OnChange = function(e) d.sound = e:GetValue() rebuildCards() end
             local vol = field(right, "Громкость 0.1 - 1.0", tostring(d.volume or 1))
+            vol.OnChange = function(e) d.volume = math.Clamp(tonumber(e:GetValue()) or 1, 0.1, 1) end
             local lp = vgui.Create("DCheckBoxLabel", right)
             lp:Dock(TOP) lp:SetTall(22) lp:DockMargin(10, 8, 10, 0)
             lp:SetText("Зациклить (фоновая музыка)") lp:SetTextColor(COL.text) lp:SetValue(d.loop == true)
@@ -964,6 +1045,10 @@ function Q.OpenGraphStudio(data)
 
         elseif b.kind == "reward" then
             local mon = field(right, "Деньги за квест", tostring(d.money or 0))
+            mon.OnChange = function(e)
+                d.money = math.max(0, math.floor(tonumber(e:GetValue()) or 0))
+                rebuildCards()
+            end
             local itemID = field(right, "ID предмета", "")
             local itemN = field(right, "Количество", "1")
             local addI = mkBtn(right, "Добавить предмет", COL.green)
@@ -1003,8 +1088,11 @@ function Q.OpenGraphStudio(data)
                  могли столкнуться, а переименовать было негде. ]]
             local aid = field(right, "ID достижения (только латиница)", d.id ~= "" and d.id or ("quest_" .. tostring(work.id or "")))
             local nm = field(right, "Название", d.name)
+            nm.OnChange = function(e) d.name = e:GetValue() rebuildCards() end
             local ds = field(right, "Описание", d.description, true)
+            ds.OnChange = function(e) d.description = e:GetValue() end
             local rw = field(right, "Деньги за ачивку", tostring(d.reward or 0))
+            rw.OnChange = function(e) d.reward = math.max(0, math.floor(tonumber(e:GetValue()) or 0)) end
             local hid = vgui.Create("DCheckBoxLabel", right)
             hid:Dock(TOP) hid:SetTall(22) hid:DockMargin(10, 8, 10, 0)
             hid:SetText("Скрытая до получения") hid:SetTextColor(COL.text) hid:SetValue(d.hidden == true)
