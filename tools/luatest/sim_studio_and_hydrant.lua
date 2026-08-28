@@ -279,6 +279,147 @@ ok(src:find('SetFont("GRMSocEd_Small")', 1, true) == nil
    and src:find('"GRMSocEd_Small",', 1, true) == nil,
    "несуществующий GRMSocEd_Small нигде не вызывается")
 
+-----------------------------------------------------------------------
+print("\n=== 8. ПОРЯДОК ОБЪЯВЛЕНИЯ loadPose (падение 28.08) ===")
+-----------------------------------------------------------------------
+--[[ «attempt to call global 'loadPose' (a nil value)» — я убрал дубль
+     обработчика и оставил ВЕРХНИЙ, объявленный ДО loadPose. Локальная
+     переменная в Lua видна только после своего объявления, поэтому
+     внутри обработчика имя было глобальным, то есть nil. ]]
+do
+    -- Воспроизводим ошибку.
+    local handler
+    do
+        handler = function() return loadPoseUndeclared("x") end
+        local function loadPoseUndeclared() return "ok" end   -- объявлена ПОЗЖЕ
+    end
+    local okCall = pcall(handler)
+    ok(okCall == false,
+       "БАГ ВОСПРОИЗВЕДЁН: обработчик, объявленный до функции, падает на вызове")
+end
+
+do
+    -- Как надо: предварительное объявление.
+    local loadPoseFixed
+    local handler = function() return loadPoseFixed("x") end
+    loadPoseFixed = function(id) return "loaded:" .. id end
+    local okCall, res = pcall(handler)
+    ok(okCall and res == "loaded:x",
+       "ИСПРАВЛЕНО: с предварительным объявлением вызов проходит", res)
+end
+
+-- Проверка исходника: объявление должно идти ДО обработчиков.
+local declPos = src:find("\n    local loadPose\n", 1, true)
+local usePos  = src:find("loadPose(line._id)", 1, true)
+local defPos  = src:find("function loadPose(id)", 1, true)
+ok(declPos ~= nil, "ИСПРАВЛЕНО: есть предварительное объявление local loadPose")
+ok(declPos and usePos and declPos < usePos,
+   "объявление стоит РАНЬШЕ первого использования")
+ok(defPos and declPos and declPos < defPos,
+   "и раньше самого определения функции")
+ok(src:find("local function loadPose(id)", 1, true) == nil,
+   "определение НЕ создаёт новую local, а заполняет объявленную выше")
+
+-----------------------------------------------------------------------
+print("\n=== 9. ФЛАГ НЕ ЗАВИСАЕТ ПРИ ОШИБКЕ ===")
+-----------------------------------------------------------------------
+--[[ Второй симптом: «не работает перемещение из категории в категорию,
+     не отражается результат». Причина та же — упавший loadPose летел
+     наружу через rebuildList и прерывал его ДО сброса ST._busy. Флаг
+     оставался поднятым, и список больше не перестраивался никогда. ]]
+do
+    -- Старое поведение: сброс последней строкой тела.
+    local ST = { _busy = false }
+    local function rebuildOld(explode)
+        if ST._busy then return end
+        ST._busy = true
+        if explode then error("сбой внутри") end
+        ST._busy = false
+    end
+    pcall(rebuildOld, true)
+    ok(ST._busy == true,
+       "БАГ ВОСПРОИЗВЕДЁН: после ошибки флаг остался поднятым")
+    rebuildOld(false)
+    ok(ST._busy == true,
+       "и список замер навсегда — перестроение больше не проходит")
+end
+
+do
+    -- Новое: тело в pcall, флаг снимается всегда.
+    local ST = { _busy = false }
+    local runs = 0
+    local function body(explode)
+        runs = runs + 1
+        if explode then error("сбой внутри") end
+    end
+    local function rebuildNew(explode)
+        if ST._busy then return end
+        ST._busy = true
+        pcall(body, explode)
+        ST._busy = false
+    end
+    rebuildNew(true)
+    ok(ST._busy == false, "ИСПРАВЛЕНО: флаг снят даже после ошибки")
+    rebuildNew(false)
+    ok(runs == 2, "и следующее перестроение проходит нормально", runs)
+end
+
+ok(src:find("local function rebuildListBody()", 1, true) ~= nil,
+   "тело перестроения вынесено отдельно")
+local wrapper = src:match("function ST%.rebuildList%(%).-\n    end")
+ok(wrapper and wrapper:find("pcall(rebuildListBody)", 1, true) ~= nil,
+   "обёртка зовёт его через pcall")
+ok(wrapper and wrapper:find("ST._busy = false", 1, true) ~= nil,
+   "и снимает флаг после pcall, а не внутри тела")
+
+-- Загрузка позы тоже не должна валить обработчик.
+local rowSel = src:match("list%.OnRowSelected = function.-\n    end")
+ok(rowSel and rowSel:find("pcall(loadPose", 1, true) ~= nil,
+   "сломанная поза портит только себя, а не весь список")
+
+-----------------------------------------------------------------------
+print("\n=== 10. ПЕРЕМЕЩЕНИЕ МЕЖДУ КАТЕГОРИЯМИ ===")
+-----------------------------------------------------------------------
+--[[ Полная цепочка: клиент шлёт две строки → сервер меняет категорию →
+     рассылает каталог → клиент перестраивает список. ]]
+do
+    local CatList = { { id = "general", name = "Общее" }, { id = "docs", name = "Документы" } }
+    local Catalog = { { id = "pose1", name = "Поза 1", cat = "general", catName = "Общее" } }
+    local synced = 0
+
+    local function slug(x) return string.lower(tostring(x or "")) end
+    local function movepose(id, toCat)
+        id, toCat = slug(id), slug(toCat)
+        local catName = ""
+        for i = 1, #CatList do if CatList[i].id == toCat then catName = CatList[i].name break end end
+        if catName == "" then return false end          -- ровно эта проверка и срывалась
+        for _, p in ipairs(Catalog) do
+            if p.id == id then p.cat, p.catName = toCat, catName break end
+        end
+        synced = synced + 1
+        return true
+    end
+
+    -- Старый клиент терял второй аргумент → сервер получал "".
+    ok(movepose("pose1", "") == false,
+       "БАГ ВОСПРОИЗВЕДЁН: пустая категория — сервер молча выходит")
+    ok(Catalog[1].cat == "general", "и поза остаётся на месте")
+
+    -- Новый клиент шлёт обе строки.
+    ok(movepose("pose1", "docs") == true, "ИСПРАВЛЕНО: перемещение проходит")
+    ok(Catalog[1].cat == "docs", "категория сменилась", Catalog[1].cat)
+    ok(Catalog[1].catName == "Документы",
+       "и подпись обновилась — она показывается в списке", Catalog[1].catName)
+    ok(synced == 1, "каталог разослан клиентам — результат виден сразу")
+end
+
+-- Приём каталога на клиенте обязан перестроить И категории, и список.
+local syncBlock = src:match('net%.Receive%("GRM_SocStudio_Sync".-\nend%)')
+ok(syncBlock and syncBlock:find("ST.rebuildCats", 1, true) ~= nil,
+   "на приёме каталога перестраиваются категории")
+ok(syncBlock and syncBlock:find("ST.rebuildList", 1, true) ~= nil,
+   "и список — иначе перемещение не отобразится")
+
 print("")
 print(string.format("ИТОГО: %d ok, %d FAIL", pass, fail))
 if fail > 0 then os.exit(1) end

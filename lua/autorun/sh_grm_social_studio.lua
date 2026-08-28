@@ -688,10 +688,9 @@ local function openStudio()
          загрузка позы, обработчики выбора не запускают цепочку заново.
          Это надёжнее, чем расставлять «не вызывай меня» по одному месту:
          любой новый обработчик автоматически попадёт под защиту. ]]
-    function ST.rebuildList()
-        if not IsValid(list) then return end
-        if ST._busy then return end
-        ST._busy = true
+    --[[ Тело вынесено отдельно, чтобы обёртка ниже могла гарантированно
+         снять флаг даже при ошибке внутри. ]]
+    local function rebuildListBody()
         list:Clear()
         local keep = IsValid(catBox) and catBox:GetOptionData(catBox:GetSelectedID() or 0) or "all"
         local cats = ST.cats or {}
@@ -713,9 +712,41 @@ local function openStudio()
                 end
             end
         end
+    end
+
+    --[[ ФЛАГ СНИМАЕТСЯ ВСЕГДА.
+
+         Раньше сброс стоял последней строкой тела: любая ошибка внутри
+         (например, упавший loadPose) выбрасывала нас наружу, флаг
+         оставался поднятым, и rebuildList больше НИКОГДА не работал —
+         список замирал до перезахода. Владелец видел это как
+         «перемещение между категориями не отражается».
+
+         pcall гарантирует снятие флага при любом исходе. ]]
+    function ST.rebuildList()
+        if not IsValid(list) then return end
+        if ST._busy then return end
+        ST._busy = true
+        local ok, err = pcall(rebuildListBody)
         ST._busy = false
+        if not ok then
+            ErrorNoHalt("[GRM Studio] сбой перестроения списка: " .. tostring(err) .. "\n")
+        end
     end
     ST.rebuildList()
+
+    --[[ ОБЪЯВЛЕНИЕ ЗАРАНЕЕ — обязательно.
+
+         Сама функция определена НИЖЕ, а обработчики списка ссылаются на
+         неё здесь. Без этой строки `loadPose` внутри них — глобальная
+         переменная, то есть nil, и клик по строке падал с
+         «attempt to call global 'loadPose' (a nil value)».
+
+         Именно так я и сломал студию, убирая дубль обработчика: удалил
+         нижний (объявленный ПОСЛЕ loadPose и потому рабочий), оставив
+         верхний. Локальная переменная в Lua видна только после своего
+         объявления — предварительное объявление это чинит. ]]
+    local loadPose
 
     --[[ ЛКМ — загрузить позу, ПКМ — меню.
 
@@ -727,7 +758,18 @@ local function openStudio()
         if ST._busy then return end
         if line and line._id then
             ST.selectedID = line._id
-            loadPose(line._id)
+            --[[ Через pcall осознанно. Ошибка ВНУТРИ загрузки позы летела
+                 наружу через rebuildList и прерывала его до сброса
+                 ST._busy — флаг оставался поднятым, и список замирал
+                 навсегда. Внешне это выглядело как «перемещение между
+                 категориями не отражается»: сервер данные менял, а
+                 клиент их больше не перерисовывал.
+                 Теперь сломанная поза портит только себя. ]]
+            local ok, err = pcall(loadPose, line._id)
+            if not ok then
+                ErrorNoHalt("[GRM Studio] не удалось загрузить позу '"
+                    .. tostring(line._id) .. "': " .. tostring(err) .. "\n")
+            end
         end
     end
     -- контекстное меню позы: загрузить / переместить / удалить
@@ -752,7 +794,8 @@ local function openStudio()
         menu:Open()
     end
 
-    local function loadPose(id)
+    -- Присваиваем объявленной выше переменной, а НЕ создаём новую local.
+    function loadPose(id)
         for _, p in ipairs(ST.catalog or {}) do
             if p.id == id then
                 idE:SetText(p.id)
