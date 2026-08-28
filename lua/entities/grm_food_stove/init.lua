@@ -13,6 +13,50 @@ include("shared.lua")
 
 local function FK() return GRM.FoodKitchen end
 
+--[[ ЗВУК ГОТОВКИ (заказ владельца 28.08).
+
+     «При начале варки проигрывается звук gascan_ignite1, затем следом
+      идёт fire_big_loop1.»
+
+     Розжиг — разовый EmitSound. А вот гудение огня ЗАЦИКЛЕНО, и его
+     обязательно нужно уметь выключить: EmitSound для петли не годится,
+     она бы играла вечно, даже после снятия кастрюли или удаления плиты.
+     Поэтому держим CreateSound на entity и глушим во всех местах, где
+     готовка заканчивается: готово, отмена, рестарт, удаление плиты. ]]
+local STOVE_IGNITE = "ambient/fire/gascan_ignite1.wav"
+local STOVE_LOOP   = "ambient/fire/fire_big_loop1.wav"
+
+function ENT:StartCookSound(ignite)
+    -- Розжиг только при живом старте, а не при восстановлении после рестарта.
+    if ignite then self:EmitSound(STOVE_IGNITE, 65, 100) end
+
+    if self.CookLoop then self.CookLoop:Stop() self.CookLoop = nil end
+    --[[ CreateSound есть не всегда (стенды, урезанные окружения), а без
+         звука плита обязана продолжать готовить. Поэтому проверяем, а не
+         падаем: готовка важнее озвучки. ]]
+    if not isfunction(CreateSound) then return end
+    self.CookLoop = CreateSound(self, STOVE_LOOP)
+    if self.CookLoop then
+        --[[ Задержка ровно на длину розжига: сначала «пшик» газа, потом
+             ровное гудение. Одновременно они звучали бы кашей. ]]
+        local delay = ignite and 0.6 or 0
+        timer.Simple(delay, function()
+            if not IsValid(self) then return end
+            -- За эти полсекунды готовку могли отменить.
+            if self:GetStoveState() ~= 1 then return end
+            if not self.CookLoop then return end
+            self.CookLoop:SetSoundLevel(62)
+            self.CookLoop:PlayEx(0.55, 100)
+        end)
+    end
+end
+
+function ENT:StopCookSound()
+    if not self.CookLoop then return end
+    self.CookLoop:Stop()
+    self.CookLoop = nil
+end
+
 function ENT:Initialize()
     local cfg = self:KitchenCfg()
     self:SetModel(FK().SafeModel(cfg.StoveModel or "models/props_c17/furniturestove001a.mdl"))
@@ -57,6 +101,7 @@ function ENT:ArmStoveTimer()
         local rec = FK().Recipe(self:GetStoveRecipe())
         if not istable(rec) then
             self:SetStoveState(0)
+            self:StopCookSound()
             self:SyncReadyNW()
             return
         end
@@ -69,6 +114,7 @@ function ENT:ArmStoveTimer()
         self:SetStoveState(0)
         self:SetStoveRecipe("")
         self:SyncReadyNW()
+        self:StopCookSound()
         self:EmitSound("buttons/bell1.wav", 70, 100)
     end)
 end
@@ -151,7 +197,7 @@ function ENT:kitchenOp(ply, op, data)
         self.FinishAt = os.time() + (tonumber(rec.time) or 30)
         self:SetStoveFinish(self.FinishAt)
         self:ArmStoveTimer()
-        self:EmitSound("ambient/fire/gascan_ignite1.wav", 65, 100)
+        self:StartCookSound(true)
         FK().Notify(ply, "[Плита] Готовим: " .. tostring(rec.name or rid) .. " (" .. tostring(tonumber(rec.time) or 30) .. " сек)", 120, 220, 140)
         return
     end
@@ -172,6 +218,7 @@ function ENT:kitchenOp(ply, op, data)
         end
         self:SetStoveState(0)
         self:SetStoveRecipe("")
+        self:StopCookSound()
         self:EmitSound("buttons/button18.wav", 65, 100)
         FK().Notify(ply, "[Плита] Готовка отменена, ингредиенты возвращены.", 235, 190, 90)
         return
@@ -238,7 +285,16 @@ function ENT:KitchenPermApply(t)
         local recDef = FK().Recipe(t.recipe)
         local total = (istable(recDef) and tonumber(recDef.time)) or remain
         self:SetStoveStart(os.time() - math.max(0, total - remain))
+        -- Готовка продолжается с прошлой сессии: розжига не было.
+        self:StartCookSound(false)
         self:ArmStoveTimer()
     end
     self:SyncReadyNW()
+end
+
+--[[ Плиту убрали или карта сменилась — зацикленный звук обязан умереть
+     вместе с ней, иначе гудение останется висеть в мире. ]]
+function ENT:OnRemove()
+    self:StopCookSound()
+    timer.Remove("GRM_Kitchen_Stove_" .. tostring(self:EntIndex()))
 end

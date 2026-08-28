@@ -82,6 +82,8 @@ function ENT:BuildKitchenPayload(ply)
         slots[#slots + 1] = {
             slot = i, id = s.id, name = (d and d.name) or s.id, n = tonumber(s.n) or 0,
             remain = tonumber(s.remain) or 0, cooked = (d and d.cooked) == true,
+            -- Иконка нужна сетке слотов: без неё ячейка была бы пустой.
+            icon = (d and d.icon) or "icon16/box.png",
         }
     end
     local storeable = {}
@@ -103,7 +105,9 @@ function ENT:BuildKitchenPayload(ply)
         end)
         for _, row in ipairs(dsort) do
             local d = FK().FoodData(row.id)
-            storeable[#storeable + 1] = { id = row.id, name = (d and d.name) or row.id, n = row.cnt, cooked = (d and d.cooked) == true }
+            storeable[#storeable + 1] = { id = row.id, name = (d and d.name) or row.id,
+                n = row.cnt, cooked = (d and d.cooked) == true,
+                icon = (d and d.icon) or "icon16/box.png" }
         end
     end
     return {
