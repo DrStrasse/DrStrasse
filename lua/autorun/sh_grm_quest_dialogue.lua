@@ -274,6 +274,15 @@ if SERVER then
 end
 
 if CLIENT then
+    --[[ Свои шрифты для окна разговора. Раньше использовались
+         DermaLarge/DermaDefaultBold — они мелкие для крупного окна и
+         не поддерживают кириллицу одинаково на всех клиентах. ]]
+    surface.CreateFont("GRMQDlg_Name",    { font = "Roboto", size = 26, weight = 800, extended = true, antialias = true })
+    surface.CreateFont("GRMQDlg_Speaker", { font = "Roboto", size = 21, weight = 700, extended = true, antialias = true })
+    surface.CreateFont("GRMQDlg_Text",    { font = "Roboto", size = 19, weight = 500, extended = true, antialias = true })
+    surface.CreateFont("GRMQDlg_Answer",  { font = "Roboto", size = 17, weight = 600, extended = true, antialias = true })
+    surface.CreateFont("GRMQDlg_Small",   { font = "Roboto", size = 14, weight = 500, extended = true, antialias = true })
+
     local dlg
     local function closeDlg()
         if IsValid(dlg) then dlg:Remove() end
@@ -295,55 +304,133 @@ if CLIENT then
         end
         if total == 0 or text == "" and npcName == "" then closeDlg() return end
 
+        --[[ ОКНО РАЗГОВОРА С NPC (переделано 28.08 по просьбе владельца:
+             «меню квестового NPC надо переделать, сделать побольше и
+             покрасивее»).
+
+             Было: 760x560 с полями фиксированной ширины 680. На широком
+             экране окно выглядело почтовой маркой, длинная реплика не
+             помещалась в 160 пикселей высоты и обрезалась, а кнопки
+             ответов уезжали за нижний край, если их было больше пяти.
+
+             Стало: окно занимает долю экрана, реплика прокручивается,
+             ответы пронумерованы и всегда влезают. Всё, что зависит от
+             ширины, считается от неё, а не прибито числом. ]]
         if not IsValid(dlg) then
             dlg = vgui.Create("DFrame")
-            dlg:SetSize(math.min(760, ScrW() - 40), math.min(560, ScrH() - 40))
-            dlg:Center() dlg:SetTitle("") dlg:ShowCloseButton(true) dlg:MakePopup()
-            dlg.Paint = function(_, w, h)
-                draw.RoundedBox(10, 0, 0, w, h, Color(9, 14, 23, 248))
-                draw.RoundedBoxEx(10, 0, 0, w, 48, Color(16, 25, 39), true, true, false, false)
-                draw.SimpleText("ДИАЛОГ · " .. tostring(dlg._npc or ""), "DermaLarge", 18, 24, Color(238, 244, 252), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            dlg:SetSize(math.Clamp(ScrW() * 0.56, 820, 1180),
+                        math.Clamp(ScrH() * 0.62, 560, 780))
+            dlg:Center() dlg:SetTitle("") dlg:ShowCloseButton(false) dlg:MakePopup()
+            dlg.Paint = function(self, w, h)
+                -- Затемняем игру за окном: разговор должен держать внимание.
+                surface.SetDrawColor(0, 0, 0, 170)
+                surface.DrawRect(-ScrW(), -ScrH(), ScrW() * 3, ScrH() * 3)
+
+                draw.RoundedBox(12, 0, 0, w, h, Color(11, 16, 26, 250))
+                draw.RoundedBoxEx(12, 0, 0, w, 64, Color(17, 26, 40), true, true, false, false)
+                -- Золотая полоса под шапкой: та же линия, что у остальных окон GRM.
+                surface.SetDrawColor(242, 190, 75, 200)
+                surface.DrawRect(0, 62, w, 2)
+                surface.SetDrawColor(48, 68, 96)
+                surface.DrawOutlinedRect(0, 0, w, h, 1)
+
+                draw.SimpleText(tostring(self._npc or "Разговор"), "GRMQDlg_Name", 26, 26,
+                    Color(245, 200, 90), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.SimpleText(tostring(self._sub or ""), "GRMQDlg_Small", 26, 47,
+                    Color(140, 158, 182), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                -- Счётчик реплик справа: видно, длинный разговор или нет.
+                draw.SimpleText(tostring(self._pos or ""), "GRMQDlg_Small", w - 26, 32,
+                    Color(120, 140, 165), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
             end
             dlg.OnClose = closeDlg
+            -- ESC закрывает разговор штатно, а не оставляет висеть сессию.
+            dlg.OnKeyCodePressed = function(_, key)
+                if key == KEY_ESCAPE then closeDlg() end
+            end
         end
+
         dlg._npc = npcName
+        dlg._sub = ({ offer = "Предложение задания", active = "Задание в работе",
+                      complete = "Задание выполнено" })[phase] or "Разговор"
+        dlg._pos = (total > 1) and (index .. " / " .. total) or ""
+
         if IsValid(dlg._body) then dlg._body:Remove() end
         local body = vgui.Create("DPanel", dlg)
-        body:Dock(FILL) body:DockMargin(16, 52, 16, 16)
-        body.Paint = function(_, w, h) draw.RoundedBox(10, 0, 0, w, h, Color(19, 28, 42, 248)) end
+        body:Dock(FILL) body:DockMargin(20, 72, 20, 20)
+        body:SetPaintBackground(false)
         dlg._body = body
-        local who = vgui.Create("DLabel", body)
-        who:SetPos(18, 14) who:SetSize(680, 26) who:SetFont("DermaLarge")
-        who:SetTextColor(Color(242, 190, 75)) who:SetText(speaker ~= "" and speaker or npcName)
-        local tx = vgui.Create("DLabel", body)
-        tx:SetPos(18, 50) tx:SetSize(680, 160) tx:SetWrap(true) tx:SetFont("DermaDefaultBold")
-        tx:SetTextColor(Color(238, 244, 252)) tx:SetText(text)
+
+        local W = dlg:GetWide() - 40
+
+        --[[ РЕПЛИКА. Отдельная карточка с прокруткой: длинный текст
+             больше не обрезается, как это было при жёстких 160px. ]]
+        local textCard = vgui.Create("DPanel", body)
+        textCard:Dock(TOP)
+        textCard:SetTall(math.floor(dlg:GetTall() * 0.34))
+        textCard:DockMargin(0, 0, 0, 14)
+        textCard.Paint = function(_, w, h)
+            draw.RoundedBox(10, 0, 0, w, h, Color(19, 28, 43, 250))
+            draw.RoundedBox(0, 0, 0, 4, h, Color(242, 190, 75))
+        end
+
+        local who = vgui.Create("DLabel", textCard)
+        who:Dock(TOP) who:SetTall(30) who:DockMargin(20, 14, 20, 0)
+        who:SetFont("GRMQDlg_Speaker") who:SetTextColor(Color(242, 190, 75))
+        who:SetText(speaker ~= "" and speaker or npcName)
+
+        local scroll = vgui.Create("DScrollPanel", textCard)
+        scroll:Dock(FILL) scroll:DockMargin(20, 4, 14, 14)
+        local tx = vgui.Create("DLabel", scroll)
+        tx:Dock(TOP) tx:SetWrap(true) tx:SetAutoStretchVertical(true)
+        tx:SetFont("GRMQDlg_Text") tx:SetTextColor(Color(228, 236, 246))
+        tx:SetText(text)
 
         local function pick(ci)
             net.Start(NET_PICK) net.WriteUInt(index, 8) net.WriteUInt(ci, 8) net.SendToServer()
         end
-        local y = 230
-        if #choices > 0 then
-            for _, ch in ipairs(choices) do
-                local b = vgui.Create("DButton", body)
-                b:SetPos(18, y) b:SetSize(680, 36) b:SetText(ch.text)
-                b:SetFont("DermaDefaultBold") b:SetTextColor(color_white)
-                b.Paint = function(s, w, h)
-                    draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(65, 145, 240) or Color(28, 39, 57))
+
+        --[[ ОТВЕТЫ. Кладём в прокручиваемый список и нумеруем: раньше
+             шестой ответ просто уезжал за край окна. ]]
+        local list = vgui.Create("DScrollPanel", body)
+        list:Dock(FILL)
+
+        local function answerButton(caption, num, accent)
+            local b = vgui.Create("DButton", list)
+            b:Dock(TOP) b:SetTall(46) b:DockMargin(0, 0, 6, 8)
+            b:SetText("") b:SetCursor("hand")
+            b.Paint = function(s, w, h)
+                local base = accent and Color(32, 74, 52) or Color(24, 34, 50)
+                local hov = accent and Color(46, 108, 74) or Color(40, 62, 96)
+                draw.RoundedBox(8, 0, 0, w, h, s:IsHovered() and hov or base)
+                surface.SetDrawColor(s:IsHovered() and Color(120, 175, 250, 200) or Color(52, 72, 100, 160))
+                surface.DrawOutlinedRect(0, 0, w, h, 1)
+                -- Номер в кружке: по нему же работает выбор цифрой.
+                if num then
+                    draw.RoundedBox(6, 10, h / 2 - 12, 24, 24, Color(14, 20, 32))
+                    draw.SimpleText(tostring(num), "GRMQDlg_Small", 22, h / 2,
+                        Color(200, 214, 232), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                 end
+                draw.SimpleText(caption, "GRMQDlg_Answer", num and 46 or 18, h / 2,
+                    Color(236, 242, 250), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+            return b
+        end
+
+        if #choices > 0 then
+            for idx2, ch in ipairs(choices) do
+                local b = answerButton(ch.text, idx2, false)
                 b.DoClick = function() pick(ch.i) end
-                y = y + 42
             end
         else
-            local b = vgui.Create("DButton", body)
-            b:SetPos(18, y) b:SetSize(680, 40)
-            b:SetText(index < total and "Продолжить" or "Завершить разговор")
-            b:SetFont("DermaDefaultBold") b:SetTextColor(color_white)
-            b.Paint = function(s, w, h)
-                draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(65, 145, 240) or Color(40, 70, 110))
-            end
+            local last = index >= total
+            local b = answerButton(last and "Завершить разговор" or "Продолжить", nil, not last)
             b.DoClick = function() pick(0) end
         end
+
+        local hint = vgui.Create("DLabel", body)
+        hint:Dock(BOTTOM) hint:SetTall(20) hint:DockMargin(2, 6, 2, 0)
+        hint:SetFont("GRMQDlg_Small") hint:SetTextColor(Color(110, 128, 152))
+        hint:SetText("ESC — выйти из разговора")
     end)
 end
 

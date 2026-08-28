@@ -119,24 +119,125 @@ function Q.OpenGraphStudio(data)
         return nodesOf(work, phase)
     end
 
+    --[[ ПЕРЕНОС ТЕКСТА В КАРТОЧКЕ (заказ владельца 28.08: «в поле графа
+         текст квеста должен нормально отражаться»).
+
+         Раньше карточка резала реплику через string.sub(text,1,42) — на
+         скриншоте видно обрубок «- Здравствуй, путник! Ви». Теперь
+         разбиваем по словам на строки нужной ширины: видно начало
+         реплики целиком, а не половину слова. ]]
+    local function wrapText(text, font, maxW, maxLines)
+        surface.SetFont(font)
+        local words, lines, cur = {}, {}, ""
+        for w in tostring(text or ""):gmatch("%S+") do words[#words + 1] = w end
+        for _, w in ipairs(words) do
+            local try = cur == "" and w or (cur .. " " .. w)
+            if surface.GetTextSize(try) <= maxW then
+                cur = try
+            else
+                if cur ~= "" then lines[#lines + 1] = cur end
+                cur = w
+                if #lines >= maxLines then break end
+            end
+        end
+        if cur ~= "" and #lines < maxLines then lines[#lines + 1] = cur end
+        -- Последняя строка получает многоточие, если текст не влез.
+        if #lines == maxLines then
+            local total = 0
+            for _, l in ipairs(lines) do total = total + #l + 1 end
+            if total < #tostring(text or "") then
+                local last = lines[maxLines]
+                while last ~= "" and surface.GetTextSize(last .. "…") > maxW do
+                    last = string.sub(last, 1, -2)
+                end
+                lines[maxLines] = last .. "…"
+            end
+        end
+        return lines
+    end
+
+    --[[ РАЗМЕРЫ КАРТОЧКИ. Вынесены в константы: по ним же считаются
+         точки выхода связей, иначе линии разъедутся с портами. ]]
+    local CARD_W, CARD_H = 250, 116
+    local PORT = 13   -- радиус круглого порта на краю карточки
+
+    --[[ Точка выхода: правый край карточки. У реплики один общий выход
+         (переход «дальше»), у каждого ответа — свой, они разнесены по
+         вертикали, чтобы линии не слипались. ]]
+    local function outPort(n, slot, count)
+        local x = (n._x or 0) + CARD_W
+        local y = (n._y or 0) + 30
+        if count and count > 0 then
+            y = (n._y or 0) + 46 + (slot - 0.5) * (CARD_H - 56) / count
+        end
+        return x, y
+    end
+    local function inPort(n)
+        return (n._x or 0), (n._y or 0) + 30
+    end
+
+    --[[ Состояние протяжки связи мышью: от какого узла и какого выхода
+         тянем. Владелец просил именно «визуально соединять элементы». ]]
+    local linking = nil    -- { from = node, slot = 0|N, count = N }
+
     local function paintLinks()
-        canvas.Paint = function()
+        canvas.Paint = function(_, cw, ch)
             if tab ~= "graph" then return end
             local nodes = currentNodes()
             local byID = {}
             for _, n in ipairs(nodes) do byID[tostring(n.id)] = n end
-            surface.SetDrawColor(COL.line)
+
+            --[[ Связи рисуем КРИВОЙ БЕЗЬЕ, а не прямой линией: на прямых
+                 пересекающиеся переходы сливаются в кашу, и непонятно,
+                 что куда ведёт. ]]
+            local function curve(x1, y1, x2, y2, col)
+                local dx = math.max(40, math.abs(x2 - x1) * 0.5)
+                local px, py = x1, y1
+                surface.SetDrawColor(col)
+                for i = 1, 18 do
+                    local t = i / 18
+                    local mt = 1 - t
+                    local x = mt^3 * x1 + 3 * mt^2 * t * (x1 + dx) + 3 * mt * t^2 * (x2 - dx) + t^3 * x2
+                    local y = mt^3 * y1 + 3 * mt^2 * t * y1 + 3 * mt * t^2 * y2 + t^3 * y2
+                    surface.DrawLine(px, py, x, y)
+                    px, py = x, y
+                end
+                -- Стрелка у цели: сразу видно направление связи.
+                surface.DrawLine(x2, y2, x2 - 8, y2 - 5)
+                surface.DrawLine(x2, y2, x2 - 8, y2 + 5)
+            end
+
             for _, n in ipairs(nodes) do
-                local sx, sy = (n._x or 0) + 200, (n._y or 0) + 36
-                local targets = {}
-                if tostring(n.next or "") ~= "" then targets[#targets + 1] = n.next end
-                for _, ch in ipairs(n.choices or {}) do
-                    if tostring(ch.next or "") ~= "" then targets[#targets + 1] = ch.next end
+                local chs = n.choices or {}
+                -- Линейный переход реплики.
+                if tostring(n.next or "") ~= "" then
+                    local t = byID[tostring(n.next)]
+                    if t then
+                        local x1, y1 = outPort(n, 0, 0)
+                        local x2, y2 = inPort(t)
+                        curve(x1, y1, x2, y2, COL.line)
+                    end
                 end
-                for _, tid in ipairs(targets) do
-                    local t = byID[tostring(tid)]
-                    if t then surface.DrawLine(sx, sy, (t._x or 0) + 20, (t._y or 0) + 36) end
+                -- Переходы от ответов игрока: своим цветом, чтобы отличать.
+                for i, c in ipairs(chs) do
+                    if tostring(c.next or "") ~= "" then
+                        local t = byID[tostring(c.next)]
+                        if t then
+                            local x1, y1 = outPort(n, i, #chs)
+                            local x2, y2 = inPort(t)
+                            curve(x1, y1, x2, y2, Color(120, 200, 140, 190))
+                        end
+                    end
                 end
+            end
+
+            -- Резинка: тянется за курсором, пока не отпустили кнопку.
+            if linking and linking.from then
+                local x1, y1 = outPort(linking.from, linking.slot, linking.count)
+                local mx, my = canvas:CursorPos()
+                surface.SetDrawColor(COL.gold)
+                surface.DrawLine(x1, y1, mx, my)
+                draw.SimpleText("отпустите на нужной реплике", "GRMQS_Small", mx + 12, my + 6, COL.gold)
             end
         end
     end
@@ -160,9 +261,9 @@ function Q.OpenGraphStudio(data)
         local n = currentNodes()[selected]
         if not n then
             local hint = vgui.Create("DLabel", right)
-            hint:Dock(TOP) hint:SetTall(50) hint:DockMargin(10, 8, 10, 8)
+            hint:Dock(TOP) hint:SetTall(120) hint:DockMargin(10, 8, 10, 8)
             hint:SetWrap(true) hint:SetFont("GRMQS_Small") hint:SetTextColor(COL.dim)
-            hint:SetText("Клик по карточке. Тяни заголовок.")
+            hint:SetText("Клик по карточке — выбрать.\nТяни за заголовок — переместить.\n\nСВЯЗИ: тяни от круглого порта справа к другой карточке. Серый порт — переход реплики, зелёные — ответы игрока.\n\nПКМ по порту — убрать связь.")
             return
         end
         local idE = field(right, "ID узла", n.id)
@@ -181,7 +282,7 @@ function Q.OpenGraphStudio(data)
         addCh.DoClick = function()
             n.choices = n.choices or {}
             n.choices[#n.choices + 1] = { text = "Новый ответ", next = "", action = "" }
-            rebuildProps()
+            rebuildProps() rebuildCards()
         end
         for i, ch in ipairs(n.choices or {}) do
             local box = vgui.Create("DPanel", right)
@@ -193,12 +294,12 @@ function Q.OpenGraphStudio(data)
             act:AddChoice("продолжить", "", (ch.action or "") == "")
             act:AddChoice("принять квест", "accept", ch.action == "accept")
             act:AddChoice("закрыть", "close", ch.action == "close")
-            t.OnChange = function(s) ch.text = s:GetValue() end
-            nx.OnChange = function(s) ch.next = s:GetValue() end
-            act.OnSelect = function(_, _, _, v) ch.action = v end
+            t.OnChange = function(s) ch.text = s:GetValue() rebuildCards() end
+            nx.OnChange = function(s) ch.next = s:GetValue() rebuildCards() end
+            act.OnSelect = function(_, _, _, v) ch.action = v rebuildCards() end
             local del = mkBtn(box, "Удалить", COL.red)
             del:SetPos(6, 58) del:SetSize(80, 22)
-            del.DoClick = function() table.remove(n.choices, i) rebuildProps() end
+            del.DoClick = function() table.remove(n.choices, i) rebuildProps() rebuildCards() end
         end
     end
 
@@ -208,36 +309,135 @@ function Q.OpenGraphStudio(data)
         local nodes = currentNodes()
         ensureLayout(nodes)
         paintLinks()
+
+        --[[ Порт-кружок на краю карточки. От него тянется связь, ПКМ по
+             нему связь снимает. Это и есть «визуально соединять
+             элементы», о чём просил владелец. ]]
+        local function makePort(card, node, slot, count, cy)
+            local port = vgui.Create("DPanel", card)
+            port:SetSize(PORT, PORT)
+            port:SetPos(CARD_W - PORT / 2 - 1, cy - PORT / 2)
+            port:SetCursor("hand")
+            local isChoice = slot > 0
+            port.Paint = function(_, w, h)
+                local linked = isChoice and tostring((node.choices[slot] or {}).next or "") ~= ""
+                    or (not isChoice and tostring(node.next or "") ~= "")
+                local col = isChoice and Color(120, 200, 140) or COL.line
+                draw.RoundedBox(w / 2, 0, 0, w, h, linked and col or Color(60, 74, 92))
+                if linking and linking.from == node and linking.slot == slot then
+                    surface.SetDrawColor(COL.gold) surface.DrawOutlinedRect(0, 0, w, h, 2)
+                end
+            end
+            port.OnMousePressed = function(_, mc)
+                if mc == MOUSE_RIGHT then
+                    -- Снять связь: частая операция, не должна требовать полей.
+                    if isChoice then node.choices[slot].next = "" else node.next = "" end
+                    rebuildCards() rebuildProps()
+                    return
+                end
+                linking = { from = node, slot = slot, count = count }
+            end
+            return port
+        end
+
         for i, n in ipairs(nodes) do
             local card = vgui.Create("DPanel", canvas)
             card:SetPos(n._x or 80, n._y or 80)
-            card:SetSize(220, 88)
+            card:SetSize(CARD_W, CARD_H)
             card.Paint = function(_, w, h)
-                draw.RoundedBox(8, 0, 0, w, h, selected == i and COL.nodeSel or COL.node)
-                draw.SimpleText(n.id or ("n" .. i), "GRMQS_Small", 10, 8, COL.accent)
-                draw.SimpleText(string.sub(tostring(n.text or ""), 1, 42), "GRMQS_Small", 10, 28, COL.text)
-                draw.SimpleText((#(n.choices or {}) > 0) and (#n.choices .. " ответа") or "линейно", "GRMQS_Small", 10, 66, COL.dim)
+                local sel = selected == i
+                draw.RoundedBox(8, 0, 0, w, h, sel and COL.nodeSel or COL.node)
+                if sel then
+                    surface.SetDrawColor(COL.accent) surface.DrawOutlinedRect(0, 0, w, h, 2)
+                end
+                -- Полоса заголовка: за неё карточку и таскают.
+                draw.RoundedBoxEx(8, 0, 0, w, 24, Color(20, 30, 42), true, true, false, false)
+                draw.SimpleText(n.id or ("n" .. i), "GRMQS_Small", 10, 12, COL.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+
+                --[[ Реплика с переносом по словам. Владелец просил, чтобы
+                     текст «нормально отражался» — обрубок на полуслове
+                     это как раз то, что было на скриншоте. ]]
+                local lines = wrapText(n.text, "GRMQS_Small", w - 24, 3)
+                for li, line in ipairs(lines) do
+                    draw.SimpleText(line, "GRMQS_Small", 10, 32 + (li - 1) * 15, COL.text)
+                end
+
+                local chs = n.choices or {}
+                local foot = #chs > 0 and (#chs .. " отв.") or "линейно"
+                -- Отдельно помечаем узел, который выдаёт квест: это ключевая точка.
+                for _, c in ipairs(chs) do
+                    if tostring(c.action or "") == "accept" then foot = foot .. "  ·  ВЫДАЁТ КВЕСТ" break end
+                end
+                draw.SimpleText(foot, "GRMQS_Small", 10, h - 12, COL.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             end
-            card.OnMousePressed = function(self, mc)
+
+            -- Заголовок: перетаскивание карточки.
+            local grip = vgui.Create("DPanel", card)
+            grip:SetPos(0, 0) grip:SetSize(CARD_W - PORT * 2, 24)
+            grip:SetPaintBackground(false)
+            grip:SetCursor("sizeall")
+            grip.OnMousePressed = function(self, mc)
                 if mc ~= MOUSE_LEFT then return end
                 selected = i
-                self._drag = true
-                local mx, my = self:CursorPos()
-                self._ox, self._oy = mx, my
+                local mx, my = card:CursorPos()
+                self._drag, self._ox, self._oy = true, mx, my
                 rebuildProps()
             end
-            card.OnMouseReleased = function(self) self._drag = false end
-            card.Think = function(self)
+            grip.OnMouseReleased = function(self) self._drag = false end
+            grip.Think = function(self)
                 if self._drag and input.IsMouseDown(MOUSE_LEFT) then
                     local px, py = canvas:CursorPos()
                     n._x = math.max(0, px - (self._ox or 0))
                     n._y = math.max(0, py - (self._oy or 0))
-                    self:SetPos(n._x, n._y)
+                    card:SetPos(n._x, n._y)
                 elseif self._drag then
                     self._drag = false
                 end
             end
+
+            -- Клик по телу карточки выбирает её и завершает протяжку связи.
+            card.OnMousePressed = function(_, mc)
+                if mc ~= MOUSE_LEFT then return end
+                selected = i
+                rebuildProps()
+            end
+            card.OnMouseReleased = function()
+                --[[ Отпустили связь на этой карточке — она и становится
+                     целью. Пишем ID, а не индекс: узлы можно двигать и
+                     удалять, ID переживёт перестановку. ]]
+                if linking and linking.from and linking.from ~= n then
+                    local target = tostring(n.id or "")
+                    if linking.slot > 0 then
+                        local c = linking.from.choices[linking.slot]
+                        if c then c.next = target end
+                    else
+                        linking.from.next = target
+                    end
+                    linking = nil
+                    rebuildCards() rebuildProps()
+                else
+                    linking = nil
+                end
+            end
+
+            -- Порты: общий выход реплики + по одному на каждый ответ.
+            local chs = n.choices or {}
+            if #chs == 0 then
+                makePort(card, n, 0, 0, 30)
+            else
+                for ci = 1, #chs do
+                    local _, py = outPort(n, ci, #chs)
+                    makePort(card, n, ci, #chs, py - (n._y or 0))
+                end
+            end
         end
+    end
+
+    --[[ Отпустили кнопку мимо карточек — протяжка отменяется. Без этого
+         резинка залипала бы за курсором навсегда. ]]
+    canvas.OnMouseReleased = function() linking = nil end
+    canvas.Think = function()
+        if linking and not input.IsMouseDown(MOUSE_LEFT) then linking = nil end
     end
 
     local g = {}
