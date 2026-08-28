@@ -46,6 +46,7 @@ function Angle(p,y,r) return {p=p or 0,y=y or 0,r=r or 0} end
 function ErrorNoHalt(s) end
 HUD_PRINTTALK = 3
 MOVETYPE_WALK, MOVETYPE_NOCLIP = 2, 8
+FL_FROZEN = 32
 
 local NOW = 100
 CurTime = function() return NOW end
@@ -125,13 +126,19 @@ local function mkPly(o)
         SetVelocity=function() end, GetVelocity=function() return Vector(0,0,0) end,
         GetMoveType=function() return MOVETYPE_NOCLIP end,
         SetMoveType=function() end,
-        SetNoDraw=function() end, DrawShadow=function() end,
-        SetNotSolid=function() end, SetNoTarget=function() end,
-        GodEnable=function() end, GodDisable=function() end,
-        Freeze=function() end,
+        SetNoDraw=function(s,v) s._nodraw=v end, DrawShadow=function() end,
+        SetNotSolid=function(s,v) s._solid=not v end, SetNoTarget=function() end,
+        GodEnable=function(s) s._god=true end, GodDisable=function(s) s._god=false end,
+        Freeze=function(s,v) s._frozen=(v==true) end,
+        IsFlagSet=function(s) return s._frozen==true end,
         StripWeapons=function(s) s._stripped=s._stripped+1 end,
         RemoveAllAmmo=function() end,
-        Spawn=function(s) s._spawns=s._spawns+1 table.insert(s._log,"Spawn") end,
+        Spawn=function(s)
+            s._spawns=s._spawns+1 table.insert(s._log,"Spawn")
+            -- Настоящий движок здесь дёргает PlayerSpawn. Без этого стенд
+            -- не ловил «заморожен после входа».
+            runAll("PlayerSpawn", s)
+        end,
         Alive=function() return true end, InVehicle=function() return false end,
         IsPlayer=function() return true end,
         PrintMessage=function(_,_,t) table.insert(p._said or {}, t) end,
@@ -438,6 +445,88 @@ E.Begin(diag) pumpAll()
 diag._said = {}
 commands["grm_entry"](diag)
 ok(#diag._said > 0, "диагностика печатает стадии игроков")
+
+-----------------------------------------------------------------------
+print("\n=== 11. ЖИВОЙ ИГРОК НЕ ЗАМОРОЖЕН (жалоба владельца 28.08) ===")
+-----------------------------------------------------------------------
+--[[ «Дошёл до меню выбора выхода, персонаж появился, всё выдало, но
+     персонаж заморожен, не может сдвинуться.»
+
+     Причина была в самом конвейере: шаг «release» зовёт Spawn(), тот
+     дёргает PlayerSpawn, а стадия ещё spawnpoint — хук GRM_Entry_KeepLimbo
+     ловил СОБСТВЕННЫЙ спавн и возвращал игрока в лимб, то есть в
+     Freeze(true). Дальше ставились позиция и оружие, но размораживать
+     было уже некому. ]]
+do
+    local p = mkPly({ key = "20:char1" })
+    PLAYERS = { p }
+    GRM.SpawnPick = { Offer = function() return true end }
+    GRM.Char = {
+        -- Настоящий CH.FinishEntry именно так и делает.
+        FinishEntry = function(pl) pl:Spawn() return true end,
+        -- И настоящий лимб замораживает.
+        EnforceLimbo = function(pl)
+            pl.GRMCharLimbo = true
+            pl:Freeze(true)
+            pl:SetNoDraw(true)
+            pl:SetNotSolid(true)
+            pl:GodEnable()
+        end,
+    }
+
+    E.Begin(p) pumpAll()
+    E.ToCharacter(p) pumpAll()
+    E.ToSpawnPoint(p) pumpAll()
+    --[[ Морозит в лимбе модуль персонажей (CH.SendToLimbo), которого в
+         этом стенде нет. Воспроизводим это состояние руками — важна не
+         сама заморозка, а то, что конвейер обязан её снять. ]]
+    GRM.Char.EnforceLimbo(p)
+    ok(p._frozen == true, "в лимбе игрок заморожен — так и задумано")
+
+    E.ToWorld(p, { pos = Vector(42, 42, 0) })
+    pumpAll()
+
+    ok(E.StageOf(p) == E.Stages.world, "игрок доведён до мира")
+    ok(p._frozen == false,
+       "ИСПРАВЛЕНО: после входа игрок НЕ заморожен и может двигаться", p._frozen)
+    ok(p._nodraw == false, "и видим — лимб не оставил его невидимым")
+    ok(p._solid == true, "и материален")
+    ok(p._god == false, "и уязвим, как обычный игрок")
+    ok(p.GRMCharLimbo == nil, "флаг лимба снят")
+    ok(p._pos.x == 42, "и стоит на выбранной точке", p._pos.x)
+end
+
+-- Контрольная разморозка: чужой хук заморозил уже после нас.
+do
+    local p = mkPly({ key = "21:char1" })
+    PLAYERS = { p }
+    GRM.SpawnPick = { Offer = function() return false end }
+    GRM.Char = { FinishEntry = function(pl) pl:Spawn() return true end }
+
+    -- Посторонний модуль (модели фракций, аугментации) морозит на спавне.
+    hook.Add("PlayerSpawn", "TestFreezer", function(pl) pl:Freeze(true) end)
+    E.Begin(p) pumpAll()
+    E.ToCharacter(p) pumpAll()
+    E.ToSpawnPoint(p) pumpAll()
+    pumpAll()
+    hook.Remove("PlayerSpawn", "TestFreezer")
+
+    ok(E.StageOf(p) == E.Stages.world, "игрок в мире")
+    ok(p._frozen == false,
+       "контрольная разморозка снимает заморозку от чужого хука на PlayerSpawn")
+end
+
+-- Арестованного размораживать нельзя: его морозят законно.
+do
+    local src = readf("lua/autorun/sh_grm_entry.lua")
+    ok(src:find("GRM_Arrested", 1, true) ~= nil,
+       "контрольная разморозка не трогает арестованного")
+    ok(src:find("GRM_911_Downed", 1, true) ~= nil,
+       "и лежащего без сознания")
+    local keep = src:match('hook%.Add%("PlayerSpawn", "GRM_Entry_KeepLimbo".-\n    end%)')
+    ok(keep and keep:find("GRMEntryDone", 1, true) ~= nil,
+       "ИСПРАВЛЕНО: KeepLimbo не ловит собственный спавн конвейера")
+end
 
 print("")
 print(string.format("ИТОГО: %d ok, %d FAIL", pass, fail))

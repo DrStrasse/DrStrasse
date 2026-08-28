@@ -224,10 +224,41 @@ if SERVER then
             if _G.ApplyWeaponsToPlayer then _G.ApplyWeaponsToPlayer(p) end
         end)
 
+        --[[ РАЗМОРОЗКА ОТДЕЛЬНЫМ ШАГОМ, И ОБЯЗАТЕЛЬНО ПОСЛЕДНИМ.
+
+             В лимбе игрок заморожен, невидим и бесплотен. Снимать это
+             «где-то по пути» нельзя: любой чужой хук на PlayerSpawn
+             (модели фракций, арест, аугментации) мог заново заморозить
+             или спрятать. Поэтому приводим игрока в рабочее состояние
+             ровно перед выходом в мир и не полагаемся на то, что кто-то
+             уже это сделал. ]]
+        E.Step(ply, "unfreeze", function(p)
+            p.GRMCharLimbo = nil
+            p:Freeze(false)
+            p:SetMoveType(MOVETYPE_WALK)
+            p:SetNoDraw(false)
+            p:DrawShadow(true)
+            p:SetNotSolid(false)
+            p:SetNoTarget(false)
+            p:GodDisable()
+        end)
+
         E.Step(ply, "to_world", function(p)
             p.GRMEntryPoint = nil
             E.SetStage(p, E.Stages.world)
             hook.Run("GRM_EntryFinished", p)
+            --[[ Контрольная разморозка через тик: если чужой хук на
+                 PlayerSpawn заморозил игрока после нас, он всё равно
+                 сможет двигаться. Дешевле одной проверки, чем ловить
+                 каждый источник заморозки по отдельности. ]]
+            timer.Simple(0.1, function()
+                if not IsValid(p) then return end
+                if E.StageOf(p) ~= E.Stages.world then return end
+                -- Арест и «тяжёлое ранение» замораживают законно.
+                if p:GetNWBool("GRM_Arrested", false) then return end
+                if p:GetNWBool("GRM_911_Downed", false) then return end
+                if p.IsFlagSet and p:IsFlagSet(FL_FROZEN) then p:Freeze(false) end
+            end)
         end)
         return true
     end
@@ -272,10 +303,21 @@ if SERVER then
 
     hook.Add("PlayerSpawn", "GRM_Entry_KeepLimbo", function(ply)
         if not E.InProgress(ply) then return end
+        --[[ КРИТИЧНО: финал входа сам вызывает Spawn() (шаг «release»), и
+             стадия в этот момент ещё spawnpoint. Без этой проверки мы
+             ловили собственный спавн и возвращали игрока в лимб — а лимб
+             это Freeze(true). Дальше шаги ставили позицию и оружие, но
+             заморозку снимать было уже некому.
+
+             Жалоба владельца: «персонаж появился, всё выдало, но
+             персонаж заморожен, не может сдвинуться». Как только начат
+             выпуск в мир (GRMEntryDone), удерживать лимб нельзя. ]]
+        if ply.GRMEntryDone then return end
         local CH = GRM.Char
         if CH and CH.EnforceLimbo then
             timer.Simple(0, function()
-                if IsValid(ply) and E.InProgress(ply) then CH.EnforceLimbo(ply) end
+                if not IsValid(ply) or ply.GRMEntryDone then return end
+                if E.InProgress(ply) then CH.EnforceLimbo(ply) end
             end)
         end
     end)
