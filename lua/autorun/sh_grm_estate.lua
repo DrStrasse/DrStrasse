@@ -84,12 +84,42 @@ ES.MarkerHeight = 2
      комнаты или вообще стена: значок торчал в воздухе посреди
      помещения, а подпись читалась только изнутри.
 
-     Теперь якорь — входная дверь объекта: значок стоит чуть в стороне
-     от полотна (наружу от центра зоны) и над верхним краем двери, как
-     табличка над входом. Центр зоны остаётся запасным вариантом для
-     объектов, у которых дверей ещё нет. ]]
-ES.DoorOffset = 26      -- на сколько вынести значок от полотна двери наружу
-ES.DoorLift   = 8       -- насколько поднять значок над верхним краем двери
+     Теперь якорь — входная дверь объекта.
+
+     ПЕРЕСМОТР ДИЗАЙНА (28.08, по скриншотам владельца: «ну как-то такое
+     себе, мб как-то по-другому дизайн сделать?»).
+
+     Первый заход просто перенёс к двери СТАРУЮ вращающуюся эмблему
+     facepunch_logo. На скриншотах видно, почему это не сработало:
+
+       • модель объёмная и крупная — в подъезде она врезалась в потолок
+         и в стену, «полумесяц» торчал сквозь перекрытие;
+       • она вращалась, то есть половину времени была видна с ребра;
+       • подпись рисовалась через HUDPaint, то есть СКВОЗЬ стены: над
+         дверью висел текст соседней квартиры;
+       • вывеской это не выглядело — просто предмет в воздухе.
+
+     Новый дизайн: плоская ТАБЛИЧКА, приклеенная к стене над дверью,
+     нарисованная в 3D2D. Она лежит в плоскости стены (в потолок влезть
+     нечем), не вращается, скрывается за стенами и содержит всё сразу —
+     название, статус и цену. Ровно то, о чём и просил владелец:
+     «Квартира №2, стоимость 85.000 GRM — тоже к двери».
+
+     Объекты без дверей продолжают показывать прежнюю эмблему в центре
+     зоны: это запасной вариант, чтобы старые зоны не потерялись. ]]
+ES.DoorOffset = 2.5     -- отступ таблички от плоскости стены (чтобы не мерцала)
+ES.DoorLift   = 5       -- зазор между верхом дверного проёма и низом таблички
+
+--[[ Размер таблички в мире. Ширина подобрана под дверной проём (~48
+     юнитов): вывеска чуть шире двери, как настоящая. Высота — три
+     строки текста. ]]
+ES.PlaqueWidth  = 62
+ES.PlaqueHeight = 26
+
+--[[ Насколько далеко читается табличка. Мелкий текст дальше 900 юнитов
+     всё равно не разобрать, а рисовать 3D2D для каждой двери на карте
+     дорого. За этим порогом остаётся только цветная точка-огонёк. ]]
+ES.PlaqueDistance = 900
 
 --[[ ПОВОРОТ.
 
@@ -233,16 +263,45 @@ function ES.MainDoor(rec, index)
     return best
 end
 
---[[ ТОЧКА, ГДЕ ВИСИТ ЗНАЧОК И ПОДПИСЬ.
+--[[ КУДА СМОТРИТ ТАБЛИЧКА.
 
-     Есть дверь — крепимся к ней: чуть вынесены наружу от центра зоны,
-     чтобы значок не тонул в полотне, и подняты над верхним краем двери,
-     как вывеска над входом. Двери нет — падаем на центр зоны, как было
-     раньше: старые объекты без привязанных дверей не должны потерять
-     значок совсем.
+     Наружу — это в сторону ближайшей грани зоны: вход врезан в наружную
+     стену, значит именно туда смотрит улица (или подъезд), откуда
+     объект и разглядывают.
 
-     Второе возвращаемое значение говорит, к двери ли привязались —
-     по нему клиент решает, надо ли уводить подпись выше. ]]
+     Направление «прочь от центра зоны» тут не годится: у двери, стоящей
+     в углу, оно уводило бы табличку по диагонали в стену — она мерцала
+     бы, наполовину утонув в геометрии.
+
+     Возвращает единичный вектор нормали (dx, dy) и его YAW в градусах:
+     клиенту нужен именно угол, чтобы развернуть плоскость 3D2D. ]]
+function ES.OutwardDir(rec, pos)
+    local dx, dy = 0, 0
+    local _, nx, ny = ES.ZoneEdge(rec, pos)
+    if nx then
+        dx, dy = nx, ny
+    else
+        local center = ES.ZoneCenter(rec)
+        if center then
+            dx, dy = pos.x - center.x, pos.y - center.y
+            local len = math.sqrt(dx * dx + dy * dy)
+            if len > 1 then dx, dy = dx / len, dy / len else dx, dy = 0, 0 end
+        end
+    end
+    -- math.deg(math.atan2) вместо Angle(): работает и на сервере, и в стенде.
+    local yaw = math.deg(math.atan2(dy, dx))
+    return dx, dy, yaw
+end
+
+--[[ ТОЧКА, ГДЕ ВИСИТ ТАБЛИЧКА.
+
+     Есть дверь — крепимся к ней: табличка встаёт в плоскости стены,
+     чуть выше дверного проёма, с небольшим отступом от штукатурки,
+     чтобы не мерцала на стыке с ней. Двери нет — падаем на центр зоны
+     со старой эмблемой: зоны, к которым двери так и не привязали, не
+     должны исчезнуть с карты.
+
+     Возвращает: точку, признак «на двери» и YAW плоскости. ]]
 function ES.MarkerAnchor(rec, index)
     local door = ES.MainDoor(rec, index)
     if IsValid(door) then
@@ -253,33 +312,23 @@ function ES.MarkerAnchor(rec, index)
             if mn and mx then top = mx.z end
         end
 
-        --[[ Куда вынести значок. Наружу — это в сторону ближайшей грани
-             зоны: вход врезан в наружную стену, значит именно туда
-             смотрит улица, откуда объект и разглядывают.
+        local dx, dy, yaw = ES.OutwardDir(rec, pos)
 
-             Направление «прочь от центра зоны» тут не годится: у двери,
-             стоящей в углу, оно уводило бы значок по диагонали в стену. ]]
-        local dx, dy = 0, 0
-        local _, nx, ny = ES.ZoneEdge(rec, pos)
-        if nx then
-            dx, dy = nx, ny
-        else
-            local center = ES.ZoneCenter(rec)
-            if center then
-                dx, dy = pos.x - center.x, pos.y - center.y
-                local len = math.sqrt(dx * dx + dy * dy)
-                if len > 1 then dx, dy = dx / len, dy / len else dx, dy = 0, 0 end
-            end
-        end
+        --[[ Точка — ЦЕНТР таблички: 3D2D рисует от середины плоскости.
+             Поэтому поднимаем не на «зазор», а на «зазор + половина
+             высоты», иначе нижняя половина вывески легла бы на дверь.
 
+             Именно из-за этого на скриншотах старая эмблема резалась о
+             потолок: её центр ставили вплотную к верху двери, а модель
+             была выше самого проёма. ]]
         return Vector(pos.x + dx * ES.DoorOffset,
                       pos.y + dy * ES.DoorOffset,
-                      top + ES.DoorLift), true
+                      top + ES.DoorLift + ES.PlaqueHeight * 0.5), true, yaw
     end
 
     local center = ES.ZoneCenter(rec)
-    if not center then return nil, false end
-    return Vector(center.x, center.y, center.z + ES.MarkerHeight), false
+    if not center then return nil, false, 0 end
+    return Vector(center.x, center.y, center.z + ES.MarkerHeight), false, 0
 end
 
 --[[ Сумма с разделителями разрядов: «85 000 GRM» вместо «85000 GRM».
@@ -297,6 +346,41 @@ function ES.Money(amount)
         if cnt % 3 == 0 and i > 1 then out = " " .. out end
     end
     return (n < 0 and "-" or "") .. out .. " GRM"
+end
+
+--- Цвет объекта на значке: синий «продаётся», иначе цвет своего вида.
+function ES.ZoneColor(zone)
+    if not istable(zone) then return ES.MarkerColor.estate end
+    if zone.vacant then return ES.MarkerColor.sale end
+    return ES.MarkerColor[zone.kind] or ES.MarkerColor.estate
+end
+
+--[[ Три строки таблички у двери: название, статус, подсказка.
+
+     Держим в ОБЩЕЙ части, а не в клиентской: так содержимое вывески
+     проверяется стендом без запуска рендера. Раньше текст собирался
+     прямо в HUDPaint, и убедиться, что на табличке написано именно
+     «Квартира №2 · 85 000 GRM», можно было только глазами на сервере. ]]
+function ES.PlaqueLines(zone)
+    if not istable(zone) then return "", "", nil end
+    local title = tostring(zone.name or "") ~= "" and zone.name
+        or (zone.kind == "business" and "Бизнес" or "Жильё")
+
+    local status, hint
+    if zone.vacant then
+        status = (tonumber(zone.price) or 0) > 0
+            and ("СВОБОДНО · " .. ES.Money(zone.price))
+            or "СВОБОДНО"
+        -- Прямо на табличке написано, что набрать: покупка живёт не в админке.
+        hint = zone.kind == "business" and "/buybusiness" or "/buyhome"
+    else
+        status = tostring(zone.owner or "") ~= "" and zone.owner or "занято"
+        -- Для бизнеса сразу видно, сколько внутри оборудования.
+        if zone.kind == "business" and (tonumber(zone.equipment) or 0) > 0 then
+            status = status .. "  ·  точек: " .. zone.equipment
+        end
+    end
+    return title, status, hint
 end
 
 --- Площадь зоны в метрах (1 м ≈ 39.37 units) — для подсказки цены.
@@ -521,7 +605,7 @@ if SERVER then
             --[[ Точку значка считаем ЗДЕСЬ, на сервере: только он знает
                  положение дверей объекта. Клиент получает готовые
                  координаты и не занимается поиском энтити. ]]
-            local anchor, onDoor = ES.MarkerAnchor(rec, doorIndex)
+            local anchor, onDoor, yaw = ES.MarkerAnchor(rec, doorIndex)
             if kind ~= "none" and anchor then
                 local scan = ES.ScanCached(rec, 30)
                 out[#out + 1] = {
@@ -529,8 +613,12 @@ if SERVER then
                     kind = kind,
                     name = tostring(rec.name or ""),
                     pos = { x = anchor.x, y = anchor.y, z = anchor.z },
-                    -- Значок на двери: подпись клиент поднимет иначе.
+                    --[[ Значок на двери: клиент нарисует плоскую табличку
+                         в плоскости стены. Без двери — прежняя эмблема
+                         в центре зоны. ]]
                     onDoor = onDoor and true or false,
+                    -- Куда развёрнута плоскость таблички (градусы).
+                    yaw = math.floor((tonumber(yaw) or 0) * 10) / 10,
                     -- Выставленный на продажу объект выглядит как свободный:
                     -- синий значок означает «можно купить».
                     vacant = ES.IsVacant(rec) or istable(rec.estateSale),
@@ -1406,8 +1494,12 @@ if CLIENT then
         hook.Run("GRM_EstateSynced")
     end)
 
-    --[[ Клиентские модели значков. ClientsideModel дешевле энтити и не
-         нагружает сеть: значок — чистая декорация. ]]
+    --[[ ЗАПАСНАЯ ЭМБЛЕМА для зон без дверей.
+
+         Клиентские модели создаём ТОЛЬКО для таких объектов. У зон с
+         дверью вместо модели рисуется плоская табличка (см. ниже), и
+         держать для неё ClientsideModel незачем — именно эта модель на
+         скриншотах владельца врезалась в потолок подъезда. ]]
     local function ensureMarkers()
         if ES._markers then return ES._markers end
         local out = {}
@@ -1415,44 +1507,119 @@ if CLIENT then
              ровно заданный оттенок, а не подкрашенную текстуру логотипа. ]]
         local mat = Material(ES.MarkerMaterial)
         for _, zone in ipairs(ES.Zones or {}) do
-            local mdl = ClientsideModel(ES.MarkerModel, RENDERGROUP_TRANSLUCENT)
-            if IsValid(mdl) then
-                mdl:SetNoDraw(true)
-                mdl:SetPos(Vector(zone.pos.x, zone.pos.y, zone.pos.z))
-                local scale = ES.MarkerScale[zone.kind] or 0.2
-                mdl:SetModelScale(scale, 0)
-                if mat and not mat:IsError() then mdl:SetMaterial(ES.MarkerMaterial) end
-                out[#out + 1] = { ent = mdl, zone = zone }
+            if not zone.onDoor then
+                local mdl = ClientsideModel(ES.MarkerModel, RENDERGROUP_TRANSLUCENT)
+                if IsValid(mdl) then
+                    mdl:SetNoDraw(true)
+                    mdl:SetPos(Vector(zone.pos.x, zone.pos.y, zone.pos.z))
+                    local scale = ES.MarkerScale[zone.kind] or 0.2
+                    mdl:SetModelScale(scale, 0)
+                    if mat and not mat:IsError() then mdl:SetMaterial(ES.MarkerMaterial) end
+                    out[#out + 1] = { ent = mdl, zone = zone }
+                end
             end
         end
         ES._markers = out
         return out
     end
 
+    surface.CreateFont("GRMEstate_Plaque",    { font = "Roboto", size = 46, weight = 800, extended = true, antialias = true })
+    surface.CreateFont("GRMEstate_PlaqueSub", { font = "Roboto", size = 30, weight = 600, extended = true, antialias = true })
+    surface.CreateFont("GRMEstate_PlaqueHint",{ font = "Roboto", size = 24, weight = 500, extended = true, antialias = true })
+
+    --[[ ТАБЛИЧКА НАД ДВЕРЬЮ (переделка дизайна 28.08 по скриншотам).
+
+         Рисуем в 3D2D прямо в плоскости стены. Что это чинит:
+
+           • вывеска ПЛОСКАЯ — ей нечем врезаться в потолок, в отличие
+             от объёмного логотипа;
+           • она в мире, а не в HUD, значит стена её честно перекрывает:
+             больше не видно надписей от соседних квартир сквозь бетон;
+           • не вращается — текст читается всегда;
+           • название, статус и цена в одном блоке, как настоящая
+             табличка у входа.
+
+         Рисуем в PostDrawTranslucentRenderables: там уже есть тест
+         глубины по миру, поэтому перекрытие стенами достаётся даром. ]]
+    local function drawPlaque(zone, eyePos)
+        local pos = Vector(zone.pos.x, zone.pos.y, zone.pos.z)
+        local dist = eyePos:DistToSqr(pos)
+        if dist > ES.DrawDistance ^ 2 then return end
+
+        local col = ES.ZoneColor(zone)
+        local ang = Angle(0, (tonumber(zone.yaw) or 0) - 90, 90)
+
+        --[[ Далёкие таблички не рисуем текстом: мелкие буквы всё равно
+             не читаются, а 3D2D дорогой. Вместо этого — цветной огонёк,
+             чтобы объект было видно издалека. ]]
+        if dist > ES.PlaqueDistance ^ 2 then
+            cam.Start3D2D(pos, ang, 0.25)
+                draw.RoundedBox(16, -60, -30, 120, 60, Color(col.r, col.g, col.b, 190))
+            cam.End3D2D()
+            return
+        end
+
+        local title, status, hint = ES.PlaqueLines(zone)
+
+        --[[ Масштаб подобран так, чтобы табличка занимала ES.PlaqueWidth
+             юнитов по ширине: рисуем в «экранных» координатах 0..W и
+             сжимаем. Так шрифты остаются чёткими. ]]
+        local W, H = 420, 176
+        local scale = ES.PlaqueWidth / W
+
+        cam.Start3D2D(pos, ang, scale)
+            -- Подложка: тёмная, чтобы текст читался на любой стене.
+            draw.RoundedBox(10, -W / 2, -H / 2, W, H, Color(16, 20, 28, 235))
+            -- Цветная рамка и полоса сверху — вид объекта видно мгновенно.
+            draw.RoundedBox(10, -W / 2, -H / 2, W, 8, Color(col.r, col.g, col.b, 255))
+            surface.SetDrawColor(col.r, col.g, col.b, 90)
+            surface.DrawOutlinedRect(-W / 2, -H / 2, W, H, 3)
+
+            draw.SimpleText(title, "GRMEstate_Plaque", 0, -H / 2 + 42,
+                col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            draw.SimpleText(status, "GRMEstate_PlaqueSub", 0, -H / 2 + 88,
+                Color(214, 224, 236), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            if hint then
+                draw.SimpleText("Чтобы купить — напишите " .. hint,
+                    "GRMEstate_PlaqueHint", 0, -H / 2 + 130,
+                    Color(255, 226, 130), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            end
+        cam.End3D2D()
+    end
+
     hook.Add("PostDrawTranslucentRenderables", "GRM_Estate_Markers", function(depth, sky)
         if depth or sky then return end
         local lp = LocalPlayer()
         if not IsValid(lp) then return end
-        local markers = ensureMarkers()
-        if #markers == 0 then return end
 
         local eyePos = EyePos()
+
+        --[[ Сначала таблички у дверей: их большинство. Рисуются только
+             если игрок стоит с ЛИЦЕВОЙ стороны — сзади вывеска была бы
+             зеркальной. ]]
+        for _, zone in ipairs(ES.Zones or {}) do
+            if zone.onDoor and zone.pos then
+                local yawRad = math.rad(tonumber(zone.yaw) or 0)
+                local nx, ny = math.cos(yawRad), math.sin(yawRad)
+                local dx = eyePos.x - zone.pos.x
+                local dy = eyePos.y - zone.pos.y
+                if dx * nx + dy * ny > 0 then
+                    drawPlaque(zone, eyePos)
+                end
+            end
+        end
+
+        -- Затем прежние эмблемы — только для зон без дверей.
+        local markers = ensureMarkers()
         for _, row in ipairs(markers) do
             local ent, zone = row.ent, row.zone
             if IsValid(ent) then
                 local pos = ent:GetPos()
-                local dist = eyePos:DistToSqr(pos)
-                -- Дальние значки не рисуем: на карте их могут быть десятки.
-                if dist <= ES.DrawDistance ^ 2 then
-                    --[[ Свободный объект подсвечен синим «продаётся»,
-                         занятый — цветом своего вида. ]]
-                    local col = zone.vacant and ES.MarkerColor.sale
-                        or (ES.MarkerColor[zone.kind] or color_white)
+                if eyePos:DistToSqr(pos) <= ES.DrawDistance ^ 2 then
+                    local col = ES.ZoneColor(zone)
                     --[[ Ровное вращение вокруг своей оси, одинаковое для
                          всех и независимое от камеры. Roll держит логотип
-                         вертикально, чтобы он не лежал «крышей». Привязка
-                         Yaw к позиции игрока была ошибкой: значок дёргался
-                         и замирал в зависимости от стороны подхода. ]]
+                         вертикально, чтобы он не лежал «крышей». ]]
                     ent:SetAngles(Angle(0, (CurTime() * ES.MarkerSpin) % 360, ES.MarkerRoll))
                     render.SetColorModulation(col.r / 255, col.g / 255, col.b / 255)
                     ent:DrawModel()
@@ -1462,8 +1629,12 @@ if CLIENT then
         end
     end)
 
-    --[[ Подпись под значком: название, состояние и что внутри.
-         Отдельным проходом, чтобы текст не перекрывался моделью. ]]
+    --[[ Подпись через HUD осталась ТОЛЬКО для зон без дверей.
+
+         Для дверей она убрана намеренно: HUDPaint рисует поверх всего,
+         игнорируя стены, и на скриншотах владельца было видно текст
+         соседних квартир прямо сквозь бетон. У таблички этой болезни
+         нет — она честная геометрия в мире. ]]
     hook.Add("HUDPaint", "GRM_Estate_Labels", function()
         local lp = LocalPlayer()
         if not IsValid(lp) then return end
@@ -1471,59 +1642,27 @@ if CLIENT then
         local eyePos = EyePos()
 
         for _, zone in ipairs(ES.Zones or {}) do
-            local pos = Vector(zone.pos.x, zone.pos.y, zone.pos.z)
-            local dist = eyePos:DistToSqr(pos)
-            if dist <= (ES.DrawDistance * 0.55) ^ 2 then
-                --[[ Подпись ставим НАД значком, а не под ним.
-
-                     Раньше она смещалась вниз на 16 юнитов: пока значок
-                     висел высоко, это выглядело нормально. Но после
-                     опускания эмблемы почти к центру зоны (28.08) такой
-                     сдвиг увёл бы текст под пол. Поднимаем на ту же
-                     величину — подпись читается, значок её не
-                     перекрывает.
-
-                     Значок на двери поднимаем чуть выше: там эмблема
-                     стоит над самим полотном, и при прежних 18 юнитах
-                     строки «СВОБОДНО · 85 000 GRM» налезали бы на неё.
-                     Строки подписи рисуются ВНИЗ по экрану, поэтому
-                     весь блок текста ложится ровно на дверь — как
-                     табличка у входа, чего владелец и просил. ]]
-                local lift = zone.onDoor and 30 or 18
-                local screen = (pos + Vector(0, 0, lift)):ToScreen()
-                if screen.visible then
-                    local col = zone.vacant and ES.MarkerColor.sale
-                        or (ES.MarkerColor[zone.kind] or color_white)
-                    local title = zone.name ~= "" and zone.name
-                        or (zone.kind == "business" and "Бизнес" or "Жильё")
-                    draw.SimpleTextOutlined(title, "GRMEstate_Label", screen.x, screen.y,
-                        col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 220))
-
-                    local sub
-                    if zone.vacant then
-                        sub = zone.price > 0 and ("СВОБОДНО · " .. ES.Money(zone.price)) or "СВОБОДНО"
-                    else
-                        sub = zone.owner ~= "" and zone.owner or "занято"
-                    end
-                    -- Для бизнеса сразу видно, сколько внутри оборудования.
-                    if zone.kind == "business" and (zone.equipment or 0) > 0 then
-                        sub = sub .. "  ·  точек: " .. zone.equipment
-                    end
-                    draw.SimpleTextOutlined(sub, "GRMEstate_Sub", screen.x, screen.y + 20,
-                        Color(210, 220, 232), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 200))
-
-                    --[[ ПОДСКАЗКА, КАК КУПИТЬ (заказ владельца 28.08).
-
-                         Раньше игрок видел «СВОБОДНО · 85000 GRM» и не
-                         понимал, что с этим делать: покупка жила в
-                         /property_admin, то есть в админском окне.
-                         Теперь прямо под ценой написано, что набрать. ]]
-                    if zone.vacant then
-                        local cmd = zone.kind == "business" and "/buybusiness" or "/buyhome"
-                        draw.SimpleTextOutlined("Чтобы купить — напишите " .. cmd,
-                            "GRMEstate_Sub", screen.x, screen.y + 38,
-                            Color(255, 226, 130), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER,
-                            1, Color(0, 0, 0, 210))
+            if not zone.onDoor then
+                local pos = Vector(zone.pos.x, zone.pos.y, zone.pos.z)
+                local dist = eyePos:DistToSqr(pos)
+                if dist <= (ES.DrawDistance * 0.55) ^ 2 then
+                    --[[ Подпись ставим НАД значком, а не под ним: после
+                         опускания эмблемы почти к центру зоны сдвиг вниз
+                         увёл бы текст под пол. ]]
+                    local screen = (pos + Vector(0, 0, 18)):ToScreen()
+                    if screen.visible then
+                        local col = ES.ZoneColor(zone)
+                        local title, status, hint = ES.PlaqueLines(zone)
+                        draw.SimpleTextOutlined(title, "GRMEstate_Label", screen.x, screen.y,
+                            col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 220))
+                        draw.SimpleTextOutlined(status, "GRMEstate_Sub", screen.x, screen.y + 20,
+                            Color(210, 220, 232), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 200))
+                        if hint then
+                            draw.SimpleTextOutlined("Чтобы купить — напишите " .. hint,
+                                "GRMEstate_Sub", screen.x, screen.y + 38,
+                                Color(255, 226, 130), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER,
+                                1, Color(0, 0, 0, 210))
+                        end
                     end
                 end
             end

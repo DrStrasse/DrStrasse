@@ -239,25 +239,23 @@ ok(src:find("dir:Angle().y", 1, true) == nil,
 --[[ Подпись обязана быть НАД значком. Раньше она смещалась вниз на 16
      юнитов; после опускания эмблемы такой сдвиг увёл бы текст под пол.
 
-     С 28.08 подъём стал разным: значок, прикреплённый к двери, стоит
-     над полотном, и подпись там надо уводить выше, чем над центром
-     зоны. Проверяем не конкретное число, а что сдвиг ПОЛОЖИТЕЛЬНЫЙ и
-     считается от того же вектора. Подробности привязки к двери —
-     в sim_estate_door_marker.lua. ]]
-ok(src:find("(pos + Vector(0, 0, lift)):ToScreen()", 1, true) ~= nil,
+     ВАЖНО (28.08, переделка дизайна по скриншотам). Этот HUD-текст
+     остался ТОЛЬКО для зон без привязанных дверей. У объектов с дверью
+     и название, и цена теперь живут на 3D2D-табличке над входом:
+     HUDPaint рисует поверх геометрии, и на скриншотах владельца было
+     видно надписи соседних квартир прямо сквозь стену.
+
+     Подробности таблички — в sim_estate_door_marker.lua. Здесь
+     проверяем только уцелевшую ветку «зона без дверей». ]]
+ok(src:find("(pos + Vector(0, 0, 18)):ToScreen()", 1, true) ~= nil,
    "ИСПРАВЛЕНО: подпись поднята над значком, а не спрятана под пол")
-local liftExpr = src:match("local lift = ([^\n]+)")
-ok(liftExpr ~= nil, "подъём подписи вынесен в переменную", liftExpr)
-local liftDoor = tonumber(tostring(liftExpr):match("and%s+(%d+)"))
-local liftZone = tonumber(tostring(liftExpr):match("or%s+(%d+)"))
-ok(liftDoor and liftZone and liftDoor > 0 and liftZone > 0,
-   "оба варианта подъёма положительные — текст не уходит под пол",
-   tostring(liftExpr))
-ok(liftDoor and liftZone and liftDoor > liftZone,
-   "у двери подпись поднимается выше: там эмблема стоит над полотном",
-   ("дверь %s, центр зоны %s"):format(tostring(liftDoor), tostring(liftZone)))
 ok(src:find("(pos - Vector(0, 0, 16)):ToScreen()", 1, true) == nil,
    "прежний сдвиг вниз убран")
+
+local hudBlock = src:match('hook%.Add%("HUDPaint", "GRM_Estate_Labels".-\n    end%)') or ""
+ok(hudBlock ~= "", "блок HUD-подписей найден")
+ok(hudBlock:find("if not zone.onDoor then", 1, true) ~= nil,
+   "HUD-подпись рисуется только для зон БЕЗ дверей — текст не светит сквозь стены")
 
 -----------------------------------------------------------------------
 -- 4. ПЛАШКА ТОРГОВОГО АВТОМАТА

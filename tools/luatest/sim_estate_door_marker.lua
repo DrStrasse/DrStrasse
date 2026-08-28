@@ -206,8 +206,30 @@ ok(anchor.y < doorPos.y,
 local _, top = frontDoor:WorldSpaceAABB()
 ok(anchor.z > top.z, "значок поднят НАД верхним краем двери, как вывеска",
    ("верх двери %.0f, значок %.0f"):format(top.z, anchor.z))
-ok(anchor.z <= top.z + ES.DoorLift + 0.01, "но не улетел под потолок", anchor.z)
 ok(anchor.z > doorPos.z, "и точно не утоплен в пол")
+
+--[[ ТОЧКА — ЦЕНТР ТАБЛИЧКИ, а не её низ: 3D2D рисует от середины
+     плоскости. Если этого не учесть, нижняя половина вывески легла бы
+     на само дверное полотно. ]]
+local plaqueBottom = anchor.z - ES.PlaqueHeight * 0.5
+local plaqueTop    = anchor.z + ES.PlaqueHeight * 0.5
+ok(plaqueBottom >= top.z + ES.DoorLift - 0.01,
+   "низ таблички выше дверного проёма — не наезжает на полотно",
+   ("низ %.1f, верх двери %.0f"):format(plaqueBottom, top.z))
+
+--[[ ГЛАВНОЕ ПО СКРИНШОТАМ: старая объёмная эмблема врезалась в потолок
+     подъезда. Типовой потолок Source над дверью 82 юнита — это 128.
+     Табличка обязана уместиться в этот просвет. ]]
+local CEILING = 128
+ok(plaqueTop < CEILING,
+   "ИСПРАВЛЕНО: табличка целиком помещается под типовым потолком (128)",
+   ("верх таблички %.0f"):format(plaqueTop))
+
+-- Старая эмблема при своём размере в этот просвет не влезала.
+local OLD_MODEL_RADIUS = 48   -- facepunch_logo при масштабе 0.18-0.22
+ok(top.z + ES.DoorLift + OLD_MODEL_RADIUS > CEILING,
+   "БАГ ВОСПРОИЗВЕДЁН: прежняя объёмная эмблема упиралась в потолок",
+   ("нужно было %.0f при потолке %d"):format(top.z + ES.DoorLift + OLD_MODEL_RADIUS, CEILING))
 
 --[[ Дверь в УГЛУ зоны. Направление «прочь от центра» увело бы значок по
      диагонали прямо в стену; правильное — перпендикулярно ближайшей
@@ -257,6 +279,22 @@ ok(row and math.abs(row.pos.x - anchor.x) < 0.01
    row and ("%.0f %.0f %.0f"):format(row.pos.x, row.pos.y, row.pos.z))
 ok(row and row.price == 85000, "цена в снимке та, что назначил админ", row and row.price)
 
+--[[ Клиенту нужен УГОЛ плоскости: без него табличка развернулась бы
+     ребром к зрителю. Дверь стоит в южной стене (нормаль -Y), значит
+     yaw около -90. ]]
+ok(row and row.yaw ~= nil, "в снимке есть разворот плоскости таблички")
+ok(row and math.abs(row.yaw - (-90)) < 1,
+   "и он смотрит наружу, в сторону улицы", row and row.yaw)
+
+-- Дверь в западной стене должна дать другой угол — проверяем не константу.
+local westDoor = mkDoor("west_m1", Vector(2, 150, 0))
+local westRec = { id = "wr", name = "Западная", estateKind = "estate",
+    ownerType = "none", doors = { "west_m1" }, zone = ZONE, purchasePrice = 1000 }
+local _, _, westYaw = ES.MarkerAnchor(westRec)
+ok(math.abs(westYaw - 180) < 1, "у западной стены разворот другой — угол реально считается",
+   westYaw)
+westDoor._valid = false
+
 --[[ Точку считает СЕРВЕР: только он знает положение дверей. Проверяем,
      что клиент не пытается искать двери сам. ]]
 local src = (function()
@@ -271,18 +309,101 @@ ok(clientBlock:find("MainDoor", 1, true) == nil,
 -----------------------------------------------------------------------
 print("\n=== 6. ПОДПИСЬ ТОЖЕ У ДВЕРИ И ЧИТАЕМА ===")
 -----------------------------------------------------------------------
---[[ Подпись рисуется от той же точки, что и значок, значит переехала
-     вместе с ним. Проверяем сдвиг: на двери эмблема стоит над полотном,
-     и текст надо увести выше, иначе он ляжет на неё. ]]
-ok(clientBlock:find("zone.onDoor and 30 or 18", 1, true) ~= nil,
-   "ИСПРАВЛЕНО: у двери подпись поднимается выше, чем над центром зоны")
-ok(clientBlock:find("zone.pos.x, zone.pos.y, zone.pos.z", 1, true) ~= nil,
-   "подпись и значок берут ОДНУ И ТУ ЖЕ точку — не разъедутся")
+--[[ ПЕРЕДЕЛКА ДИЗАЙНА 28.08 (скриншоты: «ну как-то такое себе»).
 
--- Воспроизводим расчёт подъёма: на двери должно быть строго выше.
-local function lift(onDoorFlag) return onDoorFlag and 30 or 18 end
-ok(lift(true) > lift(false), "на двери зазор больше, чем при центре зоны")
-ok(anchor.z + lift(true) > top.z, "строка названия оказывается выше полотна двери")
+     Текст больше НЕ рисуется через HUDPaint для дверей. HUDPaint кладёт
+     пиксели поверх всего кадра, игнорируя геометрию, — на скриншотах
+     из-за этого были видны надписи соседних квартир прямо сквозь
+     бетонную стену. Табличка рисуется в мире (3D2D), и стена честно
+     её перекрывает. ]]
+--[[ Проверяем именно ТЕЛО функции таблички, а не файл целиком: иначе
+     тест проходил бы от любого случайного cam.Start3D2D в другом месте.
+     Первая версия этой проверки так и промахнулась — откат рисования
+     она не заметила. ]]
+local plaqueFn = clientBlock:match("local function drawPlaque.-\n    end") or ""
+ok(plaqueFn ~= "", "функция отрисовки таблички найдена")
+local starts = select(2, plaqueFn:gsub("cam%.Start3D2D", ""))
+local ends   = select(2, plaqueFn:gsub("cam%.End3D2D", ""))
+ok(starts >= 1,
+   "ИСПРАВЛЕНО: табличка рисуется в мире (3D2D), а не поверх кадра", starts)
+ok(starts == ends,
+   "каждый Start3D2D закрыт End3D2D — иначе поехал бы весь рендер кадра",
+   ("start %d, end %d"):format(starts, ends))
+ok(plaqueFn:find("draw.SimpleText(title", 1, true) ~= nil,
+   "название объекта рисуется внутри таблички, а не в HUD")
+ok(plaqueFn:find("draw.SimpleText(status", 1, true) ~= nil,
+   "и строка со статусом/ценой тоже")
+
+--[[ Табличку зовут из мирового прохода рендера, а не из HUDPaint.
+
+     Шаблон цепляем за hook.Add, а НЕ за голое имя хука: первая версия
+     совпадала с упоминанием PostDrawTranslucentRenderables в комментарии
+     выше по файлу, захватывала заодно объявление drawPlaque и потому не
+     замечала, что вызов удалили. ]]
+local worldPass = clientBlock:match('hook%.Add%("PostDrawTranslucentRenderables".-\n    end%)') or ""
+ok(worldPass ~= "", "мировой проход рендера найден")
+ok(worldPass:find("local function drawPlaque", 1, true) == nil,
+   "и это именно хук, а не захваченное объявление функции")
+ok(worldPass:find("drawPlaque(zone, eyePos)", 1, true) ~= nil,
+   "табличка вызывается из мирового прохода — стены её перекрывают")
+
+local hudBlock = clientBlock:match('HUDPaint.-\n    end%)') or ""
+ok(hudBlock ~= "", "блок HUDPaint найден")
+ok(hudBlock:find("if not zone.onDoor then", 1, true) ~= nil,
+   "ИСПРАВЛЕНО: HUD-подпись осталась ТОЛЬКО для зон без дверей — текст больше не светит сквозь стены")
+
+--[[ Табличка не должна показываться с изнанки: сзади текст был бы
+     зеркальным. Клиент сравнивает направление на камеру с нормалью. ]]
+ok(clientBlock:find("dx * nx + dy * ny > 0", 1, true) ~= nil,
+   "табличка рисуется только с лицевой стороны, а не с изнанки стены")
+
+-- Воспроизводим этот расчёт: спереди видно, сзади нет.
+local function frontFacing(yawDeg, eyeX, eyeY, px, py)
+    local r = math.rad(yawDeg)
+    local nx, ny = math.cos(r), math.sin(r)
+    return (eyeX - px) * nx + (eyeY - py) * ny > 0
+end
+-- Дверь смотрит на юг (нормаль -Y, yaw = -90).
+ok(frontFacing(-90, 200, -100, 200, 0) == true, "игрок снаружи видит табличку")
+ok(frontFacing(-90, 200, 150, 200, 0) == false, "изнутри квартиры она не рисуется")
+
+ok(clientBlock:find("zone.pos.x, zone.pos.y, zone.pos.z", 1, true) ~= nil,
+   "табличка берёт точку прямо из снимка")
+
+--[[ Для дверных зон клиентская МОДЕЛЬ больше не создаётся: именно она
+     на скриншотах врезалась в потолок. Табличка её заменяет. ]]
+local ensureBlock = clientBlock:match("local function ensureMarkers.-\n    end") or ""
+ok(ensureBlock ~= "", "функция создания моделей найдена")
+ok(ensureBlock:find("if not zone.onDoor then", 1, true) ~= nil,
+   "ИСПРАВЛЕНО: объёмная эмблема создаётся ТОЛЬКО для зон без дверей")
+
+print("\n--- содержимое таблички ---")
+--[[ Табличка обязана нести ровно то, что просил владелец:
+     «Квартира №2 стоимость 85.000 GRM». ]]
+local tTitle, tStatus, tHint = ES.PlaqueLines({
+    name = "Квартира №2", kind = "estate", vacant = true, price = 85000 })
+ok(tTitle == "Квартира №2", "на табличке название объекта", tTitle)
+ok(tStatus == "СВОБОДНО · 85 000 GRM",
+   "и цена с разделителями, как её пишет владелец", tStatus)
+ok(tHint == "/buyhome", "для жилья подсказана нужная команда", tHint)
+
+local bTitle, bStatus, bHint = ES.PlaqueLines({
+    name = "Ларёк", kind = "business", vacant = true, price = 20000, equipment = 3 })
+ok(bHint == "/buybusiness", "для бизнеса — своя команда", bHint)
+
+local oTitle, oStatus, oHint = ES.PlaqueLines({
+    name = "Квартира №3", kind = "estate", vacant = false,
+    owner = "Александр Фон Грённер" })
+ok(oStatus == "Александр Фон Грённер", "у занятого объекта показан владелец", oStatus)
+ok(oHint == nil, "и никакой подсказки о покупке — объект не продаётся")
+
+local eqTitle, eqStatus = ES.PlaqueLines({
+    name = "Сеть", kind = "business", vacant = false, owner = "Иванов", equipment = 4 })
+ok(eqStatus:find("точек: 4", 1, true) ~= nil,
+   "у занятого бизнеса видно количество оборудования", eqStatus)
+
+local noName = ES.PlaqueLines({ name = "", kind = "business", vacant = true, price = 0 })
+ok(noName == "Бизнес", "объект без имени не даёт пустую табличку", noName)
 
 print("\n--- цена в подписи ---")
 ok(ES.Money(85000) == "85 000 GRM",
@@ -291,8 +412,12 @@ ok(ES.Money(85000) == "85 000 GRM",
 ok(ES.Money(0) == "0 GRM", "ноль форматируется без мусора", ES.Money(0))
 ok(ES.Money(500) == "500 GRM", "короткие суммы не ломаются", ES.Money(500))
 ok(ES.Money(1234567) == "1 234 567 GRM", "миллионы читаются", ES.Money(1234567))
-ok(clientBlock:find("ES.Money(zone.price)", 1, true) ~= nil,
-   "подпись рисует цену через форматирование, а не слитным числом")
+--[[ Цену на табличку кладёт ES.PlaqueLines. Проверяем не текст файла, а
+     сам результат: так стенд не сломается от перестановки кода. ]]
+local _, priceLine = ES.PlaqueLines({ name = "К", kind = "estate", vacant = true, price = 85000 })
+ok(priceLine:find("85 000", 1, true) ~= nil,
+   "табличка печатает цену через форматирование, а не слитным числом", priceLine)
+ok(priceLine:find("85000", 1, true) == nil, "слитного числа на табличке нет", priceLine)
 
 --[[ Если модуль валюты загружен — берём его формат, чтобы табличка у
      двери и HUD показывали суммы одинаково. ]]
