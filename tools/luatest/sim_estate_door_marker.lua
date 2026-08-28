@@ -83,11 +83,16 @@ local ES = GRM.Estate
 local ZONE = { mins = { x = 0, y = 0, z = 0 }, maxs = { x = 400, y = 300, z = 200 } }
 
 local DOORS = {}
+local DOOR_INDEX = 0
 local function mkDoor(id, pos, halfW, height)
     halfW = halfW or 24
     height = height or 82
+    DOOR_INDEX = DOOR_INDEX + 1
+    local idx = DOOR_INDEX
     local d = {
         _valid = true, _id = id, _pos = pos,
+        -- В снимок уходит именно EntIndex: по нему клиент найдёт дверь.
+        EntIndex = function() return idx end,
         GetPos = function(s) return s._pos end,
         WorldSpaceCenter = function(s) return Vector(s._pos.x, s._pos.y, s._pos.z + height * 0.5) end,
         WorldSpaceAABB = function(s)
@@ -185,64 +190,101 @@ ok(ES.MainDoor(ghost) == nil, "исчезнувшая дверь не выбир
 -----------------------------------------------------------------------
 print("\n=== 3. ЗНАЧОК КРЕПИТСЯ К ДВЕРИ ===")
 -----------------------------------------------------------------------
-local anchor, onDoor = ES.MarkerAnchor(flat)
+local anchor, onDoor, doorEnt = ES.MarkerAnchor(flat)
 ok(anchor ~= nil, "точка значка посчитана")
 ok(onDoor == true, "и помечена как «на двери» — клиент об этом знает")
 
+--[[ ПЕРЕДЕЛКА 28.08: «таблички не НАД дверями, а НА дверях, как у
+     автоматов с едой».
+
+     Раньше сервер считал точку в стене над проёмом и слал угол. Теперь
+     он возвращает САМУ ДВЕРЬ: где именно лечь на полотне, знает только
+     клиент — по OBB двери, как это делает торговый автомат. ]]
+ok(doorEnt == frontDoor,
+   "ИСПРАВЛЕНО: сервер отдаёт саму дверь-носитель, а не угол в стене",
+   doorEnt and doorEnt._id)
+
+--[[ Позиция теперь совпадает с дверью, а не висит над ней: она нужна
+     только для отсечения по дальности. ]]
 local newFlat = math.sqrt((anchor.x - doorPos.x) ^ 2 + (anchor.y - doorPos.y) ^ 2)
 ok(newFlat < oldFlat / 3,
-   "ИСПРАВЛЕНО: значок переехал к двери — стало в разы ближе",
+   "ИСПРАВЛЕНО: точка объекта переехала к двери",
    ("было %.0f, стало %.0f юнитов"):format(oldFlat, newFlat))
-ok(newFlat <= ES.DoorOffset + 1,
-   "и стоит ровно на заданном выносе от полотна", ("%.1f"):format(newFlat))
+ok(newFlat < 1,
+   "и совпадает с самой дверью, а не отнесена в сторону",
+   ("%.2f"):format(newFlat))
 
---[[ Выносим НАРУЖУ, прочь от центра зоны: дом разглядывают с улицы,
-     а не изнутри квартиры. Дверь на y=0, центр на y=150 — значит
-     значок обязан уйти в минус по Y. ]]
-ok(anchor.y < doorPos.y,
-   "значок вынесен НАРУЖУ от центра зоны, а не внутрь комнаты",
-   ("дверь y=%.0f, значок y=%.0f, центр y=%.0f"):format(doorPos.y, anchor.y, center.y))
+--[[ Точка обязана СОВПАДАТЬ с центром полотна, а не быть «где-то ниже
+     верха двери»: первая версия проверки пропускала подъём на 40 юнитов,
+     потому что дверь высокая и +40 всё ещё оказывался под её верхом. ]]
+local bottom, top = frontDoor:WorldSpaceAABB()
+local doorMidZ = (bottom.z + top.z) * 0.5
+ok(math.abs(anchor.z - doorMidZ) < 1,
+   "ИСПРАВЛЕНО: точка ровно на середине полотна, а не поднята над проёмом",
+   ("центр двери %.0f, точка %.0f"):format(doorMidZ, anchor.z))
+ok(anchor.z < top.z, "она внутри полотна по верху", anchor.z)
+ok(anchor.z > bottom.z, "и по низу — не утоплена в пол", anchor.z)
 
-local _, top = frontDoor:WorldSpaceAABB()
-ok(anchor.z > top.z, "значок поднят НАД верхним краем двери, как вывеска",
-   ("верх двери %.0f, значок %.0f"):format(top.z, anchor.z))
-ok(anchor.z > doorPos.z, "и точно не утоплен в пол")
+--[[ Настенного выноса больше нет: убеждаемся, что старые ручки не
+     остались висеть в конфиге и не путают. ]]
+ok(ES.DoorOffset == nil, "ИСПРАВЛЕНО: настенный вынос убран из конфига")
+ok(ES.DoorLift == nil, "и подъём над проёмом тоже")
+ok(ES.OutwardDir == nil,
+   "мёртвая функция разворота по зоне удалена, а не осталась приманкой")
 
---[[ ТОЧКА — ЦЕНТР ТАБЛИЧКИ, а не её низ: 3D2D рисует от середины
-     плоскости. Если этого не учесть, нижняя половина вывески легла бы
-     на само дверное полотно. ]]
-local plaqueBottom = anchor.z - ES.PlaqueHeight * 0.5
-local plaqueTop    = anchor.z + ES.PlaqueHeight * 0.5
-ok(plaqueBottom >= top.z + ES.DoorLift - 0.01,
-   "низ таблички выше дверного проёма — не наезжает на полотно",
-   ("низ %.1f, верх двери %.0f"):format(plaqueBottom, top.z))
+-----------------------------------------------------------------------
+print("\n=== 3b. ПЛАШКА ВПИСЫВАЕТСЯ В ПОЛОТНО ===")
+-----------------------------------------------------------------------
+--[[ Главное требование «как у автомата»: плашка не должна торчать за
+     края двери. Типовое полотно Source около 48 юнитов шириной и
+     82-96 высотой. ]]
+local DOOR_W, DOOR_H = 48, 82
+ok(ES.PlaqueWidth < DOOR_W,
+   "ИСПРАВЛЕНО: ширина плашки меньше дверного полотна",
+   ("плашка %d, дверь %d"):format(ES.PlaqueWidth, DOOR_W))
+ok(ES.PlaqueHeight < DOOR_H,
+   "и по высоте помещается", ("плашка %d, дверь %d"):format(ES.PlaqueHeight, DOOR_H))
+ok(ES.PlaqueWidth >= DOOR_W * 0.6,
+   "но не съёжилась до нечитаемой марки", ES.PlaqueWidth)
 
---[[ ГЛАВНОЕ ПО СКРИНШОТАМ: старая объёмная эмблема врезалась в потолок
-     подъезда. Типовой потолок Source над дверью 82 юнита — это 128.
-     Табличка обязана уместиться в этот просвет. ]]
-local CEILING = 128
-ok(plaqueTop < CEILING,
-   "ИСПРАВЛЕНО: табличка целиком помещается под типовым потолком (128)",
-   ("верх таблички %.0f"):format(plaqueTop))
+--[[ Прежняя настенная ширина 62 за края полотна вылезала — фиксируем
+     это как воспроизведение проблемы. ]]
+local OLD_W = 62
+ok(OLD_W > DOOR_W,
+   "БАГ ВОСПРОИЗВЕДЁН: прежняя ширина торчала за края двери",
+   ("было %d при полотне %d"):format(OLD_W, DOOR_W))
 
--- Старая эмблема при своём размере в этот просвет не влезала.
-local OLD_MODEL_RADIUS = 48   -- facepunch_logo при масштабе 0.18-0.22
-ok(top.z + ES.DoorLift + OLD_MODEL_RADIUS > CEILING,
-   "БАГ ВОСПРОИЗВЕДЁН: прежняя объёмная эмблема упиралась в потолок",
-   ("нужно было %.0f при потолке %d"):format(top.z + ES.DoorLift + OLD_MODEL_RADIUS, CEILING))
+--[[ Воспроизводим выбор лицевой оси из doorPlaqueFrame: у двери
+     толщина — это МЕНЬШАЯ горизонтальная ось OBB. Ошибиться здесь
+     значит положить табличку на торец шириной в пару сантиметров. ]]
+local function faceAxis(sx, sy) return sx < sy and "x" or "y" end
+ok(faceAxis(4, 48) == "x", "тонкая по X дверь показывает грань вдоль X")
+ok(faceAxis(48, 4) == "y", "тонкая по Y — вдоль Y")
 
---[[ Дверь в УГЛУ зоны. Направление «прочь от центра» увело бы значок по
-     диагонали прямо в стену; правильное — перпендикулярно ближайшей
-     грани. Ставим дверь у западной стены рядом с южным углом. ]]
+-- Высота плашки на полотне: чуть выше середины, как номер квартиры.
+local function plaqueZ(minz, maxz) return minz + (maxz - minz) * 0.62 end
+local pz = plaqueZ(0, DOOR_H)
+ok(pz > DOOR_H * 0.5, "плашка выше середины полотна — на уровне глаз", pz)
+ok(pz + ES.PlaqueHeight * 0.5 < DOOR_H,
+   "и верхний край не вылезает за дверь", pz + ES.PlaqueHeight * 0.5)
+ok(pz - ES.PlaqueHeight * 0.5 > 0, "нижний тоже внутри полотна")
+
+-----------------------------------------------------------------------
+print("\n=== 3c. УГЛОВАЯ ДВЕРЬ ===")
+-----------------------------------------------------------------------
+--[[ Раньше разворот считался от границы зоны, и дверь в углу требовала
+     особой обработки. Теперь угол берётся у самой двери, поэтому
+     угловая дверь ничем не отличается — проверяем, что она просто
+     работает. ]]
 local cornerDoor = mkDoor("corner_m1", Vector(4, 20, 0))
 local corner = { id = "cr", name = "Угловая", estateKind = "estate",
     ownerType = "none", doors = { "corner_m1" }, zone = ZONE, purchasePrice = 1000 }
-local cPos, cOnDoor = ES.MarkerAnchor(corner)
-ok(cOnDoor == true, "угловая дверь тоже становится якорем")
-ok(cPos.x < 4, "значок ушёл строго на запад — к ближайшей стене",
-   ("x=%.1f"):format(cPos.x))
-ok(math.abs(cPos.y - 20) < 0.01,
-   "и не поехал по диагонали вдоль стены", ("y=%.1f"):format(cPos.y))
+local cPos, cOnDoor, cDoor = ES.MarkerAnchor(corner)
+ok(cOnDoor == true, "угловая дверь тоже становится носителем")
+ok(cDoor == cornerDoor, "и отдаётся клиенту как энтити", cDoor and cDoor._id)
+ok(math.abs(cPos.x - 4) < 1 and math.abs(cPos.y - 20) < 1,
+   "точка совпадает с самой дверью — разворот считает клиент по её углам",
+   ("%.1f %.1f"):format(cPos.x, cPos.y))
 cornerDoor._valid = false
 
 -----------------------------------------------------------------------
@@ -279,21 +321,31 @@ ok(row and math.abs(row.pos.x - anchor.x) < 0.01
    row and ("%.0f %.0f %.0f"):format(row.pos.x, row.pos.y, row.pos.z))
 ok(row and row.price == 85000, "цена в снимке та, что назначил админ", row and row.price)
 
---[[ Клиенту нужен УГОЛ плоскости: без него табличка развернулась бы
-     ребром к зрителю. Дверь стоит в южной стене (нормаль -Y), значит
-     yaw около -90. ]]
-ok(row and row.yaw ~= nil, "в снимке есть разворот плоскости таблички")
-ok(row and math.abs(row.yaw - (-90)) < 1,
-   "и он смотрит наружу, в сторону улицы", row and row.yaw)
+--[[ ПЕРЕДЕЛКА 28.08. Раньше в снимок клался УГОЛ плоскости, посчитанный
+     от границы зоны. Теперь кладётся индекс двери-носителя, а угол
+     клиент берёт у самой двери.
 
--- Дверь в западной стене должна дать другой угол — проверяем не константу.
-local westDoor = mkDoor("west_m1", Vector(2, 150, 0))
-local westRec = { id = "wr", name = "Западная", estateKind = "estate",
-    ownerType = "none", doors = { "west_m1" }, zone = ZONE, purchasePrice = 1000 }
-local _, _, westYaw = ES.MarkerAnchor(westRec)
-ok(math.abs(westYaw - 180) < 1, "у западной стены разворот другой — угол реально считается",
-   westYaw)
-westDoor._valid = false
+     Так правильнее по двум причинам: табличка едет вместе с
+     открывающейся дверью, и косо поставленные двери получают ровную
+     плашку, а не развёрнутую по сторонам света. ]]
+ok(row and row.yaw == nil,
+   "ИСПРАВЛЕНО: угол от зоны из снимка убран — его считает клиент по двери")
+ok(row and row.door ~= nil, "в снимке есть дверь-носитель")
+ok(row and row.door == frontDoor:EntIndex(),
+   "и это именно входная дверь объекта", row and row.door)
+ok(row and row.door > 0, "индекс валидный, клиенту будет что искать")
+
+-- У объекта без дверей индекс нулевой: клиент нарисует запасной вариант.
+local ndRow
+for _, r in ipairs(snap) do if r.id == "nd" then ndRow = r end end
+GRM.Property.Records.nd = { id = "nd", name = "Склад", type = "shop",
+    estateKind = "business", ownerType = "none", doors = {}, zone = ZONE,
+    purchasePrice = 10000 }
+ES.InvalidateScan()
+for _, r in ipairs(ES.BuildSnapshot()) do if r.id == "nd" then ndRow = r end end
+ok(ndRow and ndRow.door == 0, "у зоны без дверей индекс двери нулевой", ndRow and ndRow.door)
+ok(ndRow and ndRow.onDoor == false, "и признак «на двери» снят")
+GRM.Property.Records.nd = nil
 
 --[[ Точку считает СЕРВЕР: только он знает положение дверей. Проверяем,
      что клиент не пытается искать двери сам. ]]
@@ -352,23 +404,31 @@ ok(hudBlock ~= "", "блок HUDPaint найден")
 ok(hudBlock:find("if not zone.onDoor then", 1, true) ~= nil,
    "ИСПРАВЛЕНО: HUD-подпись осталась ТОЛЬКО для зон без дверей — текст больше не светит сквозь стены")
 
---[[ Табличка не должна показываться с изнанки: сзади текст был бы
-     зеркальным. Клиент сравнивает направление на камеру с нормалью. ]]
-ok(clientBlock:find("dx * nx + dy * ny > 0", 1, true) ~= nil,
-   "табличка рисуется только с лицевой стороны, а не с изнанки стены")
+--[[ ТАБЛИЧКА ДВУСТОРОННЯЯ (изменение 28.08).
 
--- Воспроизводим этот расчёт: спереди видно, сзади нет.
-local function frontFacing(yawDeg, eyeX, eyeY, px, py)
-    local r = math.rad(yawDeg)
-    local nx, ny = math.cos(r), math.sin(r)
-    return (eyeX - px) * nx + (eyeY - py) * ny > 0
-end
--- Дверь смотрит на юг (нормаль -Y, yaw = -90).
-ok(frontFacing(-90, 200, -100, 200, 0) == true, "игрок снаружи видит табличку")
-ok(frontFacing(-90, 200, 150, 200, 0) == false, "изнутри квартиры она не рисуется")
+     Настенная версия рисовалась только снаружи: с изнанки текст был бы
+     зеркальным. У плашки НА ПОЛОТНЕ такого ограничения быть не должно —
+     номер квартиры нужен и в подъезде, и внутри. Клиент выбирает ту
+     грань двери, с которой на неё смотрят. ]]
+ok(clientBlock:find("dx * nx + dy * ny > 0", 1, true) == nil,
+   "ИСПРАВЛЕНО: одностороннее отсечение по нормали зоны убрано")
+ok(clientBlock:find("local side =", 1, true) ~= nil,
+   "вместо него выбирается сторона полотна")
+ok(clientBlock:find("doorPlaqueFrame(door, side)", 1, true) ~= nil,
+   "и плашка строится в углах именно этой грани")
 
-ok(clientBlock:find("zone.pos.x, zone.pos.y, zone.pos.z", 1, true) ~= nil,
-   "табличка берёт точку прямо из снимка")
+-- Воспроизводим выбор стороны: с какой стороны стоим, ту грань и видим.
+local function sideFor(eyeCoord, doorCoord) return (eyeCoord - doorCoord) >= 0 and 1 or -1 end
+ok(sideFor(-100, 0) == -1, "игрок снаружи видит наружную грань")
+ok(sideFor(150, 0) == 1, "игрок в подъезде — внутреннюю")
+ok(sideFor(-100, 0) ~= sideFor(150, 0), "стороны различаются — плашка видна с обеих")
+
+ok(clientBlock:find("Entity(zone.door)", 1, true) ~= nil,
+   "клиент берёт дверь по индексу из снимка")
+ok(clientBlock:find("door:LocalToWorld", 1, true) ~= nil,
+   "и считает место плашки в СОБСТВЕННЫХ углах двери, как торговый автомат")
+ok(clientBlock:find("door:OBBMins()", 1, true) ~= nil,
+   "через OBB полотна, а не через координаты зоны")
 
 --[[ Для дверных зон клиентская МОДЕЛЬ больше не создаётся: именно она
      на скриншотах врезалась в потолок. Табличка её заменяет. ]]
@@ -501,12 +561,17 @@ ok(ok2 == true, "без модуля сделок зона всё равно с�
 ok(rec2 and #rec2.doors == 0, "просто без дверей — падения нет")
 
 -----------------------------------------------------------------------
-print("\n=== 8. НАСТРОЙКИ ВЫНОСА ЗДРАВЫЕ ===")
+print("\n=== 8. НАСТРОЙКИ РАЗМЕРА ЗДРАВЫЕ ===")
 -----------------------------------------------------------------------
-ok(ES.DoorOffset > 0 and ES.DoorOffset <= 64,
-   "вынос от полотна задан и не превращается в «значок в соседнем доме»", ES.DoorOffset)
-ok(ES.DoorLift >= 0 and ES.DoorLift <= 48,
-   "подъём над дверью небольшой — табличка, а не флюгер", ES.DoorLift)
+ok(ES.PlaqueWidth > 0 and ES.PlaqueWidth < 48,
+   "ширина плашки положительная и меньше полотна", ES.PlaqueWidth)
+ok(ES.PlaqueHeight > 0 and ES.PlaqueHeight < 40,
+   "высота как у таблички с номером, а не во всю дверь", ES.PlaqueHeight)
+ok(ES.PlaqueWidth > ES.PlaqueHeight,
+   "плашка горизонтальная — так текст читается лучше")
+ok(ES.PlaqueDistance > 0 and ES.PlaqueDistance <= ES.DrawDistance,
+   "порог читаемости не больше дальности отрисовки",
+   ("%d из %d"):format(ES.PlaqueDistance, ES.DrawDistance))
 
 -----------------------------------------------------------------------
 print(("\n== ИТОГ: %d ok, %d FAIL =="):format(pass, fail))
