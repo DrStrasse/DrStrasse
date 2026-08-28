@@ -97,6 +97,14 @@ if SERVER then
   if GRM.Estate and GRM.Estate.PointInZone and istable(r.zone) then
    if GRM.Estate.PointInZone(r,p:GetPos())then return true end
   end
+  --[[ Покупка от двери (заказ 28.08). Человек стоит У ДВЕРИ, а она —
+       на границе зоны или чуть снаружи: зону обводят по дому, дверное
+       полотно нередко оказывается за коробкой. Строгая проверка
+       «внутри зоны» его отсекала, и покупка через дверь срывалась.
+       Тот же допуск, по которому двери притягиваются к объекту. ]]
+  if GRM.EstateDeal and GRM.EstateDeal.DoorNearZone and istable(r.zone) then
+   if GRM.EstateDeal.DoorNearZone(r,p:GetPos())then return true end
+  end
   return false
  end
  local function lockAll(r,on)for _,id in ipairs(r.doors)do local e=doorByID(id);if IsValid(e)and GRM.Doors.LockDoor then GRM.Doors.LockDoor(e,on)end end end

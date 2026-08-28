@@ -232,6 +232,79 @@ if SERVER then
     end)
 
     -----------------------------------------------------------------
+    -- ПОКУПКА ДВЕРИ = ПОКУПКА ОБЪЕКТА
+    -----------------------------------------------------------------
+    --[[ Обратное направление (заказ владельца 28.08): раньше связь
+         работала только «купил зону → получил двери». Обратно — нет:
+         человек покупал дверь квартиры за цену двери, получал ключ, а
+         сама квартира оставалась свободной и её мог купить другой.
+
+         Теперь дверь, относящаяся к объекту недвижимости, продаётся
+         только вместе с ним и по ПОЛНОЙ цене объекта.
+
+         Возвращаем:
+           nil   — дверь не наша, пусть модуль дверей продаёт как обычно;
+           true  — объект оформлен;
+           false — оформить не вышло (нет денег, занято, опечатано). ]]
+    function DL.ClaimByDoor(ply, ent, rec, mode)
+        local P, ES = GRM.Property, GRM.Estate
+        if not (IsValid(ply) and IsValid(ent) and P and ES) then return nil end
+
+        --[[ Ищем объект двумя путями. Сначала по привязке: дверь уже
+             числится за объектом. Затем по зоне: тул обвёл территорию,
+             но двери к объекту ещё не притянуты — именно этот случай
+             владелец и описал («зона должна считывать купленную дверь»). ]]
+        local target
+        if P.GetByDoor then target = select(1, P.GetByDoor(ent)) end
+
+        if not target and istable(P.Records) then
+            local pos = ent:GetPos()
+            for _, r in pairs(P.Records) do
+                if ES.KindOf and ES.KindOf(r) ~= "none" and istable(r.zone) then
+                    if DL.DoorNearZone(r, pos) then target = r break end
+                end
+            end
+        end
+        if not istable(target) then return nil end
+
+        -- Объект занят: дверь от чужой квартиры не продаём вообще.
+        if tostring(target.ownerType or "none") ~= "none" then
+            tell(ply, "Эта дверь относится к объекту «" .. tostring(target.name or "")
+                .. "», у которого уже есть владелец.", false)
+            return false
+        end
+        if target.sealed == true then
+            tell(ply, "Объект опечатан.", false)
+            return false
+        end
+
+        --[[ Полная цена объекта, а не цена двери. mode приходит из меню
+             двери: «rent» — аренда, иначе покупка навсегда. Сохраняем
+             это различие, чтобы кнопка «арендовать» осталась арендой. ]]
+        local act = (mode == "rent") and "rent" or "buy"
+        local price = act == "rent"
+            and (tonumber(target.rentPrice) or 0)
+            or (tonumber(target.purchasePrice) or 0)
+
+        tell(ply, ("Дверь принадлежит объекту «%s». %s объект целиком за %d GRM."):format(
+            tostring(target.name or ""), act == "rent" and "Аренда" or "Покупка", price), true)
+
+        --[[ Дальше всё делает property: деньги, лимиты, запись владельца.
+             Он же бросит GRM_PropertyOwnerChanged, а по нему подтянутся
+             двери и оборудование. Свою копию правил не заводим. ]]
+        if P.PanelAction then
+            P.PanelAction(ply, { action = act, id = target.id })
+        end
+
+        -- Успех определяем по факту: появился ли у объекта владелец.
+        return tostring(target.ownerType or "none") ~= "none"
+    end
+
+    hook.Add("GRM_DoorClaimToProperty", "GRM_EstateDeal_ByDoor", function(ply, ent, rec, mode)
+        return DL.ClaimByDoor(ply, ent, rec, mode)
+    end)
+
+    -----------------------------------------------------------------
     -- ДАННЫЕ ДЛЯ ОКНА СДЕЛКИ
     -----------------------------------------------------------------
     --- Объект, с которым игрок может заключить сделку прямо сейчас.

@@ -135,6 +135,30 @@ GRM.Doors = {
         if IsValid(e) then e._nwOwner = doorLabel(rec) end
     end,
 }
+--[[ Покупка двери — как в настоящем модуле: сначала спрашиваем
+     недвижимость через хук, и только если она отказалась, продаём
+     дверь сама по себе. ]]
+GRM.Doors.DoorPrice = 15000
+GRM.Doors.ClaimDoor = function(ply, ent, mode)
+    if not (IsValid(ply) and IsValid(ent)) then return false end
+    local rec = GRM.Doors.GetRecord(ent)
+    if not rec then return false end
+    if rec.owner_type ~= "none" then return false, "занята" end
+
+    local claimed = hook.Run("GRM_DoorClaimToProperty", ply, ent, rec, mode)
+    if claimed ~= nil then return claimed == true end
+
+    -- Обычная покупка одной двери по её цене.
+    local price = GRM.Doors.DoorPrice
+    if not GRM.HasMoney(ply, price) then return false, "нет денег" end
+    GRM.TakeMoney(ply, price)
+    rec.owner_type = "player"
+    rec.owner_key = ply._key
+    rec.owner_nick = ply._nw.GRM_RPName
+    GRM.Doors.ApplyRecordVisual(ent, rec)
+    return true
+end
+
 -- Та же функция, что и в настоящем модуле дверей.
 GRM.Doors.SetDoorOwner = function(ent, ownerType, key, nick, title)
     if not IsValid(ent) then return false end
@@ -267,6 +291,9 @@ local function mkDoor(id, pos)
     local e = { _valid=true, _door=true, _id=id, _pos=pos, _nwOwner="",
         GetClass=function() return "prop_door_rotating" end,
         GetPos=function(s) return s._pos end,
+        -- Настоящий P.ResolveDoor смотрит родителя: без метода падает.
+        GetParent=function() return nil end,
+        EntIndex=function() return 1 end,
         -- То, что игрок видит на табличке.
         GetNWString=function(s,k,d) if k=="GRM_DoorOwner" then return s._nwOwner end return d or "" end }
     WORLD[#WORLD+1] = e
@@ -566,6 +593,181 @@ do
        "и сохраняет — владелец переживёт рестарт")
     ok(fn and fn:find("rec.ownable = true", 1, true) ~= nil,
        "при освобождении дверь снова становится покупаемой")
+end
+
+-----------------------------------------------------------------------
+print("\n=== 12. ПОКУПКА ДВЕРИ = ПОКУПКА ОБЪЕКТА (заказ 28.08) ===")
+-----------------------------------------------------------------------
+--[[ «Если я покупаю дверь, то автоматически зона должна считывать
+     купленную дверь + выставлять полную цену и автоматически
+     привязываться сразу к игроку.» ]]
+do
+    P.Records = {}
+    DOOR_RECS = {}
+    WORLD = {}
+    local home = P.Normalize({
+        id="z1", name="Жилой объект", type="apartment",
+        ownerType="none", tenure="none", purchasePrice=40000, rentPrice=4000,
+        zone={mins=Vector(6000,-100,0), maxs=Vector(6200,100,200)},
+    })
+    P.Records["z1"] = home
+    P.Reindex()
+
+    -- Дверь ещё НЕ привязана к объекту: тул обвёл зону, и всё.
+    local dr = mkDoor("zd1", Vector(6210, 0, 10))    -- чуть за границей
+    ok(#home.doors == 0, "двери к объекту не привязаны — как после тула")
+
+    local guy = mkPly({ key="11:char1", name="Покупатель", pos=Vector(6215, 0, 0) })
+    PLAYERS = { guy }
+    WALLET[guy] = 500000
+    local before = WALLET[guy]
+
+    local okBuy = GRM.Doors.ClaimDoor(guy, dr, "buy")
+
+    ok(okBuy == true, "покупка двери прошла")
+    ok(home.ownerKey == "11:char1",
+       "ГЛАВНОЕ: куплен ВЕСЬ объект, а не одна дверь", tostring(home.ownerKey))
+    ok(before - WALLET[guy] == 40000,
+       "ИСПРАВЛЕНО: списана ПОЛНАЯ цена объекта, а не цена двери",
+       before - WALLET[guy])
+    ok(before - WALLET[guy] ~= GRM.Doors.DoorPrice,
+       "то есть НЕ 15000 за дверь — жильё за цену двери не отдаётся")
+    ok(#home.doors == 1, "дверь притянулась к объекту автоматически", #home.doors)
+
+    local rec = DOOR_RECS["zd1"]
+    ok(rec and rec.owner_type == "player" and rec.owner_key == "11:char1",
+       "и владелец проставлен на самой двери")
+    _G.TESTDOOR_Z1 = dr
+    ok(dr:GetNWString("GRM_DoorOwner","") == "Покупатель",
+       "табличка показывает владельца", dr:GetNWString("GRM_DoorOwner",""))
+end
+
+-----------------------------------------------------------------------
+print("\n=== 13. ЧУЖОЙ И ЗАНЯТЫЙ ОБЪЕКТ ===")
+-----------------------------------------------------------------------
+do
+    -- Объект уже куплен: его дверь не продаётся никому.
+    local occupied = P.Records["z1"]
+    local dr = _G.TESTDOOR_Z1
+    local other = mkPly({ key="12:char1", name="Другой", pos=Vector(6215, 0, 0) })
+    PLAYERS = { other }
+    WALLET[other] = 500000
+    local before = WALLET[other]
+
+    local okBuy = GRM.Doors.ClaimDoor(other, dr, "buy")
+    ok(okBuy == false, "дверь занятого объекта купить нельзя")
+    ok(WALLET[other] == before, "и денег не списали")
+    ok(occupied.ownerKey == "11:char1", "владелец объекта не сменился")
+
+    --[[ Здесь отказ приходит РАНЬШЕ нашего хука: у самой двери уже есть
+         владелец (её проставил setDoorPolicy при покупке объекта), и
+         модуль дверей отсекает такую покупку своей штатной проверкой.
+         Это правильный порядок — до нас дело просто не доходит. ]]
+    ok(rec == nil or DOOR_RECS["zd1"].owner_key == "11:char1",
+       "дверь занятого объекта хранит прежнего владельца")
+end
+
+-----------------------------------------------------------------------
+print("\n=== 13б. ЗАНЯТ ОБЪЕКТ, НО ДВЕРЬ ЕЩЁ НИЧЬЯ ===")
+-----------------------------------------------------------------------
+do
+    --[[ Более тонкий случай: объект куплен через зону, а рядом появилась
+         НОВАЯ дверь, которую ещё не привязали. Модуль дверей её продаст,
+         если мы не вмешаемся — и человек получит ключ от чужой квартиры
+         за 15 000. Вот тут и должен сработать наш хук. ]]
+    local fresh = mkDoor("zd1b", Vector(6190, 50, 10))
+    local other2 = mkPly({ key="15:char1", name="Хитрец", pos=Vector(6190, 50, 0) })
+    PLAYERS = { other2 }
+    WALLET[other2] = 500000
+    local before = WALLET[other2]
+    NOTIFIED = {}
+
+    local okBuy = GRM.Doors.ClaimDoor(other2, fresh, "buy")
+    ok(okBuy == false,
+       "ИСПРАВЛЕНО: ничейную дверь чужой занятой квартиры купить нельзя")
+    ok(WALLET[other2] == before, "и денег не списали")
+    ok(DOOR_RECS["zd1b"].owner_type == "none", "дверь осталась ничьей")
+
+    local told = false
+    for _, n in ipairs(NOTIFIED) do
+        if n.to == other2 and tostring(n.msg):find("уже есть владелец", 1, true) then told = true end
+    end
+    ok(told, "покупателю объяснили причину, а не отказали молча")
+end
+
+-----------------------------------------------------------------------
+print("\n=== 14. ОБЫЧНАЯ ДВЕРЬ ПРОДАЁТСЯ КАК РАНЬШЕ ===")
+-----------------------------------------------------------------------
+do
+    --[[ Дверь вне всяких зон (подсобка, гараж) должна покупаться по
+         своей цене — новое поведение не должно ломать старое. ]]
+    local lone = mkDoor("lonely", Vector(50000, 50000, 0))
+    local guy = mkPly({ key="13:char1", name="Одиночка", pos=Vector(50000, 50000, 0) })
+    PLAYERS = { guy }
+    WALLET[guy] = 500000
+    local before = WALLET[guy]
+
+    local okBuy = GRM.Doors.ClaimDoor(guy, lone, "buy")
+    ok(okBuy == true, "обычная дверь покупается")
+    ok(before - WALLET[guy] == GRM.Doors.DoorPrice,
+       "по своей цене, а не по цене какого-то объекта", before - WALLET[guy])
+    ok(DOOR_RECS["lonely"].owner_key == "13:char1", "и владелец у неё свой")
+end
+
+-----------------------------------------------------------------------
+print("\n=== 15. АРЕНДА ЧЕРЕЗ ДВЕРЬ ОСТАЁТСЯ АРЕНДОЙ ===")
+-----------------------------------------------------------------------
+do
+    P.Records = {}
+    DOOR_RECS = {}
+    WORLD = {}
+    local flatR = P.Normalize({
+        id="z2", name="Квартира под аренду", type="apartment",
+        ownerType="none", tenure="none", purchasePrice=60000, rentPrice=6000,
+        zone={mins=Vector(7000,-100,0), maxs=Vector(7200,100,200)},
+    })
+    P.Records["z2"] = flatR
+    P.Reindex()
+    local dr = mkDoor("zd2", Vector(7100, 0, 10))
+    local guy = mkPly({ key="14:char1", name="Арендатор", pos=Vector(7100, 0, 0) })
+    PLAYERS = { guy }
+    WALLET[guy] = 500000
+    local before = WALLET[guy]
+
+    GRM.Doors.ClaimDoor(guy, dr, "rent")
+    ok(flatR.tenure == "rent", "режим аренды сохранён, а не подменён покупкой",
+       flatR.tenure)
+    ok(before - WALLET[guy] == 6000,
+       "списана цена АРЕНДЫ объекта", before - WALLET[guy])
+    ok(flatR.rentUntil > 0, "срок аренды выставлен")
+end
+
+-----------------------------------------------------------------------
+print("\n=== 16. ИСХОДНИКИ ===")
+-----------------------------------------------------------------------
+do
+    local doors = (function() local f=assert(io.open("lua/autorun/sh_grm_doors.lua"))
+        local t=f:read("*a") f:close() return t end)()
+    ok(doors:find("GRM_DoorClaimToProperty", 1, true) ~= nil,
+       "модуль дверей спрашивает недвижимость перед продажей")
+    local claim = doors:match("function D%.ClaimDoor.-\n    end")
+    local hookPos = claim and claim:find("GRM_DoorClaimToProperty", 1, true)
+    local pricePos = claim and claim:find("local price = tonumber(rec.rent_price)", 1, true)
+    ok(hookPos and pricePos and hookPos < pricePos,
+       "спрашивает ДО списания денег за дверь — двойной оплаты не будет")
+
+    local deal = (function() local f=assert(io.open("lua/autorun/sh_grm_estate_deal.lua"))
+        local t=f:read("*a") f:close() return t end)()
+    ok(deal:find("function DL.ClaimByDoor", 1, true) ~= nil, "обработчик есть")
+    ok(deal:find("P.PanelAction(ply, { action = act, id = target.id })", 1, true) ~= nil,
+       "оформление идёт через property — свою копию правил не заводим")
+    ok(deal:find("DoorNearZone(r, pos)", 1, true) ~= nil,
+       "объект ищется и по привязке, и по зоне — тул мог не привязать двери")
+
+    local prop = (function() local f=assert(io.open("lua/autorun/sh_grm_property.lua"))
+        local t=f:read("*a") f:close() return t end)()
+    ok(prop:find("GRM.EstateDeal.DoorNearZone", 1, true) ~= nil,
+       "проверка «рядом» учитывает игрока у двери снаружи зоны")
 end
 
 print("")
