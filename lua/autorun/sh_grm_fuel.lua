@@ -387,6 +387,33 @@ if SERVER then
         return pump:GetOwnerKey() == F.CharKey(ply)
     end
 
+    --[[ МОЖНО ЛИ ВЫКУПИТЬ КОЛОНКУ ЛИЧНО (баг владельца 28.08).
+
+         Симптом: «покупаешь или продаёшь — пишет, что куплено, а на
+         деле нет».
+
+         Причина. У автоматов с едой покупка спрашивала
+         ES.CanOwnStandalone: точка внутри бизнес-зоны принадлежит
+         бизнесу, лично её выкупать нельзя. У колонок этой проверки НЕ
+         БЫЛО. Поэтому игрок платил, F.BuyPump честно писал «Колонка
+         куплена», ставил себя владельцем — а следом хук
+         GRM_PropertyOwnerChanged (или ближайшая пересинхронизация зоны)
+         звал DL.TransferEquipment, который переписывает ВСЁ
+         оборудование зоны на владельца бизнеса. Владелец колонки
+         затирался, деньги пропадали, надпись «куплено» оставалась
+         враньём.
+
+         Теперь колонка внутри бизнес-зоны продаётся только вместе с
+         бизнесом — как и автомат. ]]
+    function F.CanBuyPump(ply, pump)
+        if not (IsValid(ply) and IsValid(pump)) then return false, "Нет колонки" end
+        if ply:IsSuperAdmin() then return true end
+        if not (GRM.Estate and GRM.Estate.CanOwnStandalone) then return true end
+        local can, why = GRM.Estate.CanOwnStandalone(pump)
+        if not can then return false, tostring(why or "Нужна бизнес-зона") end
+        return true
+    end
+
     function F.BuyPump(ply, pump, whole)
         if not IsValid(ply) or not IsValid(pump) then return false, "Нет колонки" end
         if ply:GetPos():DistToSqr(pump:GetPos()) > 220 * 220 then return false, "Подойдите ближе" end
@@ -397,10 +424,28 @@ if SERVER then
             if o == "" or o == F.CharKey(ply) then free[#free + 1] = e end
         end
         if #free == 0 then return false, "Нечего выкупать" end
+
+        --[[ Проверяем КАЖДУЮ покупаемую колонку до списания денег.
+             Достаточно одной внутри чужого бизнеса, чтобы сделка была
+             недействительной: иначе повторяется тот же баг — деньги
+             сняты, а владельца перепишет бизнес-зона. ]]
+        for _, e in ipairs(free) do
+            if (e:GetOwnerKey() or "") == "" then
+                local can, why = F.CanBuyPump(ply, e)
+                if not can then return false, why end
+            end
+        end
+
         local needBuy = 0
         for _, e in ipairs(free) do
             if (e:GetOwnerKey() or "") == "" then needBuy = needBuy + 1 end
         end
+
+        -- Всё уже наше: денег не берём и «куплено» не пишем.
+        if needBuy == 0 then
+            return false, whole and "Заправка уже ваша" or "Колонка уже ваша"
+        end
+
         local price = needBuy * F.PumpPrice
         if whole and needBuy > 1 then price = math.floor(price * 0.85) end
         if price > 0 then
@@ -421,7 +466,61 @@ if SERVER then
         if GRM.PermData and GRM.PermData.Upsert then
             for _, e in ipairs(free) do GRM.PermData.Upsert(e) end
         end
+
+        --[[ ПРОВЕРЯЕМ РЕЗУЛЬТАТ, а не верим себе на слово. Если владелец
+             после записи не наш (например, зона успела переписать точку),
+             честно возвращаем деньги и сообщаем правду. Раньше именно
+             здесь рождалось «пишет куплено, а на деле нет». ]]
+        local lost = 0
+        for _, e in ipairs(free) do
+            if IsValid(e) and (e:GetOwnerKey() or "") ~= key then lost = lost + 1 end
+        end
+        if lost > 0 then
+            if price > 0 and GRM.GiveMoney then
+                GRM.GiveMoney(ply, price, "возврат за колонку")
+            end
+            return false, "Колонка относится к бизнесу — покупка отменена, деньги возвращены"
+        end
+
         return true, whole and ("Заправка: " .. #free .. " колонок, " .. price .. " GRM") or ("Колонка куплена за " .. price .. " GRM")
+    end
+
+    --[[ ПРОДАЖА КОЛОНКИ. Раньше её просто не было: «продать» игрок мог
+         только удалением через «Удалить колонку», то есть терял деньги
+         совсем. Возврат — половина цены, как у выкупа государством. ]]
+    F.SellRate = 0.5
+
+    function F.SellPump(ply, pump, whole)
+        if not (IsValid(ply) and IsValid(pump)) then return false, "Нет колонки" end
+        if ply:GetPos():DistToSqr(pump:GetPos()) > 220 * 220 then return false, "Подойдите ближе" end
+
+        local key = F.CharKey(ply)
+        local list = whole and nearbyPumps(pump:GetPos(), F.StationRadius) or { pump }
+        local mine = {}
+        for _, e in ipairs(list) do
+            if IsValid(e) and (e:GetOwnerKey() or "") == key then mine[#mine + 1] = e end
+        end
+        if #mine == 0 then return false, "Это не ваша колонка" end
+
+        --[[ Касса не должна пропасть вместе с колонкой: как у бизнеса,
+             сначала снимите выручку. ]]
+        local cash = 0
+        for _, e in ipairs(mine) do cash = cash + (tonumber(e:GetCash()) or 0) end
+        if cash > 0 then return false, "Сначала снимите кассу: " .. math.floor(cash) .. " GRM" end
+
+        local payout = math.floor(#mine * F.PumpPrice * F.SellRate)
+        for _, e in ipairs(mine) do
+            e:SetOwnerKey("")
+            e:SetStationID("")
+        end
+        if payout > 0 and GRM.GiveMoney then
+            GRM.GiveMoney(ply, payout, "продажа колонки")
+        end
+        F.SavePumps()
+        if GRM.PermData and GRM.PermData.Upsert then
+            for _, e in ipairs(mine) do GRM.PermData.Upsert(e) end
+        end
+        return true, ("Продано колонок: %d · получено %d GRM"):format(#mine, payout)
     end
 
     function F.SetStationPrice(ply, pump, price)
@@ -501,6 +600,8 @@ if SERVER then
         local ok, msg
         if op == "buy" then ok, msg = F.BuyPump(ply, ent, false)
         elseif op == "buyall" then ok, msg = F.BuyPump(ply, ent, true)
+        elseif op == "sell" then ok, msg = F.SellPump(ply, ent, false)
+        elseif op == "sellall" then ok, msg = F.SellPump(ply, ent, true)
         elseif op == "price" then ok, msg = F.SetStationPrice(ply, ent, net.ReadFloat())
         elseif op == "cash" then ok, msg = F.Withdraw(ply, ent)
         elseif op == "del" then
@@ -511,6 +612,23 @@ if SERVER then
             end
         else return end
         if GRM.Notify then GRM.Notify(ply, tostring(msg), ok and 120 or 255, ok and 220 or 140, 100) end
+
+        --[[ ПЕРЕРИСОВКА МЕНЮ (заказ владельца 28.08: «кнопка после покупки
+             купить колонку/заправку должна исчезать по сути»).
+
+             Раньше клиент закрывал окно сразу по клику и больше ничего не
+             ждал. Владелец колонки менялся на сервере, а окно при
+             следующем открытии могло показать устаревшее состояние —
+             NW-переменная OwnerKey доезжает не мгновенно. Теперь сервер
+             сам просит клиента открыть окно заново, уже с актуальным
+             владельцем: кнопки покупки исчезают, появляются продажа и
+             касса. ]]
+        if ok and IsValid(ent) then
+            net.Start("GRM_Fuel_Station")
+                net.WriteString("refresh")
+                net.WriteEntity(ent)
+            net.Send(ply)
+        end
     end)
 
     function F.SetEngine(veh, on)
@@ -774,18 +892,55 @@ if CLIENT then
             draw.SimpleText("ЗАПРАВКА", "DermaLarge", 16, 18, Color(250, 185, 63), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
         local own = ent:GetOwnerKey() or ""
+        --[[ «Моя ли это колонка» решаем по ключу ПЕРСОНАЖА, а не по факту
+             «владелец не пуст»: иначе на чужой колонке показались бы
+             кнопки продажи и снятия кассы. ]]
+        local myKey = (GRM.Identity and GRM.Identity.CharacterKey
+            and GRM.Identity.CharacterKey(LocalPlayer())) or ""
+        local mine = own ~= "" and own == myKey
         local price = F.PriceOf(ent)
+
         local info = vgui.Create("DLabel", fr)
         info:SetPos(16, 44) info:SetSize(348, 40)
-        info:SetText(own == "" and ("Свободна. Колонка " .. F.PumpPrice .. " GRM, комплект рядом −15%.")
-            or ("Частная. Касса: " .. tostring(ent:GetCash() or 0) .. " GRM"))
+        if own == "" then
+            info:SetText("Свободна. Колонка " .. F.PumpPrice .. " GRM, комплект рядом −15%.")
+        elseif mine then
+            info:SetText("Ваша колонка. Касса: " .. tostring(ent:GetCash() or 0) .. " GRM")
+        else
+            info:SetText("Чужая колонка. Купить нельзя.")
+        end
         info:SetWrap(true)
-        local buy = vgui.Create("DButton", fr)
-        buy:SetPos(16, 92) buy:SetSize(168, 32) buy:SetText("Купить колонку")
-        buy.DoClick = function() send("buy", ent) fr:Close() end
-        local all = vgui.Create("DButton", fr)
-        all:SetPos(196, 92) all:SetSize(168, 32) all:SetText("Купить заправку")
-        all.DoClick = function() send("buyall", ent) fr:Close() end
+
+        --[[ КНОПКИ ПО СОСТОЯНИЮ (заказ владельца 28.08).
+
+             Раньше «Купить колонку» и «Купить заправку» висели всегда,
+             даже когда объект уже куплен: игрок жал их повторно и видел
+             ложное «куплено». Теперь свободная колонка показывает
+             покупку, своя — продажу, чужая — ничего. ]]
+        if own == "" then
+            local buy = vgui.Create("DButton", fr)
+            buy:SetPos(16, 92) buy:SetSize(168, 32) buy:SetText("Купить колонку")
+            buy.DoClick = function() send("buy", ent) end
+            local all = vgui.Create("DButton", fr)
+            all:SetPos(196, 92) all:SetSize(168, 32) all:SetText("Купить заправку")
+            all.DoClick = function() send("buyall", ent) end
+        elseif mine then
+            local sell = vgui.Create("DButton", fr)
+            sell:SetPos(16, 92) sell:SetSize(168, 32)
+            sell:SetText("Продать колонку (" .. math.floor(F.PumpPrice * (F.SellRate or 0.5)) .. " GRM)")
+            sell.DoClick = function()
+                Derma_Query("Продать колонку за половину цены?", "Заправка", "Продать", function()
+                    send("sell", ent)
+                end, "Отмена")
+            end
+            local sellAll = vgui.Create("DButton", fr)
+            sellAll:SetPos(196, 92) sellAll:SetSize(168, 32) sellAll:SetText("Продать заправку")
+            sellAll.DoClick = function()
+                Derma_Query("Продать ВСЕ свои колонки рядом?", "Заправка", "Продать", function()
+                    send("sellall", ent)
+                end, "Отмена")
+            end
+        end
         local wang = vgui.Create("DNumberWang", fr)
         wang:SetPos(16, 140) wang:SetSize(120, 28) wang:SetMin(1) wang:SetMax(200) wang:SetValue(price)
         local setp = vgui.Create("DButton", fr)
@@ -807,6 +962,22 @@ if CLIENT then
         hint:SetPos(16, 224) hint:SetSize(348, 24)
         hint:SetText("E — пистолет. Shift+E — касса. /permadd — закрепить.")
     end
+
+    --[[ Сервер просит перерисовать окно после удачного действия.
+
+         Ждём кадр перед открытием: NW-переменная OwnerKey прилетает
+         отдельным пакетом, и без задержки меню собралось бы по старому
+         значению — кнопка «Купить» осталась бы на месте, ровно как
+         жаловался владелец. ]]
+    net.Receive("GRM_Fuel_Station", function()
+        local op = net.ReadString()
+        local ent = net.ReadEntity()
+        if op ~= "refresh" or not IsValid(ent) then return end
+        if not IsValid(F._menu) then return end
+        timer.Simple(0.15, function()
+            if IsValid(ent) and IsValid(F._menu) then F.OpenStation(ent) end
+        end)
+    end)
 
     hook.Add("PlayerButtonDown", "GRM_Fuel_StationKey", function(ply, btn)
         if ply ~= LocalPlayer() or btn ~= KEY_E then return end
