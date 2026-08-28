@@ -138,7 +138,9 @@ local function openNPC()
  local function show(row)
   detail:Clear();local d,p=row.definition,row.progress
   label(detail,d.title,18,18,376,34,"GRMQ_Head")
-  label(detail,d.category~=""and d.category or"КВЕСТ",18,50,376,18,"GRMQ_Small",C.yellow)
+  --[[ Категория и ID рядом (заказ владельца 28.08): ID нужен админу
+       прямо в игре — для команд сброса и ссылок из других квестов. ]]
+  label(detail,(d.category~=""and d.category or"КВЕСТ").."   ·   "..tostring(d.id or""),18,50,376,18,"GRMQ_Small",C.yellow)
   label(detail,d.summary,18,78,376,100,"GRMQ_Body",C.dim)
   local state=not p and"Доступно"or(p.status=="completed"and"Завершено"or objectiveText(d,p));label(detail,state,18,185,376,48,"GRMQ_Head",p and p.status=="completed"and C.green or C.text)
   local dialogue=not p and d.dialogue.offer or(p.status=="active"and d.dialogue.active or d.dialogue.complete);local nodes=dialogueNodes(dialogue);local preview=nodes[1]and nodes[1].text or"Мне есть что тебе предложить.";label(detail,preview,18,245,376,105,"GRMQ_Body",C.text)

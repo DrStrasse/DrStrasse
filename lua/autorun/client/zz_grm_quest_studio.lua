@@ -338,8 +338,15 @@ function Q.OpenGraphStudio(data)
         draw.RoundedBox(10, 0, 0, w, h, COL.bg)
         draw.RoundedBoxEx(10, 0, 0, w, 48, COL.side, true, true, false, false)
         draw.SimpleText("QUEST STUDIO", "GRMQS_Title", 16, 24, COL.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        draw.SimpleText(work and ((work.title or work.id) .. (work.draft and "  · черновик" or "")) or "нет квеста",
-            "GRMQS_Small", w / 2, 24, COL.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        --[[ ID В ШАПКЕ (заказ владельца 28.08). Он нужен постоянно: на
+             него ссылаются «предыдущие квесты», команды сброса и логи.
+             Раньше его негде было подсмотреть, не открывая файл. ]]
+        local head = work and ((work.title or work.id) .. (work.draft and "  · черновик" or "")) or "нет квеста"
+        draw.SimpleText(head, "GRMQS_Small", w / 2, 16, COL.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        if work then
+            draw.SimpleText("ID: " .. tostring(work.id or ""), "GRMQS_Small", w / 2, 33,
+                COL.accent, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
     end
     local close = mkBtn(f, "X", COL.red)
     close:SetSize(34, 26)
@@ -1055,9 +1062,11 @@ function Q.OpenGraphStudio(data)
             b:Dock(TOP) b:SetTall(40) b:DockMargin(8, 0, 8, 4) b:SetText("")
             b.Paint = function(s, w, h)
                 draw.RoundedBox(6, 0, 0, w, h, (work and work.id == dd.id) and COL.nodeSel or COL.card)
-                draw.SimpleText(dd.title or dd.id, "GRMQS_Body", 10, 8, COL.text)
+                draw.SimpleText(dd.title or dd.id, "GRMQS_Body", 10, 6, COL.text)
+                -- ID видно прямо в списке: не нужно открывать каждый квест.
+                draw.SimpleText(tostring(dd.id or ""), "GRMQS_Small", 10, 22, COL.accent)
                 draw.SimpleText((dd.draft and "черновик · " or "") .. tostring(#(dd.steps or {})) .. " эт.",
-                    "GRMQS_Small", 10, 24, COL.dim)
+                    "GRMQS_Small", w - 10, 22, COL.dim, TEXT_ALIGN_RIGHT)
             end
             b.DoClick = function() loadWork(dd) end
         end
@@ -1099,6 +1108,15 @@ function Q.OpenGraphStudio(data)
         qh:SetText("КВЕСТ") qh:SetFont("GRMQS_Head") qh:SetTextColor(COL.gold)
 
         if work then
+            --[[ ID КВЕСТА редактируемый: на него ссылаются другие квесты
+                 через «предыдущие квесты», поэтому иногда его нужно
+                 переименовать. Чистим теми же правилами, что сервер, —
+                 иначе значение молча изменится при сохранении. ]]
+            local iE = field(left, "ID квеста (латиница)", work.id)
+            iE.OnChange = function(s2)
+                local raw = string.lower(string.Trim(s2:GetValue() or "")):gsub("[^%w_%-%:]", "_")
+                work.id = raw
+            end
             local tE = field(left, "Название", work.title)
             local nE = field(left, "ID NPC", work.npc)
             local sE = field(left, "Описание игроку", work.summary, true)
