@@ -284,12 +284,25 @@ net.Receive("GRM_SocStudio_Sync", function()
     if ST.rebuildList then ST.rebuildList() end
 end)
 
-local function sendAct(op, extra)
+--[[ БАГ (найден 28.08). Функция принимала РОВНО ОДИН аргумент, а
+     «Переместить в…» вызывает её с двумя: sendAct("movepose", id, cat).
+     Второй молча терялся, сервер читал пустую строку вместо категории,
+     не находил её в списке и выходил по `if catName == "" then return end`.
+     Перемещение поз не работало вообще и делало это тихо.
+
+     Теперь принимаем произвольное число аргументов. Таблица по-прежнему
+     уходит как таблица, остальное — строками, в том же порядке, в каком
+     их читает сервер. ]]
+local function sendAct(op, ...)
     net.Start("GRM_SocStudio_Act")
     net.WriteString(op)
-    if extra ~= nil then
-        if istable(extra) then net.WriteTable(extra)
-        else net.WriteString(tostring(extra)) end
+    local n = select("#", ...)
+    for i = 1, n do
+        local extra = select(i, ...)
+        if extra ~= nil then
+            if istable(extra) then net.WriteTable(extra)
+            else net.WriteString(tostring(extra)) end
+        end
     end
     net.SendToServer()
 end
@@ -659,8 +672,26 @@ local function openStudio()
     list:SetPos(10, 170) list:SetSize(260, 118)
     list:AddColumn("Сохранённые позы")
     list:SetMultiSelect(false)
+    --[[ STACK OVERFLOW (жалоба владельца 28.08).
+
+         Была замкнутая цепочка вызовов:
+
+           OnRowSelected → loadPose → catBox:ChooseOptionID
+             → catBox.OnSelect → rebuildList → list:SelectItem
+             → OnRowSelected → …
+
+         То есть выбор строки в списке в итоге приводил к повторному
+         выбору строки — и так до переполнения стека. Игра падала при
+         обычном клике по сохранённой позе.
+
+         Лечим флагом повторного входа: пока идёт перестроение списка или
+         загрузка позы, обработчики выбора не запускают цепочку заново.
+         Это надёжнее, чем расставлять «не вызывай меня» по одному месту:
+         любой новый обработчик автоматически попадёт под защиту. ]]
     function ST.rebuildList()
         if not IsValid(list) then return end
+        if ST._busy then return end
+        ST._busy = true
         list:Clear()
         local keep = IsValid(catBox) and catBox:GetOptionData(catBox:GetSelectedID() or 0) or "all"
         local cats = ST.cats or {}
@@ -674,16 +705,26 @@ local function openStudio()
                 local line = list:AddLine((p.players ~= false and "● " or "○ ") .. (p.name or p.id) .. "  [" .. tostring(cat) .. "]")
                 line._id = p.id
                 line._cat = p.cat or "general"
+                --[[ Подсветка ранее выбранной строки. SelectItem дёргает
+                     OnRowSelected — под флагом ST._busy он не станет
+                     заново грузить позу и крутить combobox. ]]
                 if p.id == ST.selectedID then
                     list:SelectItem(line)
                 end
             end
         end
+        ST._busy = false
     end
     ST.rebuildList()
 
-    -- ЛКМ — загрузить позу, ПКМ — меню.
+    --[[ ЛКМ — загрузить позу, ПКМ — меню.
+
+         Обработчик один. Раньше их было ДВА (здесь и ниже, после
+         loadPose): второй молча перезаписывал первый. Работал по факту
+         только нижний, а этот вводил в заблуждение при чтении кода. ]]
     list.OnRowSelected = function(_, _, line)
+        -- Идёт перестроение списка — это не клик игрока, а подсветка.
+        if ST._busy then return end
         if line and line._id then
             ST.selectedID = line._id
             loadPose(line._id)
@@ -720,12 +761,20 @@ local function openStudio()
                 chkC:SetValue(p.crouch == true)
                 chkW:SetValue(p.walk ~= false)
                 if chkFreeze then chkFreeze:SetValue(p.freeze == true or p.nomove == true) end
+                --[[ Переключаем combobox на категорию позы. ChooseOptionID
+                     дёргает OnSelect, а тот перестраивает список — на этом
+                     и замыкалась рекурсия. Под флагом цепочка обрывается:
+                     список нам сейчас перестраивать не нужно, поза уже
+                     выбрана. ]]
                 if IsValid(catBox) then
+                    local wasBusy = ST._busy
+                    ST._busy = true
                     for i = 1, 48 do
                         local d = catBox:GetOptionData(i)
                         if not d then break end
                         if d == (p.cat or "general") then catBox:ChooseOptionID(i) break end
                     end
+                    ST._busy = wasBusy
                 end
                 ST.selectedID = id
                 if ST.setStatus then ST.setStatus("Загружено: " .. tostring(p.name or id)) end
@@ -746,12 +795,10 @@ local function openStudio()
             end
         end
     end
-    list.OnRowSelected = function(_, _, line)
-        if line and line._id then
-            ST.selectedID = line._id
-            loadPose(line._id)
-        end
-    end
+    --[[ Здесь БЫЛ второй list.OnRowSelected, дословно повторявший тот,
+         что объявлен выше. Он перезаписывал первый: два обработчика на
+         одно событие — это гарантированная путаница при отладке.
+         Оставлен один, с защитой от повторного входа. ]]
 
     local bonesc = vgui.Create("DScrollPanel", left)
     bonesc:SetPos(10, 296) bonesc:SetSize(260, ScrH() - 438)

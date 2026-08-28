@@ -368,8 +368,30 @@ if SERVER then
         if F.CanFightPro(ply) then return end
         return false
     end)
-    hook.Add("GRM_FireAddon_HydrantUse", "GRM_Fire", function(ply)
+    --[[ ГИДРАНТ (жалоба владельца 28.08):
+         «На E открыл гидрант, и закрыть его нельзя, если ты не пожарный.»
+
+         Хук запрещал ЛЮБОЕ действие с гидрантом не-пожарному, включая
+         ЗАКРЫТИЕ. Получалась ловушка: человек открывает кран (аддон
+         пускал первое нажатие сам), а обратно повернуть уже не может.
+         Гидрант остаётся открытым навсегда — хлещет вода, насос считает
+         его занятым, а убрать безобразие может только пожарный или админ.
+
+         Правило теперь такое: ОТКРЫВАТЬ — по правам, ЗАКРЫВАТЬ — всем.
+         Закрытие возвращает мир в исходное состояние и навредить им
+         нельзя; запрещать его бессмысленно. А вот открыть чужой гидрант
+         (затопить улицу, слить давление на пожаре) — по-прежнему только
+         пожарным.
+
+         Второй аргумент хука — сама энтити гидранта. Если аддон её не
+         передал, определить намерение невозможно: тогда ведём себя
+         по-старому и спрашиваем права. ]]
+    hook.Add("GRM_FireAddon_HydrantUse", "GRM_Fire", function(ply, hydrant)
         if F.CanFightPro(ply) then return end
+        -- Гидрант уже открыт — это попытка закрыть. Разрешаем любому.
+        if IsValid(hydrant) and hydrant.GetOpen and hydrant:GetOpen() == true then
+            return
+        end
         return false
     end)
     hook.Add("GRM_FireAddon_PumpUse", "GRM_Fire", function(ply)
@@ -681,6 +703,51 @@ if SERVER then
             end
         end
     end)
+
+    --[[ СТРАХОВКА ОТ ЗАБЫТОГО ГИДРАНТА.
+
+         Даже с исправленным правом закрытия гидрант можно бросить
+         открытым: человек ушёл, вылетел, сменил персонажа. Открытый
+         гидрант мешает — насос считает его занятым, а вода хлещет.
+
+         Если рядом нет ни одного подключённого рукава и никто им не
+         пользуется дольше минуты, кран закрывается сам. Пожару это не
+         помешает: во время работы рукав как раз подключён. ]]
+    F.HydrantIdleClose = 60
+
+    local function hydrantWatch()
+        local list = (GRM.Perf and GRM.Perf.Entities)
+            and GRM.Perf.Entities("grm_fire_hydrant") or ents.FindByClass("grm_fire_hydrant")
+        local now = CurTime()
+        for _, ent in ipairs(list or {}) do
+            if IsValid(ent) and ent.GetOpen and ent:GetOpen() == true then
+                -- Подключённый рукав означает, что гидрант в работе.
+                local busy = false
+                if ent.GetHoses then
+                    local h = ent:GetHoses()
+                    busy = istable(h) and #h > 0
+                elseif ent.GetHoseCount then
+                    busy = (tonumber(ent:GetHoseCount()) or 0) > 0
+                end
+                if busy then
+                    ent._grmIdleSince = nil
+                else
+                    ent._grmIdleSince = ent._grmIdleSince or now
+                    if now - ent._grmIdleSince > F.HydrantIdleClose then
+                        ent._grmIdleSince = nil
+                        if ent.SetOpen then ent:SetOpen(false) end
+                    end
+                end
+            end
+        end
+    end
+
+    if GRM.Sched then
+        -- low: это уборка, точность в секунду не нужна.
+        GRM.Sched.Every("fire.hydrantwatch", 10, hydrantWatch, { prio = "low" })
+    else
+        timer.Create("GRM_Fire_HydrantWatch", 10, 0, hydrantWatch)
+    end
 
     timer.Create("GRM_Fire_Autosave", 15, 0, function()
         if dirty and CurTime() - lastSave > 10 then F.SaveActive("autosave") end
