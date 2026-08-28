@@ -41,24 +41,44 @@ SS.Version = "1.0.0"
 --- Модель конфорки, заказанная владельцем.
 SS.CubeModel = "models/hunter/blocks/cube025x025x025.mdl"
 
---[[ Смещения четырёх конфорок в ЛОКАЛЬНЫХ координатах плиты, в долях
-     её габарита. Доли, а не юниты: у разных моделей плит разный размер,
-     и жёсткие числа развалились бы на первой же нестандартной модели.
+--[[ РАСПОЛОЖЕНИЕ КОНФОРОК.
 
-     ПОЧЕМУ 0.24, А НЕ 0.42 (правка 28.08 по скриншоту владельца).
-     OBB плиты описывает её ЦЕЛИКОМ — вместе с дверцами, ручками и
-     нижней тумбой, которая шире варочной поверхности. Поэтому 0.42 от
-     центра выносило кубики за край столешницы: они висели по углам в
-     воздухе, а не на горелках.
-
-     Настоящие конфорки у furniturestove001a стоят заметно ближе к
-     середине, примерно на четверти габарита. ]]
+     Знаки углов: четыре точки прямоугольником вокруг центра панели.
+     А вот НАСКОЛЬКО они разнесены — считается ниже, отдельно по каждой
+     оси. ]]
 SS.SlotOffsets = {
-    { x = -0.24, y = -0.24 },
-    { x = -0.24, y =  0.24 },
-    { x =  0.24, y = -0.24 },
-    { x =  0.24, y =  0.24 },
+    { x = -1, y = -1 },
+    { x = -1, y =  1 },
+    { x =  1, y = -1 },
+    { x =  1, y =  1 },
 }
+
+--[[ РАЗБРОС ПО ОСЯМ — РАЗНЫЙ (правка 28.08: «одни встали ровно, вторые
+     не очень»).
+
+     Раньше по X и Y бралась ОДНА доля 0.24. Но плита прямоугольная —
+     примерно 48 на 30 юнитов, — а конфорки на ней стоят КВАДРАТОМ.
+     Одинаковая доля от разных сторон даёт разное расстояние в юнитах:
+     по длинной оси кубики расходились дальше, чем нужно, по короткой
+     сходились слишком близко. Отсюда и «одни ровно, вторые нет».
+
+     Теперь доля своя для каждой оси: по короткой стороне она больше,
+     чтобы В ЮНИТАХ смещение получилось сопоставимым и четвёрка встала
+     квадратом.
+
+     Числа подобраны под габарит 48x30: по X это ~10 юнитов от центра,
+     по Y ~8. Больше по Y брать нельзя — упрёмся в край столешницы. ]]
+SS.SlotSpread = { x = 0.21, y = 0.24 }
+
+--[[ СМЕЩЕНИЕ ЦЕНТРА ГРУППЫ.
+
+     Центр габаритной коробки — это НЕ центр варочной панели. У плиты
+     спереди выступают ручки и дверцы, они тянут центр OBB на себя, и
+     вся четвёрка уезжает в одну сторону (видно на скриншоте владельца:
+     кубики систематически сдвинуты относительно горелок).
+
+     Здесь компенсация в долях габарита. Ноль означает «центр OBB». ]]
+SS.SlotCenter = { x = 0, y = -0.04 }
 
 --- Насколько приподнять кубик над варочной поверхностью.
 SS.CubeLift = 1
@@ -67,6 +87,31 @@ SS.CubeLift = 1
      сами горелки и торчали за плиту. 0.34 сажает их ровно в круг
      конфорки: метка видна, но не закрывает то, что размечает. ]]
 SS.CubeScale = 0.34
+
+--[[ ЖИВАЯ КАЛИБРОВКА.
+
+     Модель плиты в конфиге сменная, и подгонять её вслепую по моим
+     догадкам — гиблое дело: я не вижу игру, а владелец видит. Эти
+     конвары позволяют довести положение прямо на сервере, без правки
+     кода и пересборки. Пустое значение (-1) означает «взять из кода». ]]
+local cvX  = CreateConVar("grm_stove_slot_x",  "-1", FCVAR_ARCHIVE, "Разброс конфорок по оси X, доля габарита (-1 = из кода)")
+local cvY  = CreateConVar("grm_stove_slot_y",  "-1", FCVAR_ARCHIVE, "Разброс конфорок по оси Y, доля габарита (-1 = из кода)")
+local cvCX = CreateConVar("grm_stove_slot_cx", "-9", FCVAR_ARCHIVE, "Смещение центра конфорок по X (-9 = из кода)")
+local cvCY = CreateConVar("grm_stove_slot_cy", "-9", FCVAR_ARCHIVE, "Смещение центра конфорок по Y (-9 = из кода)")
+
+--- Действующие параметры: конвар важнее кода, если задан.
+function SS.Layout()
+    local sx = cvX:GetFloat()
+    local sy = cvY:GetFloat()
+    local cx = cvCX:GetFloat()
+    local cy = cvCY:GetFloat()
+    return {
+        spreadX = (sx >= 0) and sx or SS.SlotSpread.x,
+        spreadY = (sy >= 0) and sy or SS.SlotSpread.y,
+        centerX = (cx > -9) and cx or SS.SlotCenter.x,
+        centerY = (cy > -9) and cy or SS.SlotCenter.y,
+    }
+end
 
 --- Радиус, в котором отпущенная тара притягивается к плите.
 SS.SnapRange = 90
@@ -115,9 +160,17 @@ function SS.SlotPos(stove, index)
 
     local sx = (maxs.x - mins.x)
     local sy = (maxs.y - mins.y)
+    local L = SS.Layout()
+
+    --[[ Разброс считается по СВОЕЙ оси и от смещённого центра панели,
+         а не от центра габарита: см. комментарии к SlotSpread и
+         SlotCenter. off.x/off.y здесь — только знаки углов. ]]
+    local cx = (mins.x + maxs.x) * 0.5 + sx * L.centerX
+    local cy = (mins.y + maxs.y) * 0.5 + sy * L.centerY
+
     local local_ = Vector(
-        (mins.x + maxs.x) * 0.5 + sx * off.x,
-        (mins.y + maxs.y) * 0.5 + sy * off.y,
+        cx + sx * L.spreadX * off.x,
+        cy + sy * L.spreadY * off.y,
         maxs.z + SS.CubeLift)
     return stove:LocalToWorld(local_)
 end
@@ -301,6 +354,61 @@ if SERVER then
             ply:PrintMessage(HUD_PRINTTALK, ("  %d — %s"):format(i,
                 IsValid(e) and tostring((SS.CookwareInfo(e) or {}).label or e:GetClass()) or "свободна"))
         end
+
+        --[[ Показываем действующую раскладку и габарит плиты: по ним
+             видно, куда двигать кубики, если модель нестандартная. ]]
+        local L = SS.Layout()
+        local mins, maxs = stove:OBBMins(), stove:OBBMaxs()
+        ply:PrintMessage(HUD_PRINTTALK, ("  габарит: %.0f x %.0f юн."):format(
+            maxs.x - mins.x, maxs.y - mins.y))
+        ply:PrintMessage(HUD_PRINTTALK, ("  разброс X=%.3f Y=%.3f · центр X=%.3f Y=%.3f"):format(
+            L.spreadX, L.spreadY, L.centerX, L.centerY))
+        ply:PrintMessage(HUD_PRINTTALK,
+            "  подгонка: grm_stove_slot_x / _y (разброс), _cx / _cy (центр)")
+    end)
+
+    --[[ ПОДГОНКА ОДНОЙ КОМАНДОЙ.
+
+         Владелец видит игру, я — нет. Вместо того чтобы гадать над
+         цифрами и гонять сборку за сборкой, даём инструмент: команда
+         сдвигает конфорки на месте, изменения видны сразу.
+
+         grm_stove_calib <что> <насколько>
+           x / y   — разброс по оси (больше = дальше друг от друга)
+           cx / cy — сдвиг всей четвёрки
+           reset   — вернуть значения из кода ]]
+    concommand.Add("grm_stove_calib", function(ply, _, args)
+        if IsValid(ply) and not ply:IsSuperAdmin() then return end
+        local function say(t)
+            if IsValid(ply) then ply:PrintMessage(HUD_PRINTTALK, t) else print(t) end
+        end
+        local what = string.lower(tostring(args[1] or ""))
+        local val = tonumber(args[2])
+
+        if what == "reset" then
+            RunConsoleCommand("grm_stove_slot_x", "-1")
+            RunConsoleCommand("grm_stove_slot_y", "-1")
+            RunConsoleCommand("grm_stove_slot_cx", "-9")
+            RunConsoleCommand("grm_stove_slot_cy", "-9")
+            say("[Плита] Раскладка конфорок сброшена к значениям из кода.")
+            return
+        end
+
+        local map = {
+            x = "grm_stove_slot_x", y = "grm_stove_slot_y",
+            cx = "grm_stove_slot_cx", cy = "grm_stove_slot_cy",
+        }
+        local cvar = map[what]
+        if not cvar or not val then
+            say("[Плита] grm_stove_calib <x|y|cx|cy> <число>   или   grm_stove_calib reset")
+            say("  x/y — разброс по оси (0.10..0.40), cx/cy — сдвиг центра (-0.2..0.2)")
+            local L = SS.Layout()
+            say(("  сейчас: x=%.3f y=%.3f cx=%.3f cy=%.3f"):format(
+                L.spreadX, L.spreadY, L.centerX, L.centerY))
+            return
+        end
+        RunConsoleCommand(cvar, tostring(val))
+        say(("[Плита] %s = %.3f"):format(what, val))
     end)
 
     if GRM.Modules and GRM.Modules.Register then

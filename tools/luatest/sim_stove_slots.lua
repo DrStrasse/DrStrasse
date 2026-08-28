@@ -60,6 +60,22 @@ timer = { Simple=function(_,f) f() end, Create=function() end, Remove=function()
 local commands = {}
 concommand = { Add = function(n,f) commands[n]=f end }
 util = { AddNetworkString=function() end, IsValidModel=function() return true end }
+FCVAR_ARCHIVE = 128
+
+--[[ Конвары подгонки: стенд гоняет значения ИЗ КОДА, поэтому все
+     возвращают «не задано». Отдельно проверяем, что переопределение
+     работает. ]]
+local CVARS = {}
+function CreateConVar(name, def)
+    CVARS[name] = { v = def }
+    return {
+        GetFloat = function() return tonumber(CVARS[name].v) or 0 end,
+        GetString = function() return tostring(CVARS[name].v) end,
+        GetBool = function() return CVARS[name].v ~= "0" end,
+        GetInt = function() return math.floor(tonumber(CVARS[name].v) or 0) end,
+    }
+end
+function RunConsoleCommand(name, val) if CVARS[name] then CVARS[name].v = val end end
 local PLAYERS = {}
 player = { GetAll = function() return PLAYERS end }
 
@@ -228,6 +244,82 @@ end
 ok(SS.CubeScale < 0.5,
    "ИСПРАВЛЕНО: кубик уменьшен и не перекрывает горелку", SS.CubeScale)
 ok(SS.CubeScale > 0.15, "но остался заметным", SS.CubeScale)
+
+-----------------------------------------------------------------------
+print("\n=== 1б. СИММЕТРИЯ И ФОРМА ЧЕТВЁРКИ (замечание 28.08) ===")
+-----------------------------------------------------------------------
+--[[ «Одни встали ровно, вторые не очень.» Причина была в одной доле на
+     обе оси: плита прямоугольная (48x36), конфорки на ней — квадратом.
+     0.24 от 48 это 11.5 юнита, от 36 — всего 8.6. Четвёрка получалась
+     вытянутой, и половина кубиков мазала мимо горелок. ]]
+do
+    local L = SS.Layout()
+    ok(L.spreadX ~= L.spreadY,
+       "ИСПРАВЛЕНО: разброс по осям РАЗНЫЙ — плита же прямоугольная",
+       ("X=%.3f Y=%.3f"):format(L.spreadX, L.spreadY))
+
+    -- В ЮНИТАХ смещения должны быть сопоставимы: это и есть «квадратом».
+    local sx = maxs.x - mins.x
+    local sy = maxs.y - mins.y
+    local offX = sx * L.spreadX
+    local offY = sy * L.spreadY
+    local ratio = offX / offY
+    ok(ratio > 0.7 and ratio < 1.45,
+       "ИСПРАВЛЕНО: в юнитах смещения близки — четвёрка стоит квадратом, а не полосой",
+       ("%.1f и %.1f юн (отношение %.2f)"):format(offX, offY, ratio))
+
+    --[[ Со старой единой долей 0.24 отношение было бы 48/36 = 1.33 —
+         формально в допуске, но по короткой оси кубики уходили к самому
+         краю. Поэтому отдельно проверяем ЗАПАС по короткой стороне. ]]
+    ok(sy * 0.5 - offY >= sy * 0.5 * 0.4,
+       "и по короткой оси остался запас до края",
+       ("%.1f юн"):format(sy * 0.5 - offY))
+end
+
+-- Четыре точки должны быть симметричны относительно своего центра.
+do
+    local cx, cy = 0, 0
+    for i = 1, 4 do cx = cx + positions[i].x cy = cy + positions[i].y end
+    cx, cy = cx / 4, cy / 4
+    local dx, dy = {}, {}
+    for i = 1, 4 do
+        dx[#dx + 1] = math.abs(positions[i].x - cx)
+        dy[#dy + 1] = math.abs(positions[i].y - cy)
+    end
+    local okX = math.abs(dx[1] - dx[2]) < 0.01 and math.abs(dx[1] - dx[3]) < 0.01
+    local okY = math.abs(dy[1] - dy[2]) < 0.01 and math.abs(dy[1] - dy[3]) < 0.01
+    ok(okX and okY, "все четыре равноудалены от центра группы — перекоса нет")
+end
+
+-----------------------------------------------------------------------
+print("\n=== 1в. ЖИВАЯ ПОДГОНКА КОНВАРАМИ ===")
+-----------------------------------------------------------------------
+--[[ Модель плиты сменная, и подбирать её вслепую по моим догадкам
+     бесполезно: игру видит владелец, а не я. Конвары дают довести
+     положение на сервере, без правки кода. ]]
+do
+    local base = SS.Layout()
+    RunConsoleCommand("grm_stove_slot_x", "0.33")
+    local tuned = SS.Layout()
+    ok(tuned.spreadX == 0.33, "конвар переопределяет разброс из кода", tuned.spreadX)
+    ok(tuned.spreadY == base.spreadY, "и не задевает вторую ось")
+
+    local moved = SS.SlotPos(stove, 1)
+    ok(math.abs(moved.x - positions[1].x) > 1,
+       "позиция конфорки реально сдвинулась — подгонка работает")
+
+    RunConsoleCommand("grm_stove_slot_cy", "0.1")
+    ok(SS.Layout().centerY == 0.1, "центр тоже двигается", SS.Layout().centerY)
+
+    -- Возврат к значениям из кода.
+    RunConsoleCommand("grm_stove_slot_x", "-1")
+    RunConsoleCommand("grm_stove_slot_cy", "-9")
+    local back = SS.Layout()
+    ok(back.spreadX == base.spreadX and back.centerY == base.centerY,
+       "сброс возвращает значения из кода")
+end
+
+ok(isfunction(commands["grm_stove_calib"]), "есть команда подгонки grm_stove_calib")
 
 --[[ Смещения заданы В ДОЛЯХ: плита другого размера должна получить
      конфорки по своему габариту, а не по чужим числам. ]]
