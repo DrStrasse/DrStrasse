@@ -73,6 +73,24 @@ ES.MarkerColor  = {
      когда зона обведена вплотную к земле. ]]
 ES.MarkerHeight = 2
 
+--[[ ПРИВЯЗКА ЗНАЧКА К ДВЕРИ (заказ владельца 28.08).
+
+     «Красивее будет смотреться, если значок жилья будет крепиться
+      к дверям после создания зоны» + «информация, допустим, Квартира №2
+      стоимость 85.000 GRM, тоже к двери чтобы крепилось».
+
+     Раньше и значок, и подпись висели в геометрическом ЦЕНТРЕ зоны.
+     Зону обводят вокруг всего дома, поэтому центр — это середина
+     комнаты или вообще стена: значок торчал в воздухе посреди
+     помещения, а подпись читалась только изнутри.
+
+     Теперь якорь — входная дверь объекта: значок стоит чуть в стороне
+     от полотна (наружу от центра зоны) и над верхним краем двери, как
+     табличка над входом. Центр зоны остаётся запасным вариантом для
+     объектов, у которых дверей ещё нет. ]]
+ES.DoorOffset = 26      -- на сколько вынести значок от полотна двери наружу
+ES.DoorLift   = 8       -- насколько поднять значок над верхним краем двери
+
 --[[ ПОВОРОТ.
 
      Логотип у facepunch_logo лежит в плоскости модели, поэтому без
@@ -137,6 +155,148 @@ function ES.ZoneCenter(rec)
     local a, b = rec.zone.mins, rec.zone.maxs
     if not (istable(a) and istable(b)) then return nil end
     return Vector((a.x + b.x) * 0.5, (a.y + b.y) * 0.5, (a.z + b.z) * 0.5)
+end
+
+--[[ ГЛАВНАЯ ДВЕРЬ ОБЪЕКТА.
+
+     Из всех дверей записи берём ту, что ближе всего к центру зоны по
+     горизонтали — это почти всегда вход, а не смежная внутренняя дверь.
+     Детерминированность важна: при равном расстоянии выбираем по
+     идентификатору, иначе значок прыгал бы между дверями от пересчёта
+     к пересчёту (порядок ents.GetAll() не гарантирован). ]]
+--[[ Справочник «идентификатор двери → энтити». Строится ОДИН раз на
+     пересборку снимка: без него каждый объект гонял бы полный список
+     дверей карты заново, а объектов десятки. ]]
+function ES.DoorIndex()
+    local out = {}
+    if not (GRM.Doors and GRM.Doors.AllDoors and GRM.Doors.GetDoorID) then return out end
+    for _, ent in ipairs(GRM.Doors.AllDoors() or {}) do
+        if IsValid(ent) then
+            local id = tostring(GRM.Doors.GetDoorID(ent) or "")
+            if id ~= "" and not out[id] then out[id] = ent end
+        end
+    end
+    return out
+end
+
+--[[ Насколько точка близка к ВНЕШНЕЙ стене зоны и в какую сторону эта
+     стена смотрит.
+
+     Возвращает: запас до ближайшей грани по горизонтали (меньше — ближе
+     к улице, отрицательное значение = дверь стоит чуть за границей) и
+     единичный вектор нормали этой грани наружу.
+
+     Зачем именно так. Первая версия выбирала «дверь, ближайшую к центру
+     зоны» — и стенд сразу поймал ошибку: ближе всего к центру стоит
+     ВНУТРЕННЯЯ дверь комнаты, а вход как раз врезан в наружную стену,
+     то есть максимально далеко от центра. ]]
+function ES.ZoneEdge(rec, pos)
+    if not (istable(rec) and istable(rec.zone) and pos) then return nil end
+    local a, b = rec.zone.mins, rec.zone.maxs
+    if not (istable(a) and istable(b)) then return nil end
+
+    local sides = {
+        { d = pos.x - a.x, nx = -1, ny = 0 },   -- западная стена
+        { d = b.x - pos.x, nx =  1, ny = 0 },   -- восточная
+        { d = pos.y - a.y, nx = 0, ny = -1 },   -- южная
+        { d = b.y - pos.y, nx = 0, ny =  1 },   -- северная
+    }
+    local best = sides[1]
+    for i = 2, #sides do
+        if sides[i].d < best.d then best = sides[i] end
+    end
+    return best.d, best.nx, best.ny
+end
+
+--- Главная (входная) дверь объекта.
+function ES.MainDoor(rec, index)
+    if not istable(rec) or not istable(rec.doors) or #rec.doors == 0 then return nil end
+    index = istable(index) and index or ES.DoorIndex()
+
+    local best, bestMargin, bestID
+    for _, rawID in ipairs(rec.doors) do
+        local id = tostring(rawID)
+        local ent = index[id]
+        if IsValid(ent) then
+            -- Чем меньше запас до стены, тем вероятнее это вход с улицы.
+            local margin = ES.ZoneEdge(rec, ent:GetPos()) or 0
+            --[[ Строгое сравнение с допуском плюс разрыв ничьей по
+                 идентификатору: порядок дверей в записи и в мире не
+                 гарантирован, а значок не должен прыгать между
+                 одинаково расположенными дверями при каждом пересчёте. ]]
+            if not best or margin < bestMargin - 0.5
+                or (math.abs(margin - bestMargin) <= 0.5 and id < bestID) then
+                best, bestMargin, bestID = ent, margin, id
+            end
+        end
+    end
+    return best
+end
+
+--[[ ТОЧКА, ГДЕ ВИСИТ ЗНАЧОК И ПОДПИСЬ.
+
+     Есть дверь — крепимся к ней: чуть вынесены наружу от центра зоны,
+     чтобы значок не тонул в полотне, и подняты над верхним краем двери,
+     как вывеска над входом. Двери нет — падаем на центр зоны, как было
+     раньше: старые объекты без привязанных дверей не должны потерять
+     значок совсем.
+
+     Второе возвращаемое значение говорит, к двери ли привязались —
+     по нему клиент решает, надо ли уводить подпись выше. ]]
+function ES.MarkerAnchor(rec, index)
+    local door = ES.MainDoor(rec, index)
+    if IsValid(door) then
+        local pos = (door.WorldSpaceCenter and door:WorldSpaceCenter()) or door:GetPos()
+        local top = pos.z
+        if door.WorldSpaceAABB then
+            local mn, mx = door:WorldSpaceAABB()
+            if mn and mx then top = mx.z end
+        end
+
+        --[[ Куда вынести значок. Наружу — это в сторону ближайшей грани
+             зоны: вход врезан в наружную стену, значит именно туда
+             смотрит улица, откуда объект и разглядывают.
+
+             Направление «прочь от центра зоны» тут не годится: у двери,
+             стоящей в углу, оно уводило бы значок по диагонали в стену. ]]
+        local dx, dy = 0, 0
+        local _, nx, ny = ES.ZoneEdge(rec, pos)
+        if nx then
+            dx, dy = nx, ny
+        else
+            local center = ES.ZoneCenter(rec)
+            if center then
+                dx, dy = pos.x - center.x, pos.y - center.y
+                local len = math.sqrt(dx * dx + dy * dy)
+                if len > 1 then dx, dy = dx / len, dy / len else dx, dy = 0, 0 end
+            end
+        end
+
+        return Vector(pos.x + dx * ES.DoorOffset,
+                      pos.y + dy * ES.DoorOffset,
+                      top + ES.DoorLift), true
+    end
+
+    local center = ES.ZoneCenter(rec)
+    if not center then return nil, false end
+    return Vector(center.x, center.y, center.z + ES.MarkerHeight), false
+end
+
+--[[ Сумма с разделителями разрядов: «85 000 GRM» вместо «85000 GRM».
+     Владелец сам пишет цены как «85.000 GRM» — на табличке у двери
+     слитное число читается плохо. Берём общий GRM.Format, если модуль
+     валюты загружен, иначе форматируем сами: значок не должен зависеть
+     от порядка загрузки файлов. ]]
+function ES.Money(amount)
+    local n = math.floor(tonumber(amount) or 0)
+    if isfunction(GRM.Format) then return GRM.Format(n) end
+    local s, out, cnt = tostring(math.abs(n)), "", 0
+    for i = #s, 1, -1 do
+        out = s:sub(i, i) .. out
+        cnt = cnt + 1
+        if cnt % 3 == 0 and i > 1 then out = " " .. out end
+    end
+    return (n < 0 and "-" or "") .. out .. " GRM"
 end
 
 --- Площадь зоны в метрах (1 м ≈ 39.37 units) — для подсказки цены.
@@ -354,16 +514,23 @@ if SERVER then
         local out = {}
         local P = GRM.Property
         if not (P and istable(P.Records)) then return out end
+        -- Справочник дверей один на весь снимок, а не на каждый объект.
+        local doorIndex = ES.DoorIndex()
         for _, rec in pairs(P.Records) do
             local kind = ES.KindOf(rec)
-            local center = ES.ZoneCenter(rec)
-            if kind ~= "none" and center then
+            --[[ Точку значка считаем ЗДЕСЬ, на сервере: только он знает
+                 положение дверей объекта. Клиент получает готовые
+                 координаты и не занимается поиском энтити. ]]
+            local anchor, onDoor = ES.MarkerAnchor(rec, doorIndex)
+            if kind ~= "none" and anchor then
                 local scan = ES.ScanCached(rec, 30)
                 out[#out + 1] = {
                     id = tostring(rec.id or ""),
                     kind = kind,
                     name = tostring(rec.name or ""),
-                    pos = { x = center.x, y = center.y, z = center.z + ES.MarkerHeight },
+                    pos = { x = anchor.x, y = anchor.y, z = anchor.z },
+                    -- Значок на двери: подпись клиент поднимет иначе.
+                    onDoor = onDoor and true or false,
                     -- Выставленный на продажу объект выглядит как свободный:
                     -- синий значок означает «можно купить».
                     vacant = ES.IsVacant(rec) or istable(rec.estateSale),
@@ -673,13 +840,31 @@ if SERVER then
         end
         P.Records[rec.id] = rec
         if P.Reindex then P.Reindex() end
+
+        --[[ ДВЕРИ ПРИВЯЗЫВАЕМ СРАЗУ ПРИ СОЗДАНИИ ЗОНЫ (заказ владельца 28.08:
+             «значок жилья должен крепиться к дверям после создания зоны»).
+
+             Раньше двери подтягивались только в момент покупки — значит у
+             свежесозданной свободной зоны дверей не было, значку не к чему
+             крепиться, и он висел в центре комнаты. Теперь запись получает
+             свои двери сразу: значок и подпись встают над входом ещё до
+             того, как объект кто-то купит.
+
+             Владельца дверей это НЕ меняет: AttachDoors только пополняет
+             rec.doors и пропускает двери, уже занятые другим объектом. ]]
+        local attached = 0
+        if GRM.EstateDeal and GRM.EstateDeal.AttachDoors then
+            local okAttach, n = pcall(GRM.EstateDeal.AttachDoors, rec)
+            if okAttach then attached = tonumber(n) or 0 end
+        end
+
         if P.Save then pcall(P.Save, "estate-tool") end
         ES.InvalidateScan()
         ES.Sync()
 
         local scan = ES.ScanZone(rec)
-        return true, ("Зона «%s» создана · %d м² · внутри точек: %d"):format(
-            rec.name, ES.ZoneArea(rec), scan.total), rec
+        return true, ("Зона «%s» создана · %d м² · внутри точек: %d · дверей: %d"):format(
+            rec.name, ES.ZoneArea(rec), scan.total, attached), rec
     end
 
     --- Удалить зону под прицелом.
@@ -1296,8 +1481,16 @@ if CLIENT then
                      опускания эмблемы почти к центру зоны (28.08) такой
                      сдвиг увёл бы текст под пол. Поднимаем на ту же
                      величину — подпись читается, значок её не
-                     перекрывает. ]]
-                local screen = (pos + Vector(0, 0, 18)):ToScreen()
+                     перекрывает.
+
+                     Значок на двери поднимаем чуть выше: там эмблема
+                     стоит над самим полотном, и при прежних 18 юнитах
+                     строки «СВОБОДНО · 85 000 GRM» налезали бы на неё.
+                     Строки подписи рисуются ВНИЗ по экрану, поэтому
+                     весь блок текста ложится ровно на дверь — как
+                     табличка у входа, чего владелец и просил. ]]
+                local lift = zone.onDoor and 30 or 18
+                local screen = (pos + Vector(0, 0, lift)):ToScreen()
                 if screen.visible then
                     local col = zone.vacant and ES.MarkerColor.sale
                         or (ES.MarkerColor[zone.kind] or color_white)
@@ -1308,7 +1501,7 @@ if CLIENT then
 
                     local sub
                     if zone.vacant then
-                        sub = zone.price > 0 and ("СВОБОДНО · " .. zone.price .. " GRM") or "СВОБОДНО"
+                        sub = zone.price > 0 and ("СВОБОДНО · " .. ES.Money(zone.price)) or "СВОБОДНО"
                     else
                         sub = zone.owner ~= "" and zone.owner or "занято"
                     end

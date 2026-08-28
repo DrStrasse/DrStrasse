@@ -185,7 +185,7 @@ if SERVER then
   if act=="create"then
    if not P.CanAdmin(p)then return end;local doors=selectedIDs(p);if#doors<1 then tell(p,"Сначала отметьте двери инструментом GRM Недвижимость.",false)return end;if#doors>P.Config.MaxDoors then return end
    for _,id in ipairs(doors)do if P.ByDoor[id]then tell(p,"Одна из дверей уже относится к другому объекту.",false)return end end
-   local r2=P.Normalize({id=newID(),name=a.name,type=a.type,doors=doors,zone=zoneFromDoors(doors),purchasePrice=a.purchasePrice,rentPrice=a.rentPrice,utilityRate=a.utilityRate});if r2.name==""then r2.name="Объект недвижимости"end;P.Records[r2.id]=r2;P.Selections[p]={};P.Reindex();setDoorPolicy(r2);save("create");audit("create",p,r2,{doors=#doors});send(p,nil,true);return
+   local r2=P.Normalize({id=newID(),name=a.name,type=a.type,doors=doors,zone=zoneFromDoors(doors),purchasePrice=a.purchasePrice,rentPrice=a.rentPrice,utilityRate=a.utilityRate});if r2.name==""then r2.name="Объект недвижимости"end;P.Records[r2.id]=r2;P.Selections[p]={};P.Reindex();setDoorPolicy(r2);save("create");audit("create",p,r2,{doors=#doors});if GRM.Estate and GRM.Estate.Sync then if GRM.Estate.InvalidateScan then GRM.Estate.InvalidateScan()end;pcall(GRM.Estate.Sync)end;send(p,nil,true);return
   end
   if not r then return end
   if act=="buy"or act=="rent"then

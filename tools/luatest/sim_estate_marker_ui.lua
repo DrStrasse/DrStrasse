@@ -237,9 +237,25 @@ ok(src:find("dir:Angle().y", 1, true) == nil,
 
 -- Подпись должна следовать за опущенным значком.
 --[[ Подпись обязана быть НАД значком. Раньше она смещалась вниз на 16
-     юнитов; после опускания эмблемы такой сдвиг увёл бы текст под пол. ]]
-ok(src:find("(pos + Vector(0, 0, 18)):ToScreen()", 1, true) ~= nil,
+     юнитов; после опускания эмблемы такой сдвиг увёл бы текст под пол.
+
+     С 28.08 подъём стал разным: значок, прикреплённый к двери, стоит
+     над полотном, и подпись там надо уводить выше, чем над центром
+     зоны. Проверяем не конкретное число, а что сдвиг ПОЛОЖИТЕЛЬНЫЙ и
+     считается от того же вектора. Подробности привязки к двери —
+     в sim_estate_door_marker.lua. ]]
+ok(src:find("(pos + Vector(0, 0, lift)):ToScreen()", 1, true) ~= nil,
    "ИСПРАВЛЕНО: подпись поднята над значком, а не спрятана под пол")
+local liftExpr = src:match("local lift = ([^\n]+)")
+ok(liftExpr ~= nil, "подъём подписи вынесен в переменную", liftExpr)
+local liftDoor = tonumber(tostring(liftExpr):match("and%s+(%d+)"))
+local liftZone = tonumber(tostring(liftExpr):match("or%s+(%d+)"))
+ok(liftDoor and liftZone and liftDoor > 0 and liftZone > 0,
+   "оба варианта подъёма положительные — текст не уходит под пол",
+   tostring(liftExpr))
+ok(liftDoor and liftZone and liftDoor > liftZone,
+   "у двери подпись поднимается выше: там эмблема стоит над полотном",
+   ("дверь %s, центр зоны %s"):format(tostring(liftDoor), tostring(liftZone)))
 ok(src:find("(pos - Vector(0, 0, 16)):ToScreen()", 1, true) == nil,
    "прежний сдвиг вниз убран")
 
