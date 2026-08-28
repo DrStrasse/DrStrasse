@@ -1,5 +1,36 @@
 --[[--------------------------------------------------------------------
-    GRM Quest Studio v2 — один экран: граф + этапы + камеры + награды.
+    GRM Quest Studio v3 — ЕДИНЫЙ УЗЛОВОЙ РЕДАКТОР.
+
+    ЗАКАЗ ВЛАДЕЛЬЦА (28.08):
+
+      «Меню квестов лучше всего в единое меню сделать с одной вкладкой,
+       но допустим с модульными блоками которые можно вытягивать из
+       боковых вкладышей в центральный граф и соединять — кат-сцены,
+       диалоги, музыка, ачивки и т.д.»
+
+    ЧТО БЫЛО НЕ ТАК. Редактор состоял из пяти вкладок: Граф, Квест,
+    Этапы, Камеры, Награды. Диалог жил на одной вкладке, камеры на
+    другой, награды на третьей — и связи между ними существовали только
+    в голове автора. Увидеть «после этой реплики играет ролик, потом
+    выдаётся награда» было негде.
+
+    ЧТО ТЕПЕРЬ. Одна вкладка и один холст. Слева палитра блоков, их
+    вытягивают на холст и соединяют мышью:
+
+        СТАРТ      — точка входа, откуда начинается квест у NPC
+        РЕПЛИКА    — узел диалога с ответами игрока
+        ЭТАП       — цель, которую выполняет игрок
+        КАТ-СЦЕНА  — ролик (камеры настраиваются тулом в мире)
+        МУЗЫКА     — звук или трек в точке сюжета
+        НАГРАДА    — деньги и предметы
+        АЧИВКА     — достижение со своей выплатой
+        ФИНИШ      — конец квеста
+
+    ПРИНЦИП ХРАНЕНИЯ. Формат квеста на сервере НЕ ломаем: блоки — это
+    представление тех же самых steps / dialogue / cutscene / rewards.
+    При сохранении граф разбирается обратно в штатные поля, поэтому
+    старые квесты открываются, а новые понимает существующий движок.
+    Координаты блоков лежат в _gx/_gy и переживают нормализацию.
 ----------------------------------------------------------------------]]
 if not CLIENT then return end
 
@@ -8,7 +39,8 @@ GRM.Quests = GRM.Quests or {}
 local Q = GRM.Quests
 
 surface.CreateFont("GRMQS_Title", { font = "Roboto", size = 20, weight = 800, extended = true })
-surface.CreateFont("GRMQS_Body", { font = "Roboto", size = 14, weight = 600, extended = true })
+surface.CreateFont("GRMQS_Head",  { font = "Roboto", size = 16, weight = 700, extended = true })
+surface.CreateFont("GRMQS_Body",  { font = "Roboto", size = 14, weight = 600, extended = true })
 surface.CreateFont("GRMQS_Small", { font = "Roboto", size = 12, weight = 500, extended = true })
 
 local COL = {
@@ -18,27 +50,255 @@ local COL = {
     dim = Color(140, 155, 175), red = Color(210, 75, 75), green = Color(70, 185, 110),
 }
 
-local function nodesOf(work, phase)
+--[[ ТИПЫ БЛОКОВ. Одна таблица описывает и палитру, и отрисовку, и
+     разбор в формат сервера: добавить новый вид блока — значит дописать
+     сюда строку, а не править четыре места. ]]
+Q.BlockTypes = {
+    { id = "start",    name = "СТАРТ",     color = Color(90, 170, 250),  hint = "Точка входа. С неё NPC начинает разговор.", once = true },
+    { id = "dialogue", name = "РЕПЛИКА",   color = Color(70, 190, 200),  hint = "Слова NPC и ответы игрока." },
+    { id = "step",     name = "ЭТАП",      color = Color(245, 195, 70),  hint = "Цель: дойти, принести, убить, поговорить." },
+    { id = "cutscene", name = "КАТ-СЦЕНА", color = Color(180, 130, 240), hint = "Ролик с камерами. Точки ставятся тулом." },
+    { id = "music",    name = "МУЗЫКА",    color = Color(240, 140, 190), hint = "Звук или трек в этой точке сюжета." },
+    { id = "reward",   name = "НАГРАДА",   color = Color(70, 185, 110),  hint = "Деньги и предметы." },
+    { id = "achieve",  name = "АЧИВКА",    color = Color(250, 160, 80),  hint = "Достижение со своей выплатой." },
+    { id = "finish",   name = "ФИНИШ",     color = Color(210, 75, 75),   hint = "Конец квеста.", once = true },
+}
+
+function Q.BlockDef(kind)
+    for _, b in ipairs(Q.BlockTypes) do if b.id == kind then return b end end
+    return Q.BlockTypes[2]
+end
+
+--- Заголовок блока в графе: коротко и по делу.
+function Q.BlockCaption(block)
+    if not istable(block) then return "" end
+    local d = block.data or {}
+    if block.kind == "dialogue" then
+        return tostring(d.text or "") ~= "" and tostring(d.text) or "Новая реплика"
+    elseif block.kind == "step" then
+        return tostring(d.title or "") ~= "" and tostring(d.title) or "Новый этап"
+    elseif block.kind == "reward" then
+        local money = math.floor(tonumber(d.money) or 0)
+        local items = 0
+        for _ in pairs(istable(d.items) and d.items or {}) do items = items + 1 end
+        if money <= 0 and items == 0 then return "Награда не задана" end
+        local parts = {}
+        if money > 0 then parts[#parts + 1] = money .. " GRM" end
+        if items > 0 then parts[#parts + 1] = items .. " предм." end
+        return table.concat(parts, " + ")
+    elseif block.kind == "achieve" then
+        return tostring(d.name or "") ~= "" and tostring(d.name) or "Достижение"
+    elseif block.kind == "cutscene" then
+        local n = #(istable(d.cams) and d.cams or {})
+        return n > 0 and (n .. " камер") or "Камер нет — поставьте тулом"
+    elseif block.kind == "music" then
+        return tostring(d.sound or "") ~= "" and tostring(d.sound) or "Звук не выбран"
+    elseif block.kind == "start" then
+        return "Начало квеста"
+    elseif block.kind == "finish" then
+        return "Квест завершён"
+    end
+    return ""
+end
+
+--[[ ПЕРЕНОС ТЕКСТА. Блок показывает начало содержимого, а не обрубок на
+     полуслове: владелец жаловался на «- Здравствуй, путник! Ви». ]]
+function Q.WrapText(text, font, maxW, maxLines)
+    surface.SetFont(font)
+    local words, lines, cur = {}, {}, ""
+    for w in tostring(text or ""):gmatch("%S+") do words[#words + 1] = w end
+    for _, w in ipairs(words) do
+        local try = cur == "" and w or (cur .. " " .. w)
+        if surface.GetTextSize(try) <= maxW then
+            cur = try
+        else
+            if cur ~= "" then lines[#lines + 1] = cur end
+            cur = w
+            if #lines >= maxLines then break end
+        end
+    end
+    if cur ~= "" and #lines < maxLines then lines[#lines + 1] = cur end
+    if #lines == maxLines then
+        local total = 0
+        for _, l in ipairs(lines) do total = total + #l + 1 end
+        if total < #tostring(text or "") then
+            local last = lines[maxLines]
+            while last ~= "" and surface.GetTextSize(last .. "…") > maxW do
+                last = string.sub(last, 1, -2)
+            end
+            lines[maxLines] = last .. "…"
+        end
+    end
+    return lines
+end
+
+-----------------------------------------------------------------------
+-- КВЕСТ  <->  ГРАФ БЛОКОВ
+-----------------------------------------------------------------------
+--[[ Формат на сервере не меняем. Граф — это ПРЕДСТАВЛЕНИЕ квеста:
+     собираем блоки из steps/dialogue/cutscene/rewards и разбираем
+     обратно. Так старые квесты открываются в новом редакторе, а движок
+     продолжает работать с привычными полями. ]]
+
+local function dialogueList(work, phase)
     work.dialogue = work.dialogue or { offer = {}, active = {}, complete = {} }
     local list = work.dialogue[phase]
     if isstring(list) then
-        list = list ~= "" and { { id = "n1", text = list, choices = {} } } or {}
-        work.dialogue[phase] = list
+        list = list ~= "" and { { id = phase .. "_1", text = list, choices = {} } } or {}
     end
-    if istable(list) and istable(list.nodes) then list = list.nodes work.dialogue[phase] = list end
+    if istable(list) and istable(list.nodes) then list = list.nodes end
     work.dialogue[phase] = istable(list) and list or {}
     return work.dialogue[phase]
 end
 
-local function ensureLayout(nodes)
-    for i, n in ipairs(nodes) do
-        n._x = tonumber(n._x) or (80 + ((i - 1) % 4) * 240)
-        n._y = tonumber(n._y) or (60 + math.floor((i - 1) / 4) * 160)
-        n.id = tostring(n.id or ("n" .. i))
-        n.choices = istable(n.choices) and n.choices or {}
+function Q.QuestToBlocks(work)
+    local blocks, seq = {}, 0
+    local function add(kind, data, gx, gy, id)
+        seq = seq + 1
+        blocks[#blocks + 1] = {
+            uid = id or (kind .. "_" .. seq),
+            kind = kind, data = data or {},
+            x = tonumber(gx) or 0, y = tonumber(gy) or 0,
+            links = {},
+        }
+        return blocks[#blocks]
     end
+
+    -- Раскладка по умолчанию: колонками, чтобы поток читался слева направо.
+    local colY = { [1] = 40, [2] = 40, [3] = 40, [4] = 40, [5] = 40 }
+    local function place(col)
+        local y = colY[col] or 40
+        colY[col] = y + 150
+        return 40 + (col - 1) * 300, y
+    end
+
+    local startX, startY = place(1)
+    local startBlock = add("start", {}, startX, startY, "start")
+
+    --[[ Диалоги. Фазу храним в самом блоке: в едином графе иначе
+         непонятно, это разговор до квеста или после. ]]
+    local prevDialogue
+    for _, phase in ipairs({ "offer", "active", "complete" }) do
+        for i, n in ipairs(dialogueList(work, phase)) do
+            local x, y = place(2)
+            local b = add("dialogue", {
+                phase = phase, id = n.id, speaker = n.speaker, text = n.text,
+                next = n.next, choices = table.Copy(n.choices or {}),
+            }, tonumber(n._gx) ~= 0 and n._gx or x, tonumber(n._gy) ~= 0 and n._gy or y,
+               "dlg_" .. phase .. "_" .. i)
+            if phase == "offer" and not prevDialogue then
+                startBlock.links[#startBlock.links + 1] = { to = b.uid, port = 0 }
+            end
+            prevDialogue = b
+        end
+    end
+
+    for i, s in ipairs(work.steps or {}) do
+        local x, y = place(3)
+        add("step", table.Copy(s),
+            tonumber(s._gx) ~= 0 and s._gx or x,
+            tonumber(s._gy) ~= 0 and s._gy or y, "step_" .. i)
+    end
+
+    for _, phase in ipairs({ "accept", "complete" }) do
+        local cams = (work.cutscene or {})[phase] or {}
+        if #cams > 0 then
+            local x, y = place(4)
+            local first = cams[1] or {}
+            add("cutscene", { phase = phase, cams = table.Copy(cams) },
+                tonumber(first._gx) ~= 0 and first._gx or x,
+                tonumber(first._gy) ~= 0 and first._gy or y, "cut_" .. phase)
+        end
+    end
+
+    if istable(work.music) and tostring(work.music.sound or "") ~= "" then
+        local x, y = place(4)
+        add("music", table.Copy(work.music),
+            tonumber(work.music._gx) ~= 0 and work.music._gx or x,
+            tonumber(work.music._gy) ~= 0 and work.music._gy or y, "music")
+    end
+
+    local r = work.rewards or {}
+    local rx, ry = place(5)
+    add("reward", { money = r.money or 0, items = table.Copy(r.items or {}),
+        _gx = r._gx, _gy = r._gy },
+        tonumber(r._gx) ~= 0 and r._gx or rx,
+        tonumber(r._gy) ~= 0 and r._gy or ry, "reward")
+
+    local a = work.achievement or {}
+    if a.enabled then
+        local ax, ay = place(5)
+        add("achieve", table.Copy(a),
+            tonumber(a._gx) ~= 0 and a._gx or ax,
+            tonumber(a._gy) ~= 0 and a._gy or ay, "achieve")
+    end
+
+    local fx, fy = place(5)
+    add("finish", {}, fx, fy, "finish")
+
+    return blocks
 end
 
+--[[ Разбор графа обратно в квест. Возвращает готовую таблицу в штатном
+     формате: её и отправляем на сервер. ]]
+function Q.BlocksToQuest(work, blocks)
+    local out = table.Copy(work or {})
+    out.dialogue = { offer = {}, active = {}, complete = {} }
+    out.steps = {}
+    out.cutscene = { accept = {}, complete = {} }
+    out.rewards = { money = 0, items = {} }
+    out.music = nil
+
+    for _, b in ipairs(blocks or {}) do
+        local d = b.data or {}
+        if b.kind == "dialogue" then
+            local phase = ({ offer = 1, active = 1, complete = 1 })[tostring(d.phase)] and d.phase or "offer"
+            local list = out.dialogue[phase]
+            list[#list + 1] = {
+                id = tostring(d.id or b.uid), speaker = d.speaker, text = d.text,
+                next = d.next, choices = table.Copy(d.choices or {}),
+                _gx = math.floor(b.x or 0), _gy = math.floor(b.y or 0),
+            }
+        elseif b.kind == "step" then
+            local s = table.Copy(d)
+            s._gx, s._gy = math.floor(b.x or 0), math.floor(b.y or 0)
+            out.steps[#out.steps + 1] = s
+        elseif b.kind == "cutscene" then
+            local phase = d.phase == "complete" and "complete" or "accept"
+            local cams = table.Copy(d.cams or {})
+            if cams[1] then
+                cams[1]._gx, cams[1]._gy = math.floor(b.x or 0), math.floor(b.y or 0)
+            end
+            out.cutscene[phase] = cams
+        elseif b.kind == "music" then
+            out.music = table.Copy(d)
+            out.music._gx, out.music._gy = math.floor(b.x or 0), math.floor(b.y or 0)
+        elseif b.kind == "reward" then
+            out.rewards.money = math.max(0, math.floor(tonumber(d.money) or 0))
+            out.rewards.items = table.Copy(d.items or {})
+            out.rewards._gx, out.rewards._gy = math.floor(b.x or 0), math.floor(b.y or 0)
+        elseif b.kind == "achieve" then
+            out.achievement = table.Copy(d)
+            out.achievement.enabled = true
+            out.achievement._gx, out.achievement._gy = math.floor(b.x or 0), math.floor(b.y or 0)
+        end
+    end
+
+    --[[ Ачивку выключаем явно, если блока нет: иначе удалённый блок
+         продолжал бы выдавать достижение. ]]
+    local hasAch = false
+    for _, b in ipairs(blocks or {}) do if b.kind == "achieve" then hasAch = true end end
+    if not hasAch then
+        out.achievement = out.achievement or {}
+        out.achievement.enabled = false
+    end
+
+    return out
+end
+
+-----------------------------------------------------------------------
+-- ОКНО
+-----------------------------------------------------------------------
 local function mkBtn(p, txt, col)
     local b = vgui.Create("DButton", p)
     b:SetText(txt) b:SetFont("GRMQS_Body") b:SetTextColor(COL.text)
@@ -55,27 +315,31 @@ local function field(parent, title, val, multi)
     l:Dock(TOP) l:SetTall(16) l:DockMargin(10, 8, 10, 0)
     l:SetText(title) l:SetFont("GRMQS_Small") l:SetTextColor(COL.dim)
     local e = vgui.Create("DTextEntry", parent)
-    e:Dock(TOP) e:SetTall(multi and 72 or 26) e:DockMargin(10, 2, 10, 0)
+    e:Dock(TOP) e:SetTall(multi and 90 or 26) e:DockMargin(10, 2, 10, 0)
     e:SetMultiline(multi == true) e:SetText(tostring(val or ""))
     return e
 end
+
+local CARD_W, CARD_H, PORT = 236, 104, 13
 
 function Q.OpenGraphStudio(data)
     if IsValid(Q.StudioFrame) then Q.StudioFrame:Remove() end
     data = istable(data) and data or {}
     local defs = data.definitions or {}
-    local work, tab, phase, selected = nil, "graph", "offer", 0
+    local work, blocks, selected, linking = nil, {}, 0, nil
+    local rebuildCards, rebuildProps, rebuildList
 
     local f = vgui.Create("DFrame")
     Q.StudioFrame, Q.AdminFrame = f, f
     if GRM.UI and GRM.UI.Track then GRM.UI.Track("quest_studio", f) end
-    f:SetSize(math.Clamp(ScrW() - 36, 1180, 1680), math.Clamp(ScrH() - 36, 720, 1000))
+    f:SetSize(math.Clamp(ScrW() - 36, 1180, 1760), math.Clamp(ScrH() - 36, 720, 1020))
     f:Center() f:SetTitle("") f:MakePopup() f:ShowCloseButton(false)
     f.Paint = function(_, w, h)
         draw.RoundedBox(10, 0, 0, w, h, COL.bg)
         draw.RoundedBoxEx(10, 0, 0, w, 48, COL.side, true, true, false, false)
         draw.SimpleText("QUEST STUDIO", "GRMQS_Title", 16, 24, COL.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        draw.SimpleText(work and ((work.title or work.id) .. (work.draft and "  · черновик" or "")) or "нет квеста", "GRMQS_Small", w / 2, 24, COL.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText(work and ((work.title or work.id) .. (work.draft and "  · черновик" or "")) or "нет квеста",
+            "GRMQS_Small", w / 2, 24, COL.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end
     local close = mkBtn(f, "X", COL.red)
     close:SetSize(34, 26)
@@ -83,299 +347,186 @@ function Q.OpenGraphStudio(data)
     f.PerformLayout = function(_, w) if IsValid(close) then close:SetPos(w - 42, 11) end end
 
     local left = vgui.Create("DScrollPanel", f)
-    left:Dock(LEFT) left:SetWide(248) left:DockMargin(0, 48, 0, 0)
+    left:Dock(LEFT) left:SetWide(232) left:DockMargin(0, 48, 0, 0)
     left.Paint = function(_, w, h) surface.SetDrawColor(COL.side) surface.DrawRect(0, 0, w, h) end
 
     local right = vgui.Create("DScrollPanel", f)
-    right:Dock(RIGHT) right:SetWide(310) right:DockMargin(0, 48, 0, 0)
+    right:Dock(RIGHT) right:SetWide(330) right:DockMargin(0, 48, 0, 0)
     right.Paint = function(_, w, h) surface.SetDrawColor(COL.side) surface.DrawRect(0, 0, w, h) end
 
     local mid = vgui.Create("DPanel", f)
     mid:Dock(FILL) mid:DockMargin(0, 48, 0, 0)
     mid.Paint = function(_, w, h)
         surface.SetDrawColor(20, 26, 36) surface.DrawRect(0, 0, w, h)
-        if tab == "graph" then
-            surface.SetDrawColor(30, 38, 50)
-            for x = 0, w, 32 do surface.DrawLine(x, 36, x, h) end
-            for y = 36, h, 32 do surface.DrawLine(0, y, w, y) end
-        end
+        surface.SetDrawColor(30, 38, 50)
+        for x = 0, w, 32 do surface.DrawLine(x, 36, x, h) end
+        for y = 36, h, 32 do surface.DrawLine(0, y, w, y) end
     end
 
     local bar = vgui.Create("DPanel", mid)
     bar:Dock(TOP) bar:SetTall(36)
-    bar.Paint = function(_, w, h) draw.RoundedBox(0, 0, 0, w, h, Color(18, 24, 34)) end
+    bar.Paint = function(_, w, h)
+        draw.RoundedBox(0, 0, 0, w, h, Color(18, 24, 34))
+        draw.SimpleText("Тяни блок из палитры слева на холст. Соединяй кружки-порты мышью. ПКМ по порту — убрать связь.",
+            "GRMQS_Small", 12, h / 2, COL.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    end
 
     local canvas = vgui.Create("DPanel", mid)
     canvas:SetPos(0, 36)
-    canvas:SetSize(2200, 1500)
+    canvas:SetSize(3000, 2000)
     canvas:SetPaintBackground(false)
 
-    local form = vgui.Create("DScrollPanel", mid)
-    form:Dock(FILL) form:DockMargin(8, 4, 8, 8)
-    form:SetVisible(false)
-
-    local function currentNodes()
-        if not work then return {} end
-        return nodesOf(work, phase)
+    local function blockByUID(uid)
+        for _, b in ipairs(blocks) do if b.uid == tostring(uid) then return b end end
     end
 
-    --[[ ПЕРЕНОС ТЕКСТА В КАРТОЧКЕ (заказ владельца 28.08: «в поле графа
-         текст квеста должен нормально отражаться»).
-
-         Раньше карточка резала реплику через string.sub(text,1,42) — на
-         скриншоте видно обрубок «- Здравствуй, путник! Ви». Теперь
-         разбиваем по словам на строки нужной ширины: видно начало
-         реплики целиком, а не половину слова. ]]
-    local function wrapText(text, font, maxW, maxLines)
-        surface.SetFont(font)
-        local words, lines, cur = {}, {}, ""
-        for w in tostring(text or ""):gmatch("%S+") do words[#words + 1] = w end
-        for _, w in ipairs(words) do
-            local try = cur == "" and w or (cur .. " " .. w)
-            if surface.GetTextSize(try) <= maxW then
-                cur = try
-            else
-                if cur ~= "" then lines[#lines + 1] = cur end
-                cur = w
-                if #lines >= maxLines then break end
-            end
-        end
-        if cur ~= "" and #lines < maxLines then lines[#lines + 1] = cur end
-        -- Последняя строка получает многоточие, если текст не влез.
-        if #lines == maxLines then
-            local total = 0
-            for _, l in ipairs(lines) do total = total + #l + 1 end
-            if total < #tostring(text or "") then
-                local last = lines[maxLines]
-                while last ~= "" and surface.GetTextSize(last .. "…") > maxW do
-                    last = string.sub(last, 1, -2)
-                end
-                lines[maxLines] = last .. "…"
-            end
-        end
-        return lines
-    end
-
-    --[[ РАЗМЕРЫ КАРТОЧКИ. Вынесены в константы: по ним же считаются
-         точки выхода связей, иначе линии разъедутся с портами. ]]
-    local CARD_W, CARD_H = 250, 116
-    local PORT = 13   -- радиус круглого порта на краю карточки
-
-    --[[ Точка выхода: правый край карточки. У реплики один общий выход
-         (переход «дальше»), у каждого ответа — свой, они разнесены по
-         вертикали, чтобы линии не слипались. ]]
-    local function outPort(n, slot, count)
-        local x = (n._x or 0) + CARD_W
-        local y = (n._y or 0) + 30
+    --[[ Порты. Выход справа, вход слева. У реплики с ответами — по порту
+         на каждый ответ, чтобы развилка была видна как развилка. ]]
+    local function outPortPos(b, slot, count)
+        local x = (b.x or 0) + CARD_W
+        local y = (b.y or 0) + 30
         if count and count > 0 then
-            y = (n._y or 0) + 46 + (slot - 0.5) * (CARD_H - 56) / count
+            y = (b.y or 0) + 44 + (slot - 0.5) * (CARD_H - 54) / count
         end
         return x, y
     end
-    local function inPort(n)
-        return (n._x or 0), (n._y or 0) + 30
+    local function inPortPos(b) return (b.x or 0), (b.y or 0) + 30 end
+
+    local function portCount(b)
+        if b.kind == "dialogue" then return #((b.data or {}).choices or {}) end
+        return 0
     end
 
-    --[[ Состояние протяжки связи мышью: от какого узла и какого выхода
-         тянем. Владелец просил именно «визуально соединять элементы». ]]
-    local linking = nil    -- { from = node, slot = 0|N, count = N }
-
-    local function paintLinks()
-        canvas.Paint = function(_, cw, ch)
-            if tab ~= "graph" then return end
-            local nodes = currentNodes()
-            local byID = {}
-            for _, n in ipairs(nodes) do byID[tostring(n.id)] = n end
-
-            --[[ Связи рисуем КРИВОЙ БЕЗЬЕ, а не прямой линией: на прямых
-                 пересекающиеся переходы сливаются в кашу, и непонятно,
-                 что куда ведёт. ]]
-            local function curve(x1, y1, x2, y2, col)
-                local dx = math.max(40, math.abs(x2 - x1) * 0.5)
-                local px, py = x1, y1
-                surface.SetDrawColor(col)
-                for i = 1, 18 do
-                    local t = i / 18
-                    local mt = 1 - t
-                    local x = mt^3 * x1 + 3 * mt^2 * t * (x1 + dx) + 3 * mt * t^2 * (x2 - dx) + t^3 * x2
-                    local y = mt^3 * y1 + 3 * mt^2 * t * y1 + 3 * mt * t^2 * y2 + t^3 * y2
-                    surface.DrawLine(px, py, x, y)
-                    px, py = x, y
-                end
-                -- Стрелка у цели: сразу видно направление связи.
-                surface.DrawLine(x2, y2, x2 - 8, y2 - 5)
-                surface.DrawLine(x2, y2, x2 - 8, y2 + 5)
+    canvas.Paint = function(_, cw, chh)
+        local function curve(x1, y1, x2, y2, col)
+            local dx = math.max(40, math.abs(x2 - x1) * 0.5)
+            local px, py = x1, y1
+            surface.SetDrawColor(col)
+            for i = 1, 18 do
+                local t = i / 18
+                local mt = 1 - t
+                local x = mt^3 * x1 + 3 * mt^2 * t * (x1 + dx) + 3 * mt * t^2 * (x2 - dx) + t^3 * x2
+                local y = mt^3 * y1 + 3 * mt^2 * t * y1 + 3 * mt * t^2 * y2 + t^3 * y2
+                surface.DrawLine(px, py, x, y)
+                px, py = x, y
             end
+            surface.DrawLine(x2, y2, x2 - 8, y2 - 5)
+            surface.DrawLine(x2, y2, x2 - 8, y2 + 5)
+        end
 
-            for _, n in ipairs(nodes) do
-                local chs = n.choices or {}
-                -- Линейный переход реплики.
-                if tostring(n.next or "") ~= "" then
-                    local t = byID[tostring(n.next)]
-                    if t then
-                        local x1, y1 = outPort(n, 0, 0)
-                        local x2, y2 = inPort(t)
-                        curve(x1, y1, x2, y2, COL.line)
-                    end
-                end
-                -- Переходы от ответов игрока: своим цветом, чтобы отличать.
-                for i, c in ipairs(chs) do
-                    if tostring(c.next or "") ~= "" then
-                        local t = byID[tostring(c.next)]
-                        if t then
-                            local x1, y1 = outPort(n, i, #chs)
-                            local x2, y2 = inPort(t)
-                            curve(x1, y1, x2, y2, Color(120, 200, 140, 190))
-                        end
-                    end
+        for _, b in ipairs(blocks) do
+            local cnt = portCount(b)
+            for _, lnk in ipairs(b.links or {}) do
+                local t = blockByUID(lnk.to)
+                if t then
+                    local x1, y1 = outPortPos(b, lnk.port or 0, cnt)
+                    local x2, y2 = inPortPos(t)
+                    curve(x1, y1, x2, y2, (lnk.port or 0) > 0 and Color(120, 200, 140, 200) or COL.line)
                 end
             end
+        end
 
-            -- Резинка: тянется за курсором, пока не отпустили кнопку.
-            if linking and linking.from then
-                local x1, y1 = outPort(linking.from, linking.slot, linking.count)
-                local mx, my = canvas:CursorPos()
-                surface.SetDrawColor(COL.gold)
-                surface.DrawLine(x1, y1, mx, my)
-                draw.SimpleText("отпустите на нужной реплике", "GRMQS_Small", mx + 12, my + 6, COL.gold)
-            end
+        if linking and linking.from then
+            local x1, y1 = outPortPos(linking.from, linking.slot, portCount(linking.from))
+            local mx, my = canvas:CursorPos()
+            surface.SetDrawColor(COL.gold)
+            surface.DrawLine(x1, y1, mx, my)
+            draw.SimpleText("отпустите на нужном блоке", "GRMQS_Small", mx + 12, my + 6, COL.gold)
         end
     end
 
-    local rebuildProps, rebuildCards, rebuildForm
+    local function linkBlocks(from, slot, to)
+        if not (from and to) or from == to then return false end
+        from.links = from.links or {}
+        -- Один выход — одна связь: иначе поток раздваивается молча.
+        for i = #from.links, 1, -1 do
+            if (from.links[i].port or 0) == slot then table.remove(from.links, i) end
+        end
+        from.links[#from.links + 1] = { to = to.uid, port = slot }
+        --[[ Связь от ответа игрока дублируем в сам ответ: движок диалогов
+             читает choices[i].next, а не граф. Без этого связь была бы
+             только картинкой. ]]
+        if from.kind == "dialogue" and slot > 0 then
+            local ch = (from.data.choices or {})[slot]
+            if ch and to.kind == "dialogue" then ch.next = tostring(to.data.id or to.uid) end
+        elseif from.kind == "dialogue" and slot == 0 and to.kind == "dialogue" then
+            from.data.next = tostring(to.data.id or to.uid)
+        end
+        return true
+    end
 
-    rebuildProps = function()
-        right:Clear()
-        local head = vgui.Create("DLabel", right)
-        head:Dock(TOP) head:SetTall(26) head:DockMargin(10, 10, 10, 4)
-        head:SetFont("GRMQS_Body") head:SetTextColor(COL.gold)
-        head:SetText(tab == "graph" and "УЗЕЛ" or "СВОЙСТВА")
-        if not work then return end
-        if tab ~= "graph" then
-            local hint = vgui.Create("DLabel", right)
-            hint:Dock(TOP) hint:SetTall(80) hint:DockMargin(10, 8, 10, 8)
-            hint:SetWrap(true) hint:SetFont("GRMQS_Small") hint:SetTextColor(COL.dim)
-            hint:SetText("Слева квест. Вкладки сверху — граф диалога, этапы, камеры, награды. Сохранить пишет на сервер.")
-            return
+    local function unlink(b, slot)
+        for i = #(b.links or {}), 1, -1 do
+            if (b.links[i].port or 0) == slot then table.remove(b.links, i) end
         end
-        local n = currentNodes()[selected]
-        if not n then
-            local hint = vgui.Create("DLabel", right)
-            hint:Dock(TOP) hint:SetTall(120) hint:DockMargin(10, 8, 10, 8)
-            hint:SetWrap(true) hint:SetFont("GRMQS_Small") hint:SetTextColor(COL.dim)
-            hint:SetText("Клик по карточке — выбрать.\nТяни за заголовок — переместить.\n\nСВЯЗИ: тяни от круглого порта справа к другой карточке. Серый порт — переход реплики, зелёные — ответы игрока.\n\nПКМ по порту — убрать связь.")
-            return
-        end
-        local idE = field(right, "ID узла", n.id)
-        local spE = field(right, "Говорящий", n.speaker)
-        local txE = field(right, "Текст", n.text, true)
-        local nxE = field(right, "Следующий ID", n.next)
-        local apply = mkBtn(right, "Применить узел", COL.green)
-        apply:Dock(TOP) apply:SetTall(30) apply:DockMargin(10, 10, 10, 6)
-        apply.DoClick = function()
-            n.id = string.Trim(idE:GetValue() or "")
-            n.speaker, n.text, n.next = spE:GetValue(), txE:GetValue(), nxE:GetValue()
-            rebuildCards()
-        end
-        local addCh = mkBtn(right, "+ Ответ игрока", COL.card)
-        addCh:Dock(TOP) addCh:SetTall(26) addCh:DockMargin(10, 4, 10, 4)
-        addCh.DoClick = function()
-            n.choices = n.choices or {}
-            n.choices[#n.choices + 1] = { text = "Новый ответ", next = "", action = "" }
-            rebuildProps() rebuildCards()
-        end
-        for i, ch in ipairs(n.choices or {}) do
-            local box = vgui.Create("DPanel", right)
-            box:Dock(TOP) box:SetTall(88) box:DockMargin(10, 4, 10, 0)
-            box.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, COL.card) end
-            local t = vgui.Create("DTextEntry", box) t:SetPos(6, 6) t:SetSize(280, 22) t:SetText(ch.text or "")
-            local nx = vgui.Create("DTextEntry", box) nx:SetPos(6, 32) nx:SetSize(130, 22) nx:SetText(ch.next or "")
-            local act = vgui.Create("DComboBox", box) act:SetPos(140, 32) act:SetSize(146, 22)
-            act:AddChoice("продолжить", "", (ch.action or "") == "")
-            act:AddChoice("принять квест", "accept", ch.action == "accept")
-            act:AddChoice("закрыть", "close", ch.action == "close")
-            t.OnChange = function(s) ch.text = s:GetValue() rebuildCards() end
-            nx.OnChange = function(s) ch.next = s:GetValue() rebuildCards() end
-            act.OnSelect = function(_, _, _, v) ch.action = v rebuildCards() end
-            local del = mkBtn(box, "Удалить", COL.red)
-            del:SetPos(6, 58) del:SetSize(80, 22)
-            del.DoClick = function() table.remove(n.choices, i) rebuildProps() rebuildCards() end
+        if b.kind == "dialogue" then
+            if slot > 0 then
+                local ch = (b.data.choices or {})[slot]
+                if ch then ch.next = "" end
+            else
+                b.data.next = ""
+            end
         end
     end
 
     rebuildCards = function()
-        for _, ch in ipairs(canvas:GetChildren()) do ch:Remove() end
-        if tab ~= "graph" then return end
-        local nodes = currentNodes()
-        ensureLayout(nodes)
-        paintLinks()
+        for _, c in ipairs(canvas:GetChildren()) do c:Remove() end
 
-        --[[ Порт-кружок на краю карточки. От него тянется связь, ПКМ по
-             нему связь снимает. Это и есть «визуально соединять
-             элементы», о чём просил владелец. ]]
-        local function makePort(card, node, slot, count, cy)
+        local function makePort(card, b, slot, count, cy)
             local port = vgui.Create("DPanel", card)
             port:SetSize(PORT, PORT)
             port:SetPos(CARD_W - PORT / 2 - 1, cy - PORT / 2)
             port:SetCursor("hand")
-            local isChoice = slot > 0
             port.Paint = function(_, w, h)
-                local linked = isChoice and tostring((node.choices[slot] or {}).next or "") ~= ""
-                    or (not isChoice and tostring(node.next or "") ~= "")
-                local col = isChoice and Color(120, 200, 140) or COL.line
+                local linked = false
+                for _, l in ipairs(b.links or {}) do if (l.port or 0) == slot then linked = true end end
+                local col = slot > 0 and Color(120, 200, 140) or COL.line
                 draw.RoundedBox(w / 2, 0, 0, w, h, linked and col or Color(60, 74, 92))
-                if linking and linking.from == node and linking.slot == slot then
+                if linking and linking.from == b and linking.slot == slot then
                     surface.SetDrawColor(COL.gold) surface.DrawOutlinedRect(0, 0, w, h, 2)
                 end
             end
             port.OnMousePressed = function(_, mc)
-                if mc == MOUSE_RIGHT then
-                    -- Снять связь: частая операция, не должна требовать полей.
-                    if isChoice then node.choices[slot].next = "" else node.next = "" end
-                    rebuildCards() rebuildProps()
-                    return
-                end
-                linking = { from = node, slot = slot, count = count }
+                if mc == MOUSE_RIGHT then unlink(b, slot) rebuildCards() return end
+                linking = { from = b, slot = slot }
             end
-            return port
         end
 
-        for i, n in ipairs(nodes) do
+        for i, b in ipairs(blocks) do
+            local def = Q.BlockDef(b.kind)
             local card = vgui.Create("DPanel", canvas)
-            card:SetPos(n._x or 80, n._y or 80)
+            card:SetPos(b.x or 40, b.y or 40)
             card:SetSize(CARD_W, CARD_H)
             card.Paint = function(_, w, h)
                 local sel = selected == i
                 draw.RoundedBox(8, 0, 0, w, h, sel and COL.nodeSel or COL.node)
-                if sel then
-                    surface.SetDrawColor(COL.accent) surface.DrawOutlinedRect(0, 0, w, h, 2)
+                if sel then surface.SetDrawColor(COL.accent) surface.DrawOutlinedRect(0, 0, w, h, 2) end
+                -- Цветная шапка = тип блока: видно с одного взгляда.
+                draw.RoundedBoxEx(8, 0, 0, w, 24, def.color, true, true, false, false)
+                draw.SimpleText(def.name, "GRMQS_Small", 10, 12, Color(16, 20, 28), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                if b.kind == "dialogue" then
+                    draw.SimpleText(tostring((b.data or {}).phase or "offer"), "GRMQS_Small", w - 10, 12,
+                        Color(16, 20, 28), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
                 end
-                -- Полоса заголовка: за неё карточку и таскают.
-                draw.RoundedBoxEx(8, 0, 0, w, 24, Color(20, 30, 42), true, true, false, false)
-                draw.SimpleText(n.id or ("n" .. i), "GRMQS_Small", 10, 12, COL.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
 
-                --[[ Реплика с переносом по словам. Владелец просил, чтобы
-                     текст «нормально отражался» — обрубок на полуслове
-                     это как раз то, что было на скриншоте. ]]
-                local lines = wrapText(n.text, "GRMQS_Small", w - 24, 3)
+                local lines = Q.WrapText(Q.BlockCaption(b), "GRMQS_Small", w - 22, 3)
                 for li, line in ipairs(lines) do
-                    draw.SimpleText(line, "GRMQS_Small", 10, 32 + (li - 1) * 15, COL.text)
+                    draw.SimpleText(line, "GRMQS_Small", 10, 34 + (li - 1) * 15, COL.text)
                 end
 
-                local chs = n.choices or {}
-                local foot = #chs > 0 and (#chs .. " отв.") or "линейно"
-                -- Отдельно помечаем узел, который выдаёт квест: это ключевая точка.
-                for _, c in ipairs(chs) do
-                    if tostring(c.action or "") == "accept" then foot = foot .. "  ·  ВЫДАЁТ КВЕСТ" break end
+                if b.kind == "dialogue" then
+                    local chs = (b.data or {}).choices or {}
+                    local foot = #chs > 0 and (#chs .. " отв.") or "линейно"
+                    for _, c in ipairs(chs) do
+                        if tostring(c.action or "") == "accept" then foot = foot .. "  ·  ВЫДАЁТ КВЕСТ" break end
+                    end
+                    draw.SimpleText(foot, "GRMQS_Small", 10, h - 12, COL.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                 end
-                draw.SimpleText(foot, "GRMQS_Small", 10, h - 12, COL.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             end
 
-            -- Заголовок: перетаскивание карточки.
             local grip = vgui.Create("DPanel", card)
             grip:SetPos(0, 0) grip:SetSize(CARD_W - PORT * 2, 24)
-            grip:SetPaintBackground(false)
-            grip:SetCursor("sizeall")
+            grip:SetPaintBackground(false) grip:SetCursor("sizeall")
             grip.OnMousePressed = function(self, mc)
                 if mc ~= MOUSE_LEFT then return end
                 selected = i
@@ -387,289 +538,464 @@ function Q.OpenGraphStudio(data)
             grip.Think = function(self)
                 if self._drag and input.IsMouseDown(MOUSE_LEFT) then
                     local px, py = canvas:CursorPos()
-                    n._x = math.max(0, px - (self._ox or 0))
-                    n._y = math.max(0, py - (self._oy or 0))
-                    card:SetPos(n._x, n._y)
-                elseif self._drag then
-                    self._drag = false
-                end
+                    b.x = math.max(0, px - (self._ox or 0))
+                    b.y = math.max(0, py - (self._oy or 0))
+                    card:SetPos(b.x, b.y)
+                elseif self._drag then self._drag = false end
             end
 
-            -- Клик по телу карточки выбирает её и завершает протяжку связи.
             card.OnMousePressed = function(_, mc)
                 if mc ~= MOUSE_LEFT then return end
-                selected = i
-                rebuildProps()
+                selected = i rebuildProps()
             end
             card.OnMouseReleased = function()
-                --[[ Отпустили связь на этой карточке — она и становится
-                     целью. Пишем ID, а не индекс: узлы можно двигать и
-                     удалять, ID переживёт перестановку. ]]
-                if linking and linking.from and linking.from ~= n then
-                    local target = tostring(n.id or "")
-                    if linking.slot > 0 then
-                        local c = linking.from.choices[linking.slot]
-                        if c then c.next = target end
-                    else
-                        linking.from.next = target
-                    end
-                    linking = nil
-                    rebuildCards() rebuildProps()
-                else
-                    linking = nil
+                if linking and linking.from and linking.from ~= b then
+                    linkBlocks(linking.from, linking.slot, b)
                 end
+                linking = nil
+                rebuildCards() rebuildProps()
             end
 
-            -- Порты: общий выход реплики + по одному на каждый ответ.
-            local chs = n.choices or {}
-            if #chs == 0 then
-                makePort(card, n, 0, 0, 30)
-            else
-                for ci = 1, #chs do
-                    local _, py = outPort(n, ci, #chs)
-                    makePort(card, n, ci, #chs, py - (n._y or 0))
+            local cnt = portCount(b)
+            if b.kind ~= "finish" then
+                if cnt == 0 then
+                    makePort(card, b, 0, 0, 30)
+                else
+                    for ci = 1, cnt do
+                        local _, py = outPortPos(b, ci, cnt)
+                        makePort(card, b, ci, cnt, py - (b.y or 0))
+                    end
                 end
             end
         end
     end
 
-    --[[ Отпустили кнопку мимо карточек — протяжка отменяется. Без этого
-         резинка залипала бы за курсором навсегда. ]]
     canvas.OnMouseReleased = function() linking = nil end
     canvas.Think = function()
         if linking and not input.IsMouseDown(MOUSE_LEFT) then linking = nil end
     end
 
-    local g = {}
-    rebuildForm = function()
-        form:Clear()
-        if not work or tab == "graph" then return end
-        if tab == "meta" then
-            g.id = field(form, "ID квеста", work.id)
-            g.title = field(form, "Название", work.title)
-            g.npc = field(form, "ID NPC", work.npc)
-            g.summary = field(form, "Описание игроку", work.summary, true)
-            g.cat = field(form, "Категория", work.category)
-            local function chk(txt, key)
-                local c = vgui.Create("DCheckBoxLabel", form)
-                c:Dock(TOP) c:SetTall(22) c:DockMargin(10, 6, 10, 0)
-                c:SetText(txt) c:SetTextColor(COL.text) c:SetValue(work[key] == true)
-                c.OnChange = function(_, v) work[key] = v end
-            end
-            chk("Включён", "enabled")
-            chk("Повтор", "repeatable")
-            chk("Автостарт", "autoStart")
-            local apply = mkBtn(form, "Записать поля в черновик", COL.green)
-            apply:Dock(TOP) apply:SetTall(32) apply:DockMargin(10, 12, 10, 8)
-            apply.DoClick = function()
-                work.id, work.title = g.id:GetValue(), g.title:GetValue()
-                work.npc, work.summary, work.category = g.npc:GetValue(), g.summary:GetValue(), g.cat:GetValue()
-            end
-        elseif tab == "steps" then
-            work.steps = work.steps or {}
-            for i, s in ipairs(work.steps) do
-                local row = vgui.Create("DPanel", form)
-                row:Dock(TOP) row:SetTall(86) row:DockMargin(8, 6, 8, 0)
-                row.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, COL.card) end
-                local t = vgui.Create("DTextEntry", row) t:SetPos(8, 8) t:SetSize(280, 22) t:SetText(s.title or "")
-                t.OnChange = function(e) s.title = e:GetValue() end
-                local typ = vgui.Create("DComboBox", row) typ:SetPos(296, 8) typ:SetSize(140, 22)
-                for _, k in ipairs({ "visit", "talk", "event", "item" }) do typ:AddChoice(k, k, s.type == k) end
-                typ.OnSelect = function(_, _, _, v) s.type = v end
-                local ev = vgui.Create("DTextEntry", row) ev:SetPos(8, 36) ev:SetSize(160, 22) ev:SetPlaceholderText("event / npc / item") ev:SetText(s.event or s.npc or s.item or "")
-                ev.OnChange = function(e)
-                    if s.type == "talk" then s.npc = e:GetValue()
-                    elseif s.type == "item" then s.item = e:GetValue()
-                    else s.event = e:GetValue() end
+    --[[ ПАЛИТРА. Кнопка добавляет блок в центр видимой области холста:
+         «вытянуть из бокового вкладыша», как и просил владелец. ]]
+    local function addBlock(kind)
+        if not work then return end
+        local def = Q.BlockDef(kind)
+        if def.once then
+            for _, b in ipairs(blocks) do
+                if b.kind == kind then
+                    notification.AddLegacy("Такой блок уже есть", NOTIFY_HINT, 3)
+                    return
                 end
-                local cnt = vgui.Create("DNumberWang", row) cnt:SetPos(176, 36) cnt:SetSize(70, 22) cnt:SetMin(1) cnt:SetMax(100000) cnt:SetValue(s.count or 1)
-                cnt.OnValueChanged = function(_, v) s.count = v end
-                local del = mkBtn(row, "×", COL.red) del:SetPos(448, 8) del:SetSize(28, 22)
-                del.DoClick = function() table.remove(work.steps, i) rebuildForm() end
             end
-            local add = mkBtn(form, "+ Этап", COL.green)
-            add:Dock(TOP) add:SetTall(30) add:DockMargin(8, 10, 8, 8)
+        end
+        local data = {}
+        if kind == "dialogue" then
+            data = { phase = "offer", id = "node_" .. os.time() % 100000,
+                speaker = work.npc or "NPC", text = "Новая реплика", next = "", choices = {} }
+        elseif kind == "step" then
+            data = { type = "event", title = "Новый этап", event = "generic", count = 1 }
+        elseif kind == "cutscene" then
+            data = { phase = "accept", cams = {} }
+        elseif kind == "music" then
+            data = { sound = "", loop = false }
+        elseif kind == "reward" then
+            data = { money = 0, items = {} }
+        elseif kind == "achieve" then
+            data = { enabled = true, id = "quest_" .. tostring(work.id or ""),
+                name = work.title or "Достижение", description = work.summary or "", reward = 0 }
+        end
+        blocks[#blocks + 1] = {
+            uid = kind .. "_" .. (os.time() % 100000) .. "_" .. #blocks,
+            kind = kind, data = data, x = 320, y = 120 + (#blocks % 5) * 40, links = {},
+        }
+        selected = #blocks
+        rebuildCards() rebuildProps()
+    end
+
+    -----------------------------------------------------------------
+    -- ПРАВАЯ ПАНЕЛЬ: свойства выбранного блока
+    -----------------------------------------------------------------
+    rebuildProps = function()
+        right:Clear()
+        local b = blocks[selected]
+        local head = vgui.Create("DLabel", right)
+        head:Dock(TOP) head:SetTall(26) head:DockMargin(10, 10, 10, 4)
+        head:SetFont("GRMQS_Head") head:SetTextColor(COL.gold)
+        head:SetText(b and Q.BlockDef(b.kind).name or "БЛОК НЕ ВЫБРАН")
+
+        if not work then return end
+        if not b then
+            local hint = vgui.Create("DLabel", right)
+            hint:Dock(TOP) hint:SetTall(150) hint:DockMargin(10, 8, 10, 8)
+            hint:SetWrap(true) hint:SetFont("GRMQS_Small") hint:SetTextColor(COL.dim)
+            hint:SetText("Слева — палитра блоков. Нажми, чтобы добавить на холст.\n\nТяни блок за цветную шапку.\n\nСоединяй: тяни от кружка справа к другому блоку. ПКМ по кружку — убрать связь.\n\nЗелёные кружки у реплики — ответы игрока, каждый ведёт куда захочешь.")
+            return
+        end
+
+        local d = b.data or {}
+        local hint = vgui.Create("DLabel", right)
+        hint:Dock(TOP) hint:SetTall(32) hint:DockMargin(10, 0, 10, 4)
+        hint:SetWrap(true) hint:SetFont("GRMQS_Small") hint:SetTextColor(COL.dim)
+        hint:SetText(Q.BlockDef(b.kind).hint)
+
+        if b.kind == "dialogue" then
+            local ph = vgui.Create("DComboBox", right)
+            ph:Dock(TOP) ph:SetTall(26) ph:DockMargin(10, 6, 10, 0)
+            ph:AddChoice("До принятия квеста", "offer", d.phase == "offer" or d.phase == nil)
+            ph:AddChoice("Во время квеста", "active", d.phase == "active")
+            ph:AddChoice("После завершения", "complete", d.phase == "complete")
+            ph.OnSelect = function(_, _, _, v) d.phase = v rebuildCards() end
+
+            local idE = field(right, "ID реплики", d.id)
+            local spE = field(right, "Говорящий", d.speaker)
+            local txE = field(right, "Текст реплики", d.text, true)
+            local apply = mkBtn(right, "Применить", COL.green)
+            apply:Dock(TOP) apply:SetTall(30) apply:DockMargin(10, 10, 10, 6)
+            apply.DoClick = function()
+                d.id, d.speaker, d.text = idE:GetValue(), spE:GetValue(), txE:GetValue()
+                rebuildCards()
+            end
+
+            local addCh = mkBtn(right, "+ Ответ игрока", COL.card)
+            addCh:Dock(TOP) addCh:SetTall(26) addCh:DockMargin(10, 4, 10, 4)
+            addCh.DoClick = function()
+                d.choices = d.choices or {}
+                d.choices[#d.choices + 1] = { text = "Новый ответ", next = "", action = "" }
+                rebuildCards() rebuildProps()
+            end
+            for ci, ch in ipairs(d.choices or {}) do
+                local box = vgui.Create("DPanel", right)
+                box:Dock(TOP) box:SetTall(84) box:DockMargin(10, 4, 10, 0)
+                box.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, COL.card) end
+                local t = vgui.Create("DTextEntry", box) t:SetPos(6, 6) t:SetSize(296, 22) t:SetText(ch.text or "")
+                t.OnChange = function(s) ch.text = s:GetValue() rebuildCards() end
+                local act = vgui.Create("DComboBox", box) act:SetPos(6, 32) act:SetSize(180, 22)
+                act:AddChoice("продолжить", "", (ch.action or "") == "")
+                act:AddChoice("ПРИНЯТЬ КВЕСТ", "accept", ch.action == "accept")
+                act:AddChoice("закрыть", "close", ch.action == "close")
+                act.OnSelect = function(_, _, _, v) ch.action = v rebuildCards() end
+                local del = mkBtn(box, "Удалить", COL.red)
+                del:SetPos(6, 58) del:SetSize(90, 20)
+                del.DoClick = function() table.remove(d.choices, ci) rebuildCards() rebuildProps() end
+            end
+
+        elseif b.kind == "step" then
+            local typ = vgui.Create("DComboBox", right)
+            typ:Dock(TOP) typ:SetTall(26) typ:DockMargin(10, 6, 10, 0)
+            for _, k in ipairs({ { "Посетить место", "visit" }, { "Поговорить с NPC", "talk" },
+                                 { "Событие/счётчик", "event" }, { "Иметь предмет", "item" } }) do
+                typ:AddChoice(k[1], k[2], d.type == k[2])
+            end
+            typ.OnSelect = function(_, _, _, v) d.type = v rebuildProps() end
+            local ti = field(right, "Название для игрока", d.title)
+            local tgt = field(right, d.type == "talk" and "ID NPC"
+                or (d.type == "item" and "ID предмета" or "Событие"),
+                d.npc or d.item or d.event)
+            local cnt = field(right, "Количество", tostring(d.count or 1))
+            local apply = mkBtn(right, "Применить", COL.green)
+            apply:Dock(TOP) apply:SetTall(30) apply:DockMargin(10, 10, 10, 6)
+            apply.DoClick = function()
+                d.title = ti:GetValue()
+                d.count = math.max(1, math.floor(tonumber(cnt:GetValue()) or 1))
+                if d.type == "talk" then d.npc = tgt:GetValue()
+                elseif d.type == "item" then d.item = tgt:GetValue()
+                else d.event = tgt:GetValue() end
+                rebuildCards()
+            end
+            if d.type == "visit" then
+                local tool = mkBtn(right, "Задать зону тулом", Color(70, 90, 50))
+                tool:Dock(TOP) tool:SetTall(28) tool:DockMargin(10, 4, 10, 6)
+                tool.DoClick = function()
+                    RunConsoleCommand("grm_quest_tool_mode", "zone")
+                    RunConsoleCommand("grm_quest_tool_quest_id", work.id or "")
+                    RunConsoleCommand("gmod_tool", "grm_quest_tool")
+                    notification.AddLegacy("ЛКМ — первый угол, ПКМ — второй", NOTIFY_HINT, 6)
+                end
+            end
+
+        elseif b.kind == "cutscene" then
+            local ph = vgui.Create("DComboBox", right)
+            ph:Dock(TOP) ph:SetTall(26) ph:DockMargin(10, 6, 10, 0)
+            ph:AddChoice("При принятии квеста", "accept", d.phase ~= "complete")
+            ph:AddChoice("При завершении квеста", "complete", d.phase == "complete")
+            ph.OnSelect = function(_, _, _, v) d.phase = v rebuildCards() end
+            local add = mkBtn(right, "+ Камера из взгляда", COL.green)
+            add:Dock(TOP) add:SetTall(30) add:DockMargin(10, 8, 10, 4)
             add.DoClick = function()
-                work.steps[#work.steps + 1] = { type = "event", title = "Новый этап", event = "generic", count = 1 }
-                rebuildForm()
-            end
-            local tool = mkBtn(form, "Тул: зона visit", Color(70, 90, 50))
-            tool:Dock(TOP) tool:SetTall(28) tool:DockMargin(8, 0, 8, 8)
-            tool.DoClick = function()
-                if not work then return end
-                RunConsoleCommand("grm_quest_tool_mode", "zone")
-                RunConsoleCommand("grm_quest_tool_quest_id", work.id or "")
-                RunConsoleCommand("gmod_tool", "grm_quest_tool")
-            end
-        elseif tab == "cams" then
-            work.cutscene = work.cutscene or { accept = {}, complete = {} }
-            local phaseBox = vgui.Create("DComboBox", form)
-            phaseBox:Dock(TOP) phaseBox:SetTall(26) phaseBox:DockMargin(10, 10, 10, 6)
-            phaseBox:AddChoice("При принятии", "accept", true)
-            phaseBox:AddChoice("При завершении", "complete")
-            local cphase = "accept"
-            phaseBox.OnSelect = function(_, _, _, v) cphase = v or "accept" end
-            local add = mkBtn(form, "+ Камера из взгляда", COL.green)
-            add:Dock(TOP) add:SetTall(30) add:DockMargin(10, 6, 10, 6)
-            add.DoClick = function()
-                local list = work.cutscene[cphase]
-                list[#list + 1] = {
-                    id = "camera_" .. (#list + 1), next = "", transition = #list == 0 and "cut" or "move",
+                d.cams = d.cams or {}
+                d.cams[#d.cams + 1] = {
+                    id = "camera_" .. (#d.cams + 1), next = "",
+                    transition = #d.cams == 0 and "cut" or "move",
                     moveDuration = 1, duration = 3, fov = 75, caption = "",
                     pos = { x = EyePos().x, y = EyePos().y, z = EyePos().z },
                     ang = { p = EyeAngles().p, y = EyeAngles().y, r = EyeAngles().r },
                 }
-                if list[#list - 1] then list[#list - 1].next = list[#list].id end
-                rebuildForm()
+                if d.cams[#d.cams - 1] then d.cams[#d.cams - 1].next = d.cams[#d.cams].id end
+                rebuildCards() rebuildProps()
             end
-            for i, n in ipairs(work.cutscene[cphase] or {}) do
-                local row = vgui.Create("DPanel", form)
-                row:Dock(TOP) row:SetTall(70) row:DockMargin(10, 4, 10, 0)
+            for ci, cam in ipairs(d.cams or {}) do
+                local row = vgui.Create("DPanel", right)
+                row:Dock(TOP) row:SetTall(58) row:DockMargin(10, 4, 10, 0)
                 row.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, COL.card) end
-                local cap = vgui.Create("DTextEntry", row) cap:SetPos(8, 8) cap:SetSize(300, 22) cap:SetText(n.caption or "")
-                cap.OnChange = function(e) n.caption = e:GetValue() end
-                local dur = vgui.Create("DNumberWang", row) dur:SetPos(8, 36) dur:SetSize(70, 22) dur:SetMin(0.2) dur:SetMax(30) dur:SetValue(n.duration or 3)
-                dur.OnValueChanged = function(_, v) n.duration = v end
-                local del = mkBtn(row, "×", COL.red) del:SetPos(316, 8) del:SetSize(28, 22)
-                del.DoClick = function() table.remove(work.cutscene[cphase], i) rebuildForm() end
+                local cap = vgui.Create("DTextEntry", row) cap:SetPos(6, 6) cap:SetSize(230, 22)
+                cap:SetText(cam.caption or "") cap:SetPlaceholderText("титр")
+                cap.OnChange = function(e) cam.caption = e:GetValue() end
+                local dur = vgui.Create("DNumberWang", row) dur:SetPos(6, 32) dur:SetSize(64, 20)
+                dur:SetMin(0.25) dur:SetMax(30) dur:SetValue(cam.duration or 3)
+                dur.OnValueChanged = function(_, v) cam.duration = v end
+                local del = mkBtn(row, "×", COL.red) del:SetPos(244, 6) del:SetSize(26, 22)
+                del.DoClick = function() table.remove(d.cams, ci) rebuildCards() rebuildProps() end
             end
-            local tool = mkBtn(form, "Тул: точки в мире", Color(70, 90, 50))
-            tool:Dock(TOP) tool:SetTall(28) tool:DockMargin(10, 10, 10, 8)
-            tool.DoClick = function()
-                RunConsoleCommand("grm_quest_tool_mode", "cutscene")
-                RunConsoleCommand("grm_quest_tool_quest_id", work.id or "")
-                RunConsoleCommand("grm_quest_tool_phase", cphase)
-                RunConsoleCommand("gmod_tool", "grm_quest_tool")
-            end
-        elseif tab == "loot" then
-            work.rewards = work.rewards or { money = 0, items = {} }
-            work.achievement = work.achievement or {}
-            local mon = field(form, "Деньги за квест", tostring(work.rewards.money or 0))
-            local item = field(form, "Предмет ID", "")
-            local ic = field(form, "Кол-во предмета", "1")
-            local addI = mkBtn(form, "Добавить предмет", COL.green)
-            addI:Dock(TOP) addI:SetTall(28) addI:DockMargin(10, 8, 10, 6)
-            addI.DoClick = function()
-                local id = string.Trim(item:GetValue() or "")
-                if id ~= "" then work.rewards.items[id] = math.max(1, tonumber(ic:GetValue()) or 1) end
-                rebuildForm()
-            end
-            for id, c in pairs(work.rewards.items or {}) do
-                local lab = vgui.Create("DLabel", form)
-                lab:Dock(TOP) lab:SetTall(20) lab:DockMargin(12, 2, 10, 0)
-                lab:SetText(id .. " × " .. tostring(c)) lab:SetTextColor(COL.text)
-            end
-            local ach = vgui.Create("DCheckBoxLabel", form)
-            ach:Dock(TOP) ach:SetTall(22) ach:DockMargin(10, 12, 10, 0)
-            ach:SetText("Выдать ачивку") ach:SetTextColor(COL.text)
-            ach:SetValue(work.achievement.enabled == true)
-            ach.OnChange = function(_, v) work.achievement.enabled = v end
-            local an = field(form, "Название ачивки", work.achievement.name or work.title)
-            local ad = field(form, "Описание ачивки", work.achievement.description or work.summary, true)
-            local apply = mkBtn(form, "Записать награды", COL.green)
-            apply:Dock(TOP) apply:SetTall(30) apply:DockMargin(10, 10, 10, 8)
-            apply.DoClick = function()
-                work.rewards.money = math.max(0, tonumber(mon:GetValue()) or 0)
-                work.achievement.name = an:GetValue()
-                work.achievement.description = ad:GetValue()
-                if work.achievement.id == nil or work.achievement.id == "" then
-                    work.achievement.id = "quest_" .. tostring(work.id or "")
+            local play = mkBtn(right, "▶ Просмотр", COL.gold)
+            play:Dock(TOP) play:SetTall(28) play:DockMargin(10, 8, 10, 6)
+            play.DoClick = function()
+                if #(d.cams or {}) == 0 then
+                    notification.AddLegacy("Сначала добавьте камеры", NOTIFY_HINT, 3) return
                 end
+                f:SetVisible(false)
+                net.Start("GRM_Quest_CutscenePreview") net.WriteTable(d.cams) net.SendToServer()
+                if Q.Cutscene then Q.Cutscene.restoreFrame = f end
+            end
+
+        elseif b.kind == "music" then
+            local snd = field(right, "Путь к звуку", d.sound)
+            local lp = vgui.Create("DCheckBoxLabel", right)
+            lp:Dock(TOP) lp:SetTall(22) lp:DockMargin(10, 8, 10, 0)
+            lp:SetText("Зациклить") lp:SetTextColor(COL.text) lp:SetValue(d.loop == true)
+            lp.OnChange = function(_, v) d.loop = v end
+            local apply = mkBtn(right, "Применить", COL.green)
+            apply:Dock(TOP) apply:SetTall(30) apply:DockMargin(10, 10, 10, 4)
+            apply.DoClick = function() d.sound = snd:GetValue() rebuildCards() end
+            local test = mkBtn(right, "▶ Прослушать", COL.card)
+            test:Dock(TOP) test:SetTall(26) test:DockMargin(10, 4, 10, 6)
+            test.DoClick = function()
+                local path = string.Trim(snd:GetValue() or "")
+                if path ~= "" then surface.PlaySound(path) end
+            end
+            local note = vgui.Create("DLabel", right)
+            note:Dock(TOP) note:SetTall(50) note:DockMargin(10, 4, 10, 6)
+            note:SetWrap(true) note:SetFont("GRMQS_Small") note:SetTextColor(COL.dim)
+            note:SetText("Пример: music/hl2_song20_submix0.mp3 или ambient/atmosphere/city_beat1.wav")
+
+        elseif b.kind == "reward" then
+            local mon = field(right, "Деньги за квест", tostring(d.money or 0))
+            local itemID = field(right, "ID предмета", "")
+            local itemN = field(right, "Количество", "1")
+            local addI = mkBtn(right, "Добавить предмет", COL.green)
+            addI:Dock(TOP) addI:SetTall(28) addI:DockMargin(10, 8, 10, 4)
+            addI.DoClick = function()
+                local id = string.Trim(itemID:GetValue() or "")
+                if id ~= "" then
+                    d.items = d.items or {}
+                    d.items[id] = math.max(1, math.floor(tonumber(itemN:GetValue()) or 1))
+                    rebuildCards() rebuildProps()
+                end
+            end
+            for id, c in pairs(d.items or {}) do
+                local row = vgui.Create("DPanel", right)
+                row:Dock(TOP) row:SetTall(26) row:DockMargin(10, 2, 10, 0)
+                row.Paint = function(_, w, h)
+                    draw.RoundedBox(4, 0, 0, w, h, COL.card)
+                    draw.SimpleText(id .. "  ×" .. tostring(c), "GRMQS_Small", 8, h / 2, COL.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                end
+                local del = mkBtn(row, "×", COL.red) del:SetPos(276, 3) del:SetSize(24, 20)
+                del.DoClick = function() d.items[id] = nil rebuildCards() rebuildProps() end
+            end
+            local apply = mkBtn(right, "Применить", COL.green)
+            apply:Dock(TOP) apply:SetTall(30) apply:DockMargin(10, 10, 10, 6)
+            apply.DoClick = function()
+                d.money = math.max(0, math.floor(tonumber(mon:GetValue()) or 0))
+                rebuildCards()
+            end
+            local note = vgui.Create("DLabel", right)
+            note:Dock(TOP) note:SetTall(46) note:DockMargin(10, 4, 10, 6)
+            note:SetWrap(true) note:SetFont("GRMQS_Small") note:SetTextColor(COL.dim)
+            note:SetText("Выдаётся автоматически при закрытии последнего этапа. Подключать ничего не нужно.")
+
+        elseif b.kind == "achieve" then
+            local nm = field(right, "Название", d.name)
+            local ds = field(right, "Описание", d.description, true)
+            local rw = field(right, "Деньги за ачивку", tostring(d.reward or 0))
+            local hid = vgui.Create("DCheckBoxLabel", right)
+            hid:Dock(TOP) hid:SetTall(22) hid:DockMargin(10, 8, 10, 0)
+            hid:SetText("Скрытая до получения") hid:SetTextColor(COL.text) hid:SetValue(d.hidden == true)
+            hid.OnChange = function(_, v) d.hidden = v end
+            local apply = mkBtn(right, "Применить", COL.green)
+            apply:Dock(TOP) apply:SetTall(30) apply:DockMargin(10, 10, 10, 6)
+            apply.DoClick = function()
+                d.name, d.description = nm:GetValue(), ds:GetValue()
+                d.reward = math.max(0, math.floor(tonumber(rw:GetValue()) or 0))
+                if tostring(d.id or "") == "" then d.id = "quest_" .. tostring(work.id or "") end
+                rebuildCards()
+            end
+            local note = vgui.Create("DLabel", right)
+            note:Dock(TOP) note:SetTall(46) note:DockMargin(10, 4, 10, 6)
+            note:SetWrap(true) note:SetFont("GRMQS_Small") note:SetTextColor(COL.dim)
+            note:SetText("Выдаётся сразу после награды квеста. Её деньги — отдельная сумма.")
+
+        elseif b.kind == "start" then
+            local note = vgui.Create("DLabel", right)
+            note:Dock(TOP) note:SetTall(80) note:DockMargin(10, 4, 10, 6)
+            note:SetWrap(true) note:SetFont("GRMQS_Small") note:SetTextColor(COL.dim)
+            note:SetText("Соедини СТАРТ с первой репликой фазы «до принятия». Именно её игрок услышит, подойдя к NPC.")
+        end
+
+        -- Удаление блока: у СТАРТ и ФИНИШ его нет, они каркас графа.
+        if b.kind ~= "start" and b.kind ~= "finish" then
+            local del = mkBtn(right, "Удалить блок", COL.red)
+            del:Dock(TOP) del:SetTall(28) del:DockMargin(10, 14, 10, 8)
+            del.DoClick = function()
+                -- Чистим ссылки на удаляемый блок, иначе останутся висячие связи.
+                for _, other in ipairs(blocks) do
+                    for i = #(other.links or {}), 1, -1 do
+                        if other.links[i].to == b.uid then table.remove(other.links, i) end
+                    end
+                end
+                table.remove(blocks, selected)
+                selected = 0
+                rebuildCards() rebuildProps()
             end
         end
     end
 
-    local function showTab(id)
-        tab = id
-        canvas:SetVisible(id == "graph")
-        form:SetVisible(id ~= "graph")
-        if id == "graph" then rebuildCards() else rebuildForm() end
-        rebuildProps()
-    end
-
-    local function tabBtn(name, id, x)
-        local b = mkBtn(bar, name, COL.card)
-        b:SetPos(x, 4) b:SetSize(108, 28)
-        b.DoClick = function() showTab(id) end
-    end
-    tabBtn("Граф", "graph", 8)
-    tabBtn("Квест", "meta", 120)
-    tabBtn("Этапы", "steps", 232)
-    tabBtn("Камеры", "cams", 344)
-    tabBtn("Награды", "loot", 456)
-
-    local ph = vgui.Create("DComboBox", bar)
-    ph:SetPos(572, 5) ph:SetSize(110, 26)
-    ph:AddChoice("До квеста", "offer", true)
-    ph:AddChoice("Во время", "active")
-    ph:AddChoice("После", "complete")
-    ph.OnSelect = function(_, _, _, v) phase = v or "offer" selected = 0 rebuildCards() rebuildProps() end
-
-    local addN = mkBtn(bar, "+ Узел", COL.green)
-    addN:SetPos(690, 4) addN:SetSize(90, 28)
-    addN.DoClick = function()
-        if not work then return end
-        showTab("graph")
-        local nodes = currentNodes()
-        nodes[#nodes + 1] = { id = "n" .. (#nodes + 1), speaker = work.npc or "NPC", text = "Новая реплика", next = "", choices = {}, _x = 140, _y = 140 }
-        selected = #nodes
-        rebuildCards() rebuildProps()
-    end
-
+    -----------------------------------------------------------------
+    -- ЛЕВАЯ ПАНЕЛЬ: список квестов + палитра блоков
+    -----------------------------------------------------------------
     local function loadWork(def)
         work = table.Copy(def)
         work.dialogue = work.dialogue or { offer = {}, active = {}, complete = {} }
         work.steps = work.steps or {}
         work.rewards = work.rewards or { money = 0, items = {} }
         work.cutscene = work.cutscene or { accept = {}, complete = {} }
+        blocks = Q.QuestToBlocks(work)
         selected = 0
-        showTab(tab)
+        rebuildCards() rebuildProps() rebuildList()
     end
 
-    local function rebuildList()
+    rebuildList = function()
         left:Clear()
+
         local title = vgui.Create("DLabel", left)
         title:Dock(TOP) title:SetTall(22) title:DockMargin(10, 10, 10, 4)
-        title:SetText("КВЕСТЫ") title:SetFont("GRMQS_Body") title:SetTextColor(COL.gold)
-        for _, d in ipairs(defs) do
+        title:SetText("КВЕСТЫ") title:SetFont("GRMQS_Head") title:SetTextColor(COL.gold)
+
+        for _, dd in ipairs(defs) do
             local b = vgui.Create("DButton", left)
-            b:Dock(TOP) b:SetTall(44) b:DockMargin(8, 0, 8, 6) b:SetText("")
+            b:Dock(TOP) b:SetTall(40) b:DockMargin(8, 0, 8, 4) b:SetText("")
             b.Paint = function(s, w, h)
-                draw.RoundedBox(6, 0, 0, w, h, (work and work.id == d.id) and COL.nodeSel or COL.card)
-                draw.SimpleText(d.title or d.id, "GRMQS_Body", 10, 8, COL.text)
-                draw.SimpleText((d.draft and "черновик · " or "") .. tostring(#(d.steps or {})) .. " эт.", "GRMQS_Small", 10, 26, COL.dim)
+                draw.RoundedBox(6, 0, 0, w, h, (work and work.id == dd.id) and COL.nodeSel or COL.card)
+                draw.SimpleText(dd.title or dd.id, "GRMQS_Body", 10, 8, COL.text)
+                draw.SimpleText((dd.draft and "черновик · " or "") .. tostring(#(dd.steps or {})) .. " эт.",
+                    "GRMQS_Small", 10, 24, COL.dim)
             end
-            b.DoClick = function() loadWork(d) end
+            b.DoClick = function() loadWork(dd) end
         end
+
         local nw = mkBtn(left, "Новый квест", COL.green)
-        nw:Dock(TOP) nw:SetTall(30) nw:DockMargin(8, 8, 8, 4)
+        nw:Dock(TOP) nw:SetTall(28) nw:DockMargin(8, 8, 8, 4)
         nw.DoClick = function()
             local draft = {
                 draft = true, id = "quest_" .. os.time(), title = "Новый квест", npc = "guide",
                 summary = "", enabled = true, steps = {}, rewards = { money = 0, items = {} },
-                dialogue = { offer = {}, active = {}, complete = {} }, cutscene = { accept = {}, complete = {} },
+                dialogue = { offer = {}, active = {}, complete = {} },
+                cutscene = { accept = {}, complete = {} },
             }
             defs[#defs + 1] = draft
             loadWork(draft)
-            rebuildList()
         end
+
+        --[[ ПАЛИТРА БЛОКОВ — то, что владелец назвал «боковыми
+             вкладышами». Нажатие кладёт блок на холст. ]]
+        local ph = vgui.Create("DLabel", left)
+        ph:Dock(TOP) ph:SetTall(22) ph:DockMargin(10, 14, 10, 4)
+        ph:SetText("БЛОКИ") ph:SetFont("GRMQS_Head") ph:SetTextColor(COL.gold)
+
+        for _, bt in ipairs(Q.BlockTypes) do
+            local b = vgui.Create("DButton", left)
+            b:Dock(TOP) b:SetTall(34) b:DockMargin(8, 0, 8, 4) b:SetText("") b:SetCursor("hand")
+            b.Paint = function(s, w, h)
+                draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(40, 54, 74) or COL.card)
+                draw.RoundedBox(0, 0, 0, 5, h, bt.color)
+                draw.SimpleText(bt.name, "GRMQS_Body", 14, h / 2, COL.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.SimpleText("+", "GRMQS_Head", w - 14, h / 2, bt.color, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            end
+            b.DoClick = function() addBlock(bt.id) end
+        end
+
+        -- Свойства самого квеста: имя, NPC, флаги.
+        local qh = vgui.Create("DLabel", left)
+        qh:Dock(TOP) qh:SetTall(22) qh:DockMargin(10, 14, 10, 2)
+        qh:SetText("КВЕСТ") qh:SetFont("GRMQS_Head") qh:SetTextColor(COL.gold)
+
+        if work then
+            local tE = field(left, "Название", work.title)
+            local nE = field(left, "ID NPC", work.npc)
+            local sE = field(left, "Описание игроку", work.summary, true)
+            tE.OnChange = function(s) work.title = s:GetValue() end
+            nE.OnChange = function(s) work.npc = s:GetValue() end
+            sE.OnChange = function(s) work.summary = s:GetValue() end
+            for _, fl in ipairs({ { "enabled", "Включён" }, { "repeatable", "Повторяемый" },
+                                  { "autoStart", "Автостарт новичку" } }) do
+                local c = vgui.Create("DCheckBoxLabel", left)
+                c:Dock(TOP) c:SetTall(20) c:DockMargin(10, 6, 10, 0)
+                c:SetText(fl[2]) c:SetTextColor(COL.text) c:SetValue(work[fl[1]] == true)
+                c.OnChange = function(_, v) work[fl[1]] = v end
+            end
+        end
+
         local sv = mkBtn(left, "Сохранить", COL.green)
-        sv:Dock(TOP) sv:SetTall(30) sv:DockMargin(8, 4, 8, 4)
+        sv:Dock(TOP) sv:SetTall(32) sv:DockMargin(8, 14, 8, 4)
         sv.DoClick = function()
             if not work then return end
-            work.draft = #(work.steps or {}) == 0
-            net.Start("GRM_Quest_AdminOp")
-            net.WriteString("save")
-            net.WriteTable(work)
-            net.SendToServer()
-            notification.AddLegacy("Квест отправлен", NOTIFY_GENERIC, 3)
+            local out = Q.BlocksToQuest(work, blocks)
+            out.draft = #(out.steps or {}) == 0
+            --[[ Проверяем ПЕРЕД отправкой: не даём молча сохранить квест,
+                 который нельзя будет взять у NPC. ]]
+            local issues = (Q.Validate and Q.Validate(out)) or {}
+            local errs = {}
+            for _, it in ipairs(issues) do
+                if it.level == "error" then errs[#errs + 1] = it.text end
+            end
+            local function send()
+                net.Start("GRM_Quest_AdminOp")
+                net.WriteString("save")
+                net.WriteTable(out)
+                net.SendToServer()
+                notification.AddLegacy("Квест сохранён", NOTIFY_GENERIC, 3)
+            end
+            if #errs > 0 then
+                Derma_Query("Найдены ошибки:\n\n• " .. table.concat(errs, "\n• ") ..
+                    "\n\nСохранить всё равно?", "Проверка квеста",
+                    "Сохранить", send, "Исправить", function() end)
+            else
+                send()
+            end
         end
-        local del = mkBtn(left, "Удалить", COL.red)
-        del:Dock(TOP) del:SetTall(26) del:DockMargin(8, 4, 8, 8)
+
+        local chk = mkBtn(left, "Проверить", COL.gold)
+        chk:Dock(TOP) chk:SetTall(26) chk:DockMargin(8, 0, 8, 4)
+        chk.DoClick = function()
+            if not work then return end
+            local out = Q.BlocksToQuest(work, blocks)
+            local issues = (Q.Validate and Q.Validate(out)) or {}
+            if #issues == 0 then
+                notification.AddLegacy("Ошибок не найдено", NOTIFY_GENERIC, 4)
+                return
+            end
+            local lines = {}
+            for _, it in ipairs(issues) do
+                lines[#lines + 1] = (it.level == "error" and "[!] " or "[?] ") .. it.text
+            end
+            Derma_Message(table.concat(lines, "\n"), "Проверка квеста", "Понятно")
+        end
+
+        local del = mkBtn(left, "Удалить квест", COL.red)
+        del:Dock(TOP) del:SetTall(26) del:DockMargin(8, 0, 8, 10)
         del.DoClick = function()
             if not work then return end
             Derma_Query("Удалить «" .. tostring(work.title) .. "»?", "Студия", "Удалить", function()
-                net.Start("GRM_Quest_AdminOp") net.WriteString("delete") net.WriteString(work.id or "") net.SendToServer()
+                net.Start("GRM_Quest_AdminOp") net.WriteString("delete")
+                net.WriteString(work.id or "") net.SendToServer()
             end, "Отмена")
         end
     end
@@ -682,4 +1008,4 @@ net.Receive("GRM_Quest_AdminOpen", function()
     Q.OpenGraphStudio(net.ReadTable() or {})
 end)
 
-print("[GRM Quest Studio] v2 unified")
+print("[GRM Quest Studio] v3 unified node editor")

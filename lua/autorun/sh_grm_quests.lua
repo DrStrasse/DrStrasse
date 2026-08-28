@@ -243,6 +243,12 @@ if SERVER then
         }
         if step.min and step.max then out.min=vectorData(step.min);out.max=vectorData(step.max)
         elseif step.pos then out.pos=vectorData(step.pos) end
+        --[[ Координаты блока на холсте редактора. Нормализация
+             пересобирает таблицу по полям, поэтому без явного переноса
+             раскладка стиралась при каждом сохранении и блоки прыгали
+             в исходную сетку. ]]
+        out._gx=math.Clamp(math.floor(tonumber(step._gx)or 0),0,20000)
+        out._gy=math.Clamp(math.floor(tonumber(step._gy)or 0),0,20000)
         return out
     end
     local function normalizeCutscene(nodes)
@@ -250,7 +256,7 @@ if SERVER then
         for index,node in ipairs(istable(nodes)and nodes or {})do
             if #out>=32 then break end
             local transition=node.transition=="cut"and"cut"or(node.transition=="move"and"move"or(index==1 and"cut"or"move"))
-            out[#out+1]={id=trim(node.id and node.id~=""and node.id or("camera_"..index),64),next=trim(node.next,64),transition=transition,moveDuration=math.Clamp(tonumber(node.moveDuration)or 1,.05,30),pos=vectorData(node.pos),ang=angleData(node.ang),fov=math.Clamp(tonumber(node.fov)or 75,20,120),duration=math.Clamp(tonumber(node.duration)or 3,.25,30),caption=trim(node.caption,300),sound=trim(node.sound,160),image=trim(node.image,160)}
+            out[#out+1]={id=trim(node.id and node.id~=""and node.id or("camera_"..index),64),next=trim(node.next,64),transition=transition,moveDuration=math.Clamp(tonumber(node.moveDuration)or 1,.05,30),pos=vectorData(node.pos),ang=angleData(node.ang),fov=math.Clamp(tonumber(node.fov)or 75,20,120),duration=math.Clamp(tonumber(node.duration)or 3,.25,30),caption=trim(node.caption,300),sound=trim(node.sound,160),image=trim(node.image,160),_gx=math.Clamp(math.floor(tonumber(node._gx)or 0),0,20000),_gy=math.Clamp(math.floor(tonumber(node._gy)or 0),0,20000)}
         end
         return out
     end
@@ -260,7 +266,7 @@ if SERVER then
             return{{id=phase.."_1",speaker="",text=trim(value,1200),next="",choices={}}}
         end
         local source=istable(value)and(value.nodes or value)or{};local out={}
-        for i,node in ipairs(source)do if#out>=64 then break end;node=istable(node)and node or{};local choices={};for _,choice in ipairs(istable(node.choices)and node.choices or{})do if#choices<8 then choices[#choices+1]={text=trim(choice.text,160),next=trim(choice.next,64),action=trim(choice.action,24),actionArg=trim(choice.actionArg,96),cond=trim(choice.cond,96)}end end;out[#out+1]={id=trim(node.id and node.id~=""and node.id or(phase.."_"..i),64),speaker=trim(node.speaker,80),text=trim(node.text,1200),next=trim(node.next,64),choices=choices}end
+        for i,node in ipairs(source)do if#out>=64 then break end;node=istable(node)and node or{};local choices={};for _,choice in ipairs(istable(node.choices)and node.choices or{})do if#choices<8 then choices[#choices+1]={text=trim(choice.text,160),next=trim(choice.next,64),action=trim(choice.action,24),actionArg=trim(choice.actionArg,96),cond=trim(choice.cond,96)}end end;out[#out+1]={id=trim(node.id and node.id~=""and node.id or(phase.."_"..i),64),speaker=trim(node.speaker,80),text=trim(node.text,1200),next=trim(node.next,64),choices=choices,_gx=math.Clamp(math.floor(tonumber(node._gx)or 0),0,20000),_gy=math.Clamp(math.floor(tonumber(node._gy)or 0),0,20000)}end
         return out
     end
     local function normalizeDialogue(value)

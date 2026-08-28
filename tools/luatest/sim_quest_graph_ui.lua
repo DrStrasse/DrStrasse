@@ -93,8 +93,16 @@ ok(#wrapText("Одно", 44, 3) == 1, "короткая реплика — од�
 local longWord = wrapText(string.rep("Ы", 200), 44, 3)
 ok(#longWord >= 1, "слово длиннее строки не зацикливает перенос", #longWord)
 
-ok(studio:find("local function wrapText", 1, true) ~= nil,
-   "перенос вынесен в функцию в самой студии")
+--[[ В v3 перенос стал общей функцией Q.WrapText: её зовёт и граф, и
+     стенд узлового редактора. Проверяем по новому имени. ]]
+--[[ Сравниваем по ТОЧНОЙ сигнатуре, а не подстрокой: find("Q.WrapText")
+     совпадает и с «Q.WrapTextOff», поэтому переименование функции
+     проходило незамеченным. Ровно на эту ловушку я уже наступал с
+     функцией curve — закрываем её и здесь. ]]
+ok(studio:find("function Q.WrapText(text, font, maxW, maxLines)", 1, true) ~= nil,
+   "перенос вынесен в общую функцию студии с ожидаемой сигнатурой")
+ok(studio:find("Q.WrapText(Q.BlockCaption(b)", 1, true) ~= nil,
+   "и карточка блока реально её зовёт")
 ok(studio:find("string.sub(tostring(n.text or \"\"), 1, 42)", 1, true) == nil,
    "ИСПРАВЛЕНО: старая обрезка на 42 символа убрана")
 
@@ -103,8 +111,12 @@ print("\n=== 2. СВЯЗИ СОЕДИНЯЮТСЯ МЫШЬЮ ===")
 -----------------------------------------------------------------------
 --[[ Раньше связь можно было задать только вводом ID в текстовое поле.
      Владелец просил «визуально соединять элементы». ]]
-ok(studio:find("local linking", 1, true) ~= nil,
-   "ИСПРАВЛЕНО: появилось состояние протяжки связи")
+--[[ В v3 состояние протяжки живёт среди локальных переменных окна
+     («local work, blocks, selected, linking»), а не отдельной строкой. ]]
+ok(studio:find("linking = { from = b, slot = slot }", 1, true) ~= nil,
+   "ИСПРАВЛЕНО: протяжка связи начинается с порта")
+ok(studio:find("if linking and linking.from then", 1, true) ~= nil,
+   "и рисуется резинка за курсором")
 ok(studio:find("local function makePort", 1, true) ~= nil,
    "у карточек есть порты для соединения")
 ok(studio:find("OnMouseReleased", 1, true) ~= nil,
@@ -213,8 +225,14 @@ local decl = select(2, paintFn:gsub("local function curve%(x1, y1, x2, y2, col%)
 local total = select(2, paintFn:gsub("curve%(x1, y1, x2, y2", ""))
 local calls = total - decl
 ok(decl == 1, "функция кривой объявлена ровно один раз, с ожидаемой сигнатурой", decl)
-ok(calls == 2,
-   "обе связи — переход реплики и ответы игрока — рисуются кривой Безье", calls)
+--[[ В v3 все связи рисует ОДИН цикл по b.links: и переход реплики, и
+     ответы игрока. Цвет выбирается по номеру порта, поэтому вызов
+     кривой один, а не два. ]]
+ok(calls >= 1, "связи рисуются кривой Безье", calls)
+ok(paintFn:find("(lnk.port or 0) > 0 and Color(120, 200, 140, 200) or COL.line", 1, true) ~= nil,
+   "ответы игрока и переход реплики различаются цветом линии")
+ok(paintFn:find("for _, lnk in ipairs(b.links or {}) do", 1, true) ~= nil,
+   "цикл идёт по связям блока")
 
 -- И ни одна связь не рисуется прямой линией в обход кривой.
 local straight = paintFn:find("surface.DrawLine(x1, y1, x2, y2)", 1, true)
