@@ -8,7 +8,8 @@
        3) сбор касс со всех объектов разом, с гашением долгов;
        4) сортировка: бизнес выше жилья, где деньги — то сверху;
        5) аренда показывает остаток срока;
-       6) /business снаружи зоны открывает кабинет, внутри — объект.
+       6) /business: свободный объект → окно сделки, свой → панель,
+          вне зоны → кабинет (уточнено 28.08).
 
      Запуск: luajit tools/luatest/sim_estate_cabinet.lua ]]
 local pass, fail = 0, 0
@@ -191,8 +192,14 @@ end
 local core = body("lua/autorun/sh_grm_estate.lua")
 ok(core:find('concommand.Add("grm_cabinet"', 1, true) ~= nil, "есть команда кабинета")
 ok(core:find('low == "/cabinet"', 1, true) ~= nil, "и чат-команда")
-ok(core:find("else ES.OpenCabinet(ply) end", 1, true) ~= nil,
-   "/business снаружи зоны открывает кабинет, внутри — объект")
+--[[ Ветвление уточнено 28.08: у свободного объекта теперь открывается
+     окно сделки, а не админское /property_admin. ]]
+ok(core:find("ES.OpenCabinet(ply)", 1, true) ~= nil,
+   "/business вне зоны открывает кабинет")
+ok(core:find("GRM.EstateDeal.Open(ply, ES.KindOf(rec))", 1, true) ~= nil,
+   "у свободного объекта — окно сделки с ценой и кнопкой")
+ok(core:find("ES.OpenPanel(ply, rec)", 1, true) ~= nil,
+   "у своего — панель управления")
 ok(core:find("СОБРАТЬ КАССЫ СО ВСЕХ ОБЪЕКТОВ", 1, true) ~= nil, "кнопка общего сбора")
 ok(core:find("МОИ ОБЪЕКТЫ", 1, true) ~= nil, "заголовок кабинета")
 ok(core:find("Доход в сутки: ", 1, true) ~= nil, "общий доход показан крупно")

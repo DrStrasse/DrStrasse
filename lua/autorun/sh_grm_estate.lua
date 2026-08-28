@@ -62,15 +62,27 @@ ES.MarkerColor  = {
     sale     = Color(90, 170, 255),    -- синий — продаётся
 }
 
---[[ ВЫСОТА. 78 поднимало значок выше головы и он висел «крышей».
-     36 — примерно на уровне глаз стоящего рядом человека. ]]
-ES.MarkerHeight = 36
+--[[ ВЫСОТА. 78 поднимало значок выше головы. 36 оказалось всё ещё
+     высоко (владелец 28.08: «эмблему чуть ниже опять же опустить»),
+     поэтому 22 — чуть выше пояса стоящего рядом человека. ]]
+ES.MarkerHeight = 22
 
---[[ ПОВОРОТ. Логотип у facepunch_logo лежит в плоскости модели, поэтому
-     без разворота на 90° по Roll он смотрел в небо — владелец назвал это
-     «словно крыша». Теперь ставим его вертикально и поворачиваем по Yaw
-     вслед за игроком, чтобы значок всегда был лицом к смотрящему. ]]
+--[[ ПОВОРОТ.
+
+     Логотип у facepunch_logo лежит в плоскости модели, поэтому без
+     разворота на 90° по Roll он смотрит в небо («словно крыша»).
+     Roll держим постоянным — значок стоит вертикально.
+
+     А вот Yaw крутим САМИ, по времени. Промежуточная попытка «поворачивать
+     значок лицом к игроку» оказалась хуже исходной: значок замирал и
+     дёргался в зависимости от того, с какой стороны подходит человек
+     (владелец 28.08: «вращение испоганено, он вращается туда куда
+     смотрит игрок»). Возвращаем ровное вращение вокруг своей оси —
+     оно одинаково для всех и не зависит от камеры. ]]
 ES.MarkerRoll = 90
+
+--- Скорость вращения значка, градусов в секунду.
+ES.MarkerSpin = 42
 
 ES.DrawDistance = 2200        -- дальше значок не рисуем: бережём кадр
 
@@ -1011,11 +1023,23 @@ if SERVER then
             return ""
         end
         if low == "/business" or low == "/бизнес" then
-            --[[ Внутри зоны открываем сам объект, снаружи — личный кабинет
-                 со всеми объектами: одна команда на оба случая. ]]
+            --[[ Одна команда на три случая (уточнено 28.08):
+                   свободный объект → окно СДЕЛКИ с ценой и кнопкой
+                                      «купить» (раньше игрока отправляли
+                                      в админское /property_admin);
+                   свой объект      → панель управления, касса и доход;
+                   вне зоны         → личный кабинет со всеми объектами. ]]
             local rec = ES.ZoneOfPlayer(ply)
-            if rec and ES.KindOf(rec) ~= "none" then ES.OpenPanel(ply, rec)
-            else ES.OpenCabinet(ply) end
+            if rec and ES.KindOf(rec) ~= "none" then
+                local free = tostring(rec.ownerType or "none") == "none"
+                if free and GRM.EstateDeal and GRM.EstateDeal.Open then
+                    GRM.EstateDeal.Open(ply, ES.KindOf(rec))
+                else
+                    ES.OpenPanel(ply, rec)
+                end
+            else
+                ES.OpenCabinet(ply)
+            end
             return ""
         end
         if low == "/cabinet" or low == "/кабинет" then
@@ -1233,15 +1257,12 @@ if CLIENT then
                          занятый — цветом своего вида. ]]
                     local col = zone.vacant and ES.MarkerColor.sale
                         or (ES.MarkerColor[zone.kind] or color_white)
-                    --[[ Значок смотрит НА ИГРОКА, а не в небо. Раньше он
-                         просто крутился вокруг вертикали и лежал плашмя —
-                         владелец увидел «крышу». Yaw берём из направления
-                         на камеру, Roll фиксируем, чтобы поставить логотип
-                         вертикально. ]]
-                    local dir = eyePos - pos
-                    dir.z = 0
-                    local yaw = dir:Angle().y
-                    ent:SetAngles(Angle(0, yaw, ES.MarkerRoll))
+                    --[[ Ровное вращение вокруг своей оси, одинаковое для
+                         всех и независимое от камеры. Roll держит логотип
+                         вертикально, чтобы он не лежал «крышей». Привязка
+                         Yaw к позиции игрока была ошибкой: значок дёргался
+                         и замирал в зависимости от стороны подхода. ]]
+                    ent:SetAngles(Angle(0, (CurTime() * ES.MarkerSpin) % 360, ES.MarkerRoll))
                     render.SetColorModulation(col.r / 255, col.g / 255, col.b / 255)
                     ent:DrawModel()
                     render.SetColorModulation(1, 1, 1)
@@ -1284,6 +1305,20 @@ if CLIENT then
                     end
                     draw.SimpleTextOutlined(sub, "GRMEstate_Sub", screen.x, screen.y + 20,
                         Color(210, 220, 232), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 200))
+
+                    --[[ ПОДСКАЗКА, КАК КУПИТЬ (заказ владельца 28.08).
+
+                         Раньше игрок видел «СВОБОДНО · 85000 GRM» и не
+                         понимал, что с этим делать: покупка жила в
+                         /property_admin, то есть в админском окне.
+                         Теперь прямо под ценой написано, что набрать. ]]
+                    if zone.vacant then
+                        local cmd = zone.kind == "business" and "/buybusiness" or "/buyhome"
+                        draw.SimpleTextOutlined("Чтобы купить — напишите " .. cmd,
+                            "GRMEstate_Sub", screen.x, screen.y + 38,
+                            Color(255, 226, 130), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER,
+                            1, Color(0, 0, 0, 210))
+                    end
                 end
             end
         end
