@@ -127,7 +127,20 @@ if SERVER then
             end
         end
     end
-    timer.Create("GRM_Entry_Pump", E.StepDelay, 0, pump)
+    --[[ Конвейер входа — critical: игрок в это время смотрит в чёрный
+         экран, и пропуск шага он видит немедленно как «завис вход».
+         Планировщик такие задачи не откладывает даже при просадке.
+
+         `when` — важная деталь: пока никто не входит, задача вообще
+         ничего не стоит, проверяется только пустота таблицы. ]]
+    if GRM.Sched then
+        GRM.Sched.Every("entry.pump", E.StepDelay, pump, {
+            prio = "critical",
+            when = function() return next(E.Queue) ~= nil end,
+        })
+    else
+        timer.Create("GRM_Entry_Pump", E.StepDelay, 0, pump)
+    end
 
     --[[ Перевести игрока на стадию. Назад по конвейеру не ходим: только
          явный сброс (новый вход, смена персонажа) начинает всё заново. ]]
@@ -268,7 +281,10 @@ if SERVER then
     -----------------------------------------------------------------
     --[[ Любой сбой в цепочке не должен оставлять игрока в чёрном экране.
          Раз в 5 секунд смотрим, не завис ли кто на стадии. ]]
-    timer.Create("GRM_Entry_Watchdog", 5, 0, function()
+    --[[ Сторож — low: он лишь страховка от зависания, и секунда
+         задержки роли не играет. При просадке сервера его отложат
+         первым, и это правильно. ]]
+    local function watchdog()
         local list = (GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()
         for _, ply in ipairs(list) do
             if IsValid(ply) and E.InProgress(ply) then
@@ -281,7 +297,14 @@ if SERVER then
                 end
             end
         end
-    end)
+    end
+
+
+    if GRM.Sched then
+        GRM.Sched.Every("entry.watchdog", 5, watchdog, { prio = "low" })
+    else
+        timer.Create("GRM_Entry_Watchdog", 5, 0, watchdog)
+    end
 
     hook.Add("PlayerDisconnected", "GRM_Entry_Clear", function(ply)
         E.Queue[ply] = nil
@@ -395,7 +418,7 @@ if CLIENT then
          опрашиваем его редко (4 раза в секунду) и сообщаем остальным
          модулям только по факту изменения. Дешевле, чем гонять сеть. ]]
     E._lastStage = 0
-    timer.Create("GRM_Entry_StageWatch", 0.25, 0, function()
+    local function stageWatch()
         local lp = LocalPlayer()
         if not IsValid(lp) then return end
         local s = E.StageOf(lp)
@@ -404,9 +427,18 @@ if CLIENT then
             E._lastStage = s
             hook.Run("GRM_EntryStageClient", s, prev)
         end
-    end)
+    end
+
 
     -- HUD и прицел не показываем: мира ещё нет.
+    --[[ Слежение за стадией — critical на клиенте: от него зависит,
+         поднимется ли занавес. Но пока игрок в мире, задача бесплатна. ]]
+    if GRM.Sched then
+        GRM.Sched.Every("entry.stagewatch", 0.25, stageWatch, { prio = "critical" })
+    else
+        timer.Create("GRM_Entry_StageWatch", 0.25, 0, stageWatch)
+    end
+
     hook.Add("HUDShouldDraw", "GRM_Entry_HideHUD", function()
         if inProgress() then return false end
     end)

@@ -549,7 +549,11 @@ if SERVER then
          картой, и вернуть отставших. Проход идёт только когда в лимбе
          реально кто-то есть, поэтому на пустом сервере стоимость нулевая. ]]
     CH.LimboGuardRadius = 512
-    timer.Create("GRM_Char_LimboGuard", 0.5, 0, function()
+    --[[ Сторож лимба — critical: если он пропустит проход, игрок без
+         персонажа окажется в мире, и это видно сразу. `when` делает
+         задачу бесплатной, когда никто не входит: на живом сервере это
+         состояние 99% времени. ]]
+    local function limboGuard()
         local list = (GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()
         for _, ply in ipairs(list) do
             if IsValid(ply) and CH.IsPending(ply) then
@@ -559,7 +563,21 @@ if SERVER then
                 end
             end
         end
-    end)
+    end
+
+    --[[ Задача бесплатна, пока никто не входит: планировщик сначала
+         спросит условие и только потом станет тратить время на обход. ]]
+    local function anyPending()
+        for _ in pairs(CH.PendingSelection or {}) do return true end
+        return false
+    end
+
+    if GRM.Sched then
+        GRM.Sched.Every("char.limboguard", 0.5, limboGuard,
+            { prio = "critical", when = anyPending })
+    else
+        timer.Create("GRM_Char_LimboGuard", 0.5, 0, limboGuard)
+    end
 
     --- Поставить игрока на его точку спавна (фракционную или общую).
     function CH.PlaceOnSpawnPoint(ply)

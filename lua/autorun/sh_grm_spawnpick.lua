@@ -463,10 +463,20 @@ if SERVER then
          где был полминуты назад, а не «никуда». Запись на диск при этом
          коалесцируется, так что на 30 игроков это один file.Write. ]]
     SP.SnapshotInterval = 30
-    timer.Create("GRM_SpawnPick_Snapshot", SP.SnapshotInterval, 0, function()
-        local list = (GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()
-        for _, ply in ipairs(list) do SP.Remember(ply, false) end
-    end)
+    --[[ Снимок позиций — low и порционно. Раньше раз в 30 секунд разом
+         обходились ВСЕ игроки: на большом онлайне это заметный пик в
+         одном тике. Теперь тот же круг размазан по кадрам. ]]
+    local function snapshotList()
+        return (GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()
+    end
+    if GRM.Sched then
+        GRM.Sched.EverySpread("spawnpick.snapshot", SP.SnapshotInterval, snapshotList,
+            function(ply) SP.Remember(ply, false) end, { prio = "low", chunk = 6 })
+    else
+        timer.Create("GRM_SpawnPick_Snapshot", SP.SnapshotInterval, 0, function()
+            for _, ply in ipairs(snapshotList()) do SP.Remember(ply, false) end
+        end)
+    end
 
     --[[ ЗАПОМИНАНИЕ ПЕРЕД СМЕРТЬЮ.
 

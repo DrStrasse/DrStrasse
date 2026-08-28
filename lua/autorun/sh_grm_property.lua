@@ -227,7 +227,38 @@ if SERVER then
    if GRM.Notify then GRM.Notify(target,msg,255,190,90) else target:PrintMessage(HUD_PRINTTALK,msg) end
   end
  end
- timer.Create("GRM_Property_Billing",P.Config.UtilityInterval,0,function()local now=os.time();for _,r in pairs(P.Records)do if r.sealed and r.sealUntil>0 and r.sealUntil<=now then r.sealed=false;r.sealUntil=0 end;warnRent(r,now);if r.tenure=="rent"and r.rentUntil>0 and r.rentUntil<=now then local who=r.ownerKey;clearOwnership(r);r.rentWarned=nil;audit("rent.expired",nil,r,{});local ex=GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(who);if IsValid(ex)and GRM.Notify then GRM.Notify(ex,"[Недвижимость] Аренда «"..tostring(r.name).."» закончилась, объект освобождён.",255,120,100)end;hook.Run("GRM_PropertyOwnerChanged",r,"rent_expired",nil)elseif r.ownerType~="none"and r.utilityRate>0 then local periods=math.floor((now-r.lastUtilityAt)/P.Config.UtilityInterval);if periods>0 then r.utilityDebt=math.min(100000000,r.utilityDebt+periods*r.utilityRate);r.lastUtilityAt=r.lastUtilityAt+periods*P.Config.UtilityInterval end end;for i=#r.tempKeys,1,-1 do if(tonumber(r.tempKeys[i].expires)or 0)<=now then table.remove(r.tempKeys,i)end end end;save("billing")end)
+ --[[ Биллинг — low и порционно. Раньше раз в 5 минут обходились ВСЕ
+      объекты карты (до 256) в одном тике: заметный пик, особенно вместе
+      с сохранением в конце. Теперь объекты обрабатываются кусками по 12,
+      а запись на диск идёт один раз в конце круга. ]]
+ local function billOne(r,now)
+  if r.sealed and r.sealUntil>0 and r.sealUntil<=now then r.sealed=false;r.sealUntil=0 end
+  warnRent(r,now)
+  if r.tenure=="rent"and r.rentUntil>0 and r.rentUntil<=now then
+   local who=r.ownerKey;clearOwnership(r);r.rentWarned=nil;audit("rent.expired",nil,r,{})
+   local ex=GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(who)
+   if IsValid(ex)and GRM.Notify then GRM.Notify(ex,"[Недвижимость] Аренда «"..tostring(r.name).."» закончилась, объект освобождён.",255,120,100)end
+   hook.Run("GRM_PropertyOwnerChanged",r,"rent_expired",nil)
+  elseif r.ownerType~="none"and r.utilityRate>0 then
+   local periods=math.floor((now-r.lastUtilityAt)/P.Config.UtilityInterval)
+   if periods>0 then r.utilityDebt=math.min(100000000,r.utilityDebt+periods*r.utilityRate);r.lastUtilityAt=r.lastUtilityAt+periods*P.Config.UtilityInterval end
+  end
+  for i=#r.tempKeys,1,-1 do if(tonumber(r.tempKeys[i].expires)or 0)<=now then table.remove(r.tempKeys,i)end end
+ end
+ local function billList()
+  local a={};for _,r in pairs(P.Records or{})do a[#a+1]=r end;return a
+ end
+ if GRM.Sched then
+  GRM.Sched.EverySpread("property.billing",P.Config.UtilityInterval,billList,
+   function(r)billOne(r,os.time())end,
+   {prio="low",chunk=12,onDone=function()save("billing")end})
+  -- Круг закончился — сохраняем один раз, а не после каждого объекта.
+  GRM.Sched.Every("property.billing.save",P.Config.UtilityInterval,function()save("billing")end,{prio="low"})
+ else
+  timer.Create("GRM_Property_Billing",P.Config.UtilityInterval,0,function()
+   local now=os.time();for _,r in pairs(P.Records)do billOne(r,now)end;save("billing")
+  end)
+ end
  grmBootStart("GRM_Property_DoorPolicy","early",function()timer.Simple(2,function()P.Reindex();for _,r in pairs(P.Records)do setDoorPolicy(r);if r.sealed or r.ownerType~="none"then lockAll(r,true)end end end)end)
  print("[GRM Property] v"..P.Version.." server loaded")
 end

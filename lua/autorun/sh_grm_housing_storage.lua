@@ -135,9 +135,16 @@ if SERVER then
     end
     ST.MarkDirty = markDirty
 
-    timer.Create("GRM_HomeStorage_AutoSave", 120, 0, function()
-        if dirty then ST.Save("автосейв") end
-    end)
+    -- Автосейв — low: терпит, и при просадке его отложат первым.
+    if GRM.Sched then
+        GRM.Sched.Every("homestorage.autosave", 120, function()
+            if dirty then ST.Save("автосейв") end
+        end, { prio = "low" })
+    else
+        timer.Create("GRM_HomeStorage_AutoSave", 120, 0, function()
+            if dirty then ST.Save("автосейв") end
+        end)
+    end
     hook.Add("PlayerDisconnected", "GRM_HomeStorage_Disc", function()
         if dirty then ST.Save("дисконнект") end
     end)
@@ -406,7 +413,11 @@ if SERVER then
 
     --[[ Отошёл от шкафа — окно закрывается само. Иначе можно открыть
          шкаф, уйти на другой конец карты и продолжать таскать вещи. ]]
-    timer.Create("GRM_HomeStorage_Range", 1, 0, function()
+    --[[ Контроль дистанции — normal: если игрок отошёл, окно должно
+         закрыться быстро (иначе таскает вещи издалека), но это не
+         критично для его состояния. `when` делает задачу бесплатной,
+         когда ни один шкаф не открыт — а это почти всегда. ]]
+    local function rangeCheck()
         for ent, set in pairs(ST.Viewers) do
             if not IsValid(ent) then ST.Viewers[ent] = nil
             else
@@ -418,7 +429,17 @@ if SERVER then
                 end
             end
         end
-    end)
+    end
+
+
+    if GRM.Sched then
+        GRM.Sched.Every("homestorage.range", 1, rangeCheck, {
+            prio = "normal",
+            when = function() return next(ST.Viewers) ~= nil end,
+        })
+    else
+        timer.Create("GRM_HomeStorage_Range", 1, 0, rangeCheck)
+    end
 
     --[[ Квартиру продали или сдали заново. Вещи прежнего жильца НЕ
          удаляем: это «оставленная мебель», новый хозяин получает их

@@ -624,7 +624,10 @@ if timer.Exists("GRM_Food_HungerTick") then
     timer.Remove("GRM_Food_HungerTick")
 end
 
-timer.Create("GRM_Food_HungerTick", 1, 0, function()
+--[[ Голод и жажда — normal: это игровая логика, но точность в доли
+     секунды не нужна, а расход всё равно считается от накопленного
+     времени. При просадке сервера задачу отложат, и это верно. ]]
+local function hungerTick()
     for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(ply) then
             if GRM.ServerBan and GRM.ServerBan.PlayerBanned and GRM.ServerBan.PlayerBanned(ply) then
@@ -687,7 +690,8 @@ timer.Create("GRM_Food_HungerTick", 1, 0, function()
             end
         end
     end
-end)
+end
+
 
 if timer.Exists("GRM_Food_AutoSave") then
     timer.Remove("GRM_Food_AutoSave")
@@ -723,6 +727,12 @@ hook.Add("PlayerSpawn", "GRM_Food_OnSpawn", function(ply)
         end
     end)
 end)
+
+if GRM.Sched then
+    GRM.Sched.Every("food.hunger", 1, hungerTick, { prio = "normal" })
+else
+    timer.Create("GRM_Food_HungerTick", 1, 0, hungerTick)
+end
 
 hook.Add("PlayerDisconnected", "GRM_Food_OnLeave", function(ply)
     nextHungerDamage[ply] = nil

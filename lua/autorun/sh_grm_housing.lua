@@ -364,18 +364,32 @@ if SERVER then
 
     --[[ Отметка «дома» для клиента: HUD и другие модули могут показать
          игроку, что он отдыхает. Пишем только при изменении — NW-запись
-         каждую секунду на каждого игрока это лишний трафик. ]]
-    timer.Create("GRM_Housing_HomeFlag", 2, 0, function()
-        local list = (GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()
-        for _, ply in ipairs(list) do
-            if IsValid(ply) then
-                local home = HS.IsHome(ply)
-                if ply:GetNWBool("GRM_AtHome", false) ~= home then
-                    ply:SetNWBool("GRM_AtHome", home)
-                end
-            end
+         каждую секунду на каждого игрока это лишний трафик.
+
+         Приоритет low: это индикатор отдыха, а не игровая логика, и
+         секунда задержки никому не видна. Обход порционный — проверка
+         зон сразу для всех игроков давала бы пик на большом онлайне. ]]
+    local function homeFlagFor(ply)
+        if not IsValid(ply) then return end
+        local home = HS.IsHome(ply)
+        if ply:GetNWBool("GRM_AtHome", false) ~= home then
+            ply:SetNWBool("GRM_AtHome", home)
         end
-    end)
+    end
+
+    local function homeFlagList()
+        return (GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()
+    end
+
+    if GRM.Sched then
+        GRM.Sched.EverySpread("housing.homeflag", 2, homeFlagList, homeFlagFor,
+            { prio = "low", chunk = 8 })
+    else
+        timer.Create("GRM_Housing_HomeFlag", 2, 0, function()
+            for _, ply in ipairs(homeFlagList()) do homeFlagFor(ply) end
+        end)
+    end
+
 
     --[[ ЗАПРЕТ ВХОДА. Подключаемся к тому же хуку, что и недвижимость,
          но НЕ дублируем его логику: property уже отвечает за ключи.
