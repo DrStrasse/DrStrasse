@@ -239,6 +239,32 @@ if SERVER then
     hook.Add("PlayerEnteredVehicle", "GRM_Soc_Veh", function(ply) S.Stop(ply) end)
     hook.Add("PlayerSpawn", "GRM_Soc_Spawn", S.Stop)
 
+    --[[ ЗАМОРОЗКА ПОЗЫ (жалоба владельца 28.08: «применение заморозки
+         позы ничего не даёт, игрок двигается как и двигался»).
+
+         Галочка «Заморозить при проигрывании» в студии сохранялась в
+         каталог (поле freeze), доезжала до клиента и даже читалась при
+         загрузке позы в редакторе. Но ЗДЕСЬ, в модуле воспроизведения,
+         слово freeze не встречалось ни разу: флаг просто некому было
+         применить. Поза вставала, а игрок продолжал бегать.
+
+         Замораживаем ДВИЖЕНИЕ, но НЕ камеру — так и было обещано в
+         подсказке к галочке: «можно крутить камерой». Поэтому чистим
+         только перемещение и прыжок, а угол обзора не трогаем.
+
+         Через StartCommand, а не ply:Freeze(): Freeze намертво запирает
+         игрока средствами движка, и любой чужой код, снявший его
+         (админ-действия, респавн, транспорт), навсегда рассинхронил бы
+         состояние. Здесь же ограничение живёт ровно столько, сколько
+         активна поза, и снимается само. ]]
+    function S.IsFrozen(ply)
+        if not IsValid(ply) then return false end
+        local id = ply:GetNWString("GRM_SocAnim", "")
+        if id == "" then return false end
+        local def = S.ByID(id)
+        return istable(def) and (def.freeze == true or def.nomove == true)
+    end
+
     hook.Add("StartCommand", "GRM_Soc_Hold", function(ply, cmd)
         if not IsValid(ply) then return end
         if ply:GetNWString("GRM_SocAnim", "") == "" then return end
@@ -249,9 +275,58 @@ if SERVER then
             cmd:RemoveKey(IN_JUMP)
             if not def.walk then cmd:ClearMovement() end
         end
+        --[[ Заморозка сильнее настройки «Ходьба»: если поза помечена
+             как замораживающая, идти нельзя независимо от def.walk. ]]
+        if def.freeze == true or def.nomove == true then
+            cmd:ClearMovement()
+            cmd:RemoveKey(IN_JUMP)
+            cmd:RemoveKey(IN_SPEED)
+            cmd:RemoveKey(IN_FORWARD)
+            cmd:RemoveKey(IN_BACK)
+            cmd:RemoveKey(IN_MOVELEFT)
+            cmd:RemoveKey(IN_MOVERIGHT)
+        end
         cmd:RemoveKey(IN_ATTACK)
         cmd:RemoveKey(IN_ATTACK2)
     end)
+
+    --[[ StartCommand отсекает ввод игрока, но не внешний толчок: взрыв,
+         машина или другой игрок всё равно сдвинут «замороженного».
+         Гасим остаточную скорость — иначе поза уезжает по инерции.
+
+         Задача в планировщике с приоритетом normal и условием: пока
+         никто не позирует, она не стоит ничего. ]]
+    local function freezeTick()
+        local list = (GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()
+        for i = 1, #list do
+            local ply = list[i]
+            if IsValid(ply) and S.IsFrozen(ply) then
+                local vel = ply:GetVelocity()
+                -- По вертикали не мешаем: иначе игрок зависнет в воздухе.
+                if vel:Length2D() > 1 then
+                    ply:SetVelocity(Vector(-vel.x, -vel.y, 0))
+                end
+            end
+        end
+    end
+
+    local function anyPosing()
+        local list = (GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()
+        for i = 1, #list do
+            local ply = list[i]
+            if IsValid(ply) and ply:GetNWString("GRM_SocAnim", "") ~= "" then return true end
+        end
+        return false
+    end
+
+    if GRM.Sched then
+        GRM.Sched.Every("social.freeze", 0.2, freezeTick,
+            { prio = "normal", when = anyPosing })
+    else
+        timer.Create("GRM_Soc_Freeze", 0.2, 0, function()
+            if anyPosing() then freezeTick() end
+        end)
+    end
 
     hook.Add("CalcMainActivity", "GRM_Soc_Act", function(ply, vel)
         if not IsValid(ply) then return end

@@ -420,6 +420,111 @@ ok(syncBlock and syncBlock:find("ST.rebuildCats", 1, true) ~= nil,
 ok(syncBlock and syncBlock:find("ST.rebuildList", 1, true) ~= nil,
    "и список — иначе перемещение не отобразится")
 
+-----------------------------------------------------------------------
+print("\n=== 11. ЗАМОРОЗКА ПОЗЫ (жалоба 28.08) ===")
+-----------------------------------------------------------------------
+--[[ «Применение заморозки позы ничего не даёт. Игрок двигается как и
+     двигался.» Галочка сохранялась в каталог, доезжала до клиента и
+     читалась при загрузке в редакторе — но в модуле воспроизведения
+     слово freeze не встречалось НИ РАЗУ. Применять флаг было некому. ]]
+local anims = readf("lua/autorun/sh_grm_social_anims.lua")
+
+ok(anims:find("def.freeze", 1, true) ~= nil,
+   "ИСПРАВЛЕНО: модуль воспроизведения читает флаг freeze")
+ok(anims:find("function S.IsFrozen", 1, true) ~= nil,
+   "есть единая проверка S.IsFrozen")
+
+local hold = anims:match('hook%.Add%("StartCommand", "GRM_Soc_Hold".-\n    end%)')
+ok(hold ~= nil, "обработчик ввода найден")
+--[[ Проверяем именно ВЕТКУ ЗАМОРОЗКИ внутри обработчика, а не наличие
+     строк вообще: ClearMovement и RemoveKey(IN_JUMP) есть и в ветке
+     приседа, поэтому поиск по всему тексту ничего не доказывает —
+     первая версия этих проверок откат фикса не заметила. ]]
+local freezeBranch = hold and hold:match("if def%.freeze == true or def%.nomove == true then.-\n        end")
+ok(freezeBranch ~= nil,
+   "ИСПРАВЛЕНО: в обработчике есть отдельная ветка заморозки")
+ok(freezeBranch and freezeBranch:find("cmd:ClearMovement()", 1, true) ~= nil,
+   "в ней обнуляется движение")
+ok(freezeBranch and freezeBranch:find("cmd:RemoveKey(IN_JUMP)", 1, true) ~= nil,
+   "и снимается прыжок — иначе с места можно ускакать")
+ok(freezeBranch and freezeBranch:find("IN_FORWARD", 1, true) ~= nil,
+   "и клавиши направления, чтобы не пролезло через предсказание")
+ok(hold and hold:find("SetViewAngles", 1, true) == nil,
+   "камеру НЕ трогаем — в подсказке к галочке обещано «можно крутить камерой»")
+
+--[[ Живая модель обработчика: проверяем, что заморозка сильнее
+     настройки «Ходьба». Поза с walk = true и freeze = true не должна
+     позволять идти. ]]
+do
+    local function makeCmd()
+        local c = { moved = true, keys = {} }
+        function c:ClearMovement() self.moved = false end
+        function c:RemoveKey(k) self.keys[k] = true end
+        function c:SetButtons() end
+        function c:GetButtons() return 0 end
+        return c
+    end
+    local IN_JUMP, IN_DUCK = 2, 4
+
+    local function hold(def, cmd)
+        if def.crouch then
+            cmd:RemoveKey(IN_JUMP)
+            if not def.walk then cmd:ClearMovement() end
+        end
+        if def.freeze == true or def.nomove == true then
+            cmd:ClearMovement()
+            cmd:RemoveKey(IN_JUMP)
+        end
+    end
+
+    -- Обычная поза с разрешённой ходьбой.
+    local c1 = makeCmd()
+    hold({ walk = true, freeze = false }, c1)
+    ok(c1.moved == true, "обычная поза ходить не мешает")
+
+    -- Та же поза, но с заморозкой.
+    local c2 = makeCmd()
+    hold({ walk = true, freeze = true }, c2)
+    ok(c2.moved == false,
+       "ИСПРАВЛЕНО: заморозка сильнее настройки «Ходьба» — идти нельзя")
+    ok(c2.keys[IN_JUMP] == true, "и прыгать нельзя")
+
+    -- Старое поле nomove тоже работает: позы могли сохраняться с ним.
+    local c3 = makeCmd()
+    hold({ walk = true, nomove = true }, c3)
+    ok(c3.moved == false, "старое поле nomove тоже понимается")
+end
+
+-- Гашение остаточной скорости.
+ok(anims:find("freezeTick", 1, true) ~= nil,
+   "есть гашение инерции: StartCommand не спасает от толчка извне")
+local tickFn = anims:match("local function freezeTick%(%).-\n    end")
+ok(tickFn and tickFn:find("Length2D", 1, true) ~= nil,
+   "гасится только горизонтальная скорость")
+ok(tickFn and tickFn:find("Vector(-vel.x, -vel.y, 0)", 1, true) ~= nil,
+   "по вертикали не мешаем — иначе игрок зависнет в воздухе")
+ok(anims:find('GRM.Sched.Every("social.freeze"', 1, true) ~= nil,
+   "задача в планировщике, а не отдельным таймером")
+ok(anims:find("when = anyPosing", 1, true) ~= nil,
+   "и бесплатна, пока никто не позирует")
+
+do
+    -- Логика гашения.
+    local function damp(len2d)
+        return len2d > 1
+    end
+    ok(damp(50) == true, "заметная скорость гасится")
+    ok(damp(0.5) == false, "микродрожь не трогаем — лишняя работа каждый тик")
+end
+
+-- Флаг обязан доезжать от студии до каталога.
+ok(src:find("freeze = chkFreeze:GetChecked()", 1, true) ~= nil,
+   "студия отправляет флаг на сервер")
+ok(src:find("rec.freeze = rec.freeze == true", 1, true) ~= nil,
+   "сервер нормализует и сохраняет его в каталог")
+ok(src:find("chkFreeze:SetValue(p.freeze == true or p.nomove == true)", 1, true) ~= nil,
+   "и галочка восстанавливается при загрузке позы в редакторе")
+
 print("")
 print(string.format("ИТОГО: %d ok, %d FAIL", pass, fail))
 if fail > 0 then os.exit(1) end
