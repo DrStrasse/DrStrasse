@@ -244,6 +244,16 @@ if SERVER then
     function HS.SpawnPoint(rec)
         if not istable(rec) then return nil end
 
+        --[[ 0) КРОВАТЬ (заказ владельца 28.08). Самый приоритетный
+             источник: это явная, поставленная руками метка, которую
+             видит и понимает сам игрок. Она точнее и ручной админской
+             точки, и тем более эвристики «от двери внутрь комнаты». ]]
+        local BED = GRM.HomeBed
+        if BED and BED.SpawnPointFor then
+            local bpos, bang = BED.SpawnPointFor(rec)
+            if bpos then return bpos, bang or Angle(0, 0, 0), "bed" end
+        end
+
         -- 1) Ручная точка.
         local manual = rec.housingSpawn
         if istable(manual) and tonumber(manual.x) then
