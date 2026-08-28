@@ -404,83 +404,192 @@ local function adminStudio(data)
  local questList=darkList(f,16,62,300,640,{{"ID",88},{"Квест",155},{"Этапов",52}})
  local tabs=vgui.Create("DPropertySheet",f);tabs:SetPos(328,58);tabs:SetSize(874,646)
  local function panelTab(name,icon)local p=vgui.Create("DPanel",tabs);p.Paint=function(_,w,h)draw.RoundedBox(9,0,0,w,h,C.panel)end;tabs:AddSheet(name,p,icon);return p end
- local general=panelTab("Основное","icon16/book.png")
- local stages=panelTab("Этапы","icon16/flag_blue.png")
- local rewards=panelTab("Награды/ачивка","icon16/money.png")
- local notifications=panelTab("Уведомления","icon16/comment.png")
- local dialogues=panelTab("Диалоги","icon16/comments.png")
- local cinema=panelTab("Кат-сцены","icon16/film.png")
+ --[[ Порядок вкладок = порядок работы автора: сначала описать квест,
+      потом этапы, потом что за них дают, потом разговоры и ролики.
+      Раньше «Награды» стояли до «Этапов», хотя награда выдаётся ПОСЛЕ
+      всех этапов — это и создавало путаницу «когда что срабатывает». ]]
+ local general=panelTab("1. Основное","icon16/book.png")
+ local stages=panelTab("2. Этапы","icon16/flag_blue.png")
+ local dialogues=panelTab("3. Диалоги","icon16/comments.png")
+ local rewards=panelTab("4. Награды","icon16/money.png")
+ local notifications=panelTab("5. Уведомления","icon16/comment.png")
+ local cinema=panelTab("6. Кат-сцены","icon16/film.png")
 
+ --[[ ЛЕНТА ЖИЗНЕННОГО ЦИКЛА (заказ владельца 28.08: «непонятно, к чему
+      сделано — до квеста / вовремя / после?»).
+
+      Рисуем одну и ту же ось времени на каждой вкладке и подсвечиваем
+      тот отрезок, к которому вкладка относится. Так автор всегда видит,
+      в какой момент сработает то, что он сейчас настраивает.
+
+      Текст берём из GRM.Quests.Lifecycle — общей таблицы на сервере и
+      клиенте. Если поведение изменится, подсказка изменится вместе с
+      ним и не разойдётся с кодом. ]]
+ local LIFE = Q.Lifecycle or {}
+ local function lifecycleStrip(parent,activePhase,y,note)
+  local strip=vgui.Create("DPanel",parent);strip:SetPos(12,y or 0);strip:SetSize(850,58)
+  strip.Paint=function(_,w,h)
+   draw.RoundedBox(8,0,0,w,h,Color(13,21,33))
+   surface.SetDrawColor(52,74,102);surface.DrawOutlinedRect(0,0,w,h,1)
+   local n=#LIFE;if n==0 then return end
+   local pad,gap=10,6
+   local cw=(w-pad*2-gap*(n-1))/n
+   for i,row in ipairs(LIFE) do
+    local x=pad+(i-1)*(cw+gap)
+    local on=row.phase==activePhase
+    draw.RoundedBox(6,x,8,cw,26,on and Color(46,96,158) or Color(24,36,54))
+    if on then surface.SetDrawColor(120,180,255);surface.DrawOutlinedRect(x,8,cw,26,1) end
+    draw.SimpleText(row.when,"GRMQ_Small",x+cw/2,21,
+     on and Color(235,244,255) or Color(120,140,165),TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+    -- Стрелка между этапами: видно, что это последовательность.
+    if i<n then draw.SimpleText("→","GRMQ_Small",x+cw+gap/2,21,Color(80,100,125),TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER) end
+   end
+   local hint=note
+   if not hint then
+    for _,row in ipairs(LIFE) do if row.phase==activePhase then hint=row.what break end end
+   end
+   draw.SimpleText(tostring(hint or ""),"GRMQ_Small",pad,46,Color(150,168,190),TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
+  end
+  return strip
+ end
+
+ lifecycleStrip(general,"",8,"Порядок работы: 1 Основное → 2 Этапы → 3 Диалоги (там выдаётся квест) → 4 Награды → 5 Уведомления → 6 Кат-сцены.")
  local g={}
- g.id=textEntry(general,"Уникальный ID",18,18,360);g.title=textEntry(general,"Название квеста",18,76,520);g.category=textEntry(general,"Категория",18,134,250);g.npc=textEntry(general,"ID квестового NPC",286,134,252);g.summary=textEntry(general,"Описание для игрока",18,192,814,80,true);g.prereq=textEntry(general,"Предыдущие квесты через запятую",18,302,520)
- g.flags={};for i,v in ipairs({{"enabled","Квест включён"},{"repeatable","Можно повторять"},{"autoStart","Автостарт новичку"}})do local c=vgui.Create("DCheckBoxLabel",general);c:SetPos(18+(i-1)*220,368);c:SetText(v[2]);c:SetTextColor(C.text);c:SizeToContents();g.flags[v[1]]=c end
- label(general,"БЫСТРЫЙ СТАРТ",18,414,400,22,"GRMQ_Head",C.yellow)
- button(general,"ЛОР + проводник + завод",18,446,250,42,C.blue,function()if not work then return end;work.steps={{type="talk",npc=work.npc~=""and work.npc or"guide",title="Поговорить с проводником",count=1},{type="visit",title="Дойти до завода",pos={x=0,y=0,z=0},radius=180,count=1}};if rebuildStages then rebuildStages()end;if tabs.SwitchToName then tabs:SwitchToName("Этапы")end;setStatus("Шаблон этапов создан — настройте зону завода",C.green);notification.AddLegacy("Шаблон добавлен. Откройте «Этапы» и задайте зону тулом.",NOTIFY_HINT,5)end)
- button(general,"10 руды → 10 видеокарт",280,446,260,42,C.green,function()if not work then return end;work.steps={{type="event",event="mining",target="",count=10,title="Добыть руду 10 раз"},{type="event",event="factory_produce",target="gpu_basic",count=10,title="Произвести 10 видеокарт"}};if rebuildStages then rebuildStages()end;if tabs.SwitchToName then tabs:SwitchToName("Этапы")end;setStatus("Производственная цепочка создана",C.green);notification.AddLegacy("Производственная цепочка добавлена",NOTIFY_GENERIC,4)end)
- button(general,"Подготовить тул для NPC",552,446,250,42,Color(58,82,112),function()if not work then setStatus("Сначала выберите квест",C.red)return end;RunConsoleCommand("grm_quest_tool_mode","npc");RunConsoleCommand("grm_quest_tool_npc_id",g.npc:GetText());RunConsoleCommand("grm_quest_tool_npc_name",g.title:GetText());RunConsoleCommand("gmod_tool","grm_quest_tool");f:Close();notification.AddLegacy("Тул готов: наведитесь на землю и нажмите ЛКМ",NOTIFY_HINT,7)end)
- label(general,"СБРОС ПРОГРЕССА / ПОВТОРНЫЙ ЗАПУСК",18,505,500,22,"GRMQ_Head",C.yellow)
- local resetChoices={{"Мой персонаж","@self"},{"Все персонажи","*"}};for _,p in ipairs(data.onlinePlayers or{})do resetChoices[#resetChoices+1]={p.name.." · "..p.key,p.key}end;g.resetTarget=comboEntry(general,"Чей прогресс сбросить",18,534,420,resetChoices)
- button(general,"Сбросить засчёт",454,553,180,38,C.red,function()if not work then setStatus("Выберите квест",C.red)return end;local target=g.resetTarget.ValueID or"@self";local function send()net.Start("GRM_Quest_AdminOp");net.WriteString("reset_progress");net.WriteString(work.id or"");net.WriteString(target);net.SendToServer();setStatus("Запрошен сброс прогресса",C.yellow)end;if target=="*"then Derma_Query("Сбросить этот квест у ВСЕХ персонажей?","Подтверждение","Сбросить",send,"Отмена")else send()end end)
- label(general,"После сброса квест снова доступен у NPC. Для самостоятельного повтора игроком включите чекбокс «Можно повторять».",18,594,814,28,"GRMQ_Small",C.dim)
+ g.id=textEntry(general,"Уникальный ID",18,78,360);g.title=textEntry(general,"Название квеста",18,136,520);g.category=textEntry(general,"Категория",18,194,250);g.npc=textEntry(general,"ID квестового NPC",286,194,252);g.summary=textEntry(general,"Описание для игрока",18,252,814,64,true);g.prereq=textEntry(general,"Предыдущие квесты через запятую",18,346,520)
+ g.flags={};for i,v in ipairs({{"enabled","Квест включён"},{"repeatable","Можно повторять"},{"autoStart","Автостарт новичку"}})do local c=vgui.Create("DCheckBoxLabel",general);c:SetPos(18+(i-1)*220,412);c:SetText(v[2]);c:SetTextColor(C.text);c:SizeToContents();g.flags[v[1]]=c end
+ label(general,"БЫСТРЫЙ СТАРТ",18,442,400,22,"GRMQ_Head",C.yellow)
+ button(general,"ЛОР + проводник + завод",18,470,250,42,C.blue,function()if not work then return end;work.steps={{type="talk",npc=work.npc~=""and work.npc or"guide",title="Поговорить с проводником",count=1},{type="visit",title="Дойти до завода",pos={x=0,y=0,z=0},radius=180,count=1}};if rebuildStages then rebuildStages()end;if tabs.SwitchToName then tabs:SwitchToName("Этапы")end;setStatus("Шаблон этапов создан — настройте зону завода",C.green);notification.AddLegacy("Шаблон добавлен. Откройте «Этапы» и задайте зону тулом.",NOTIFY_HINT,5)end)
+ button(general,"10 руды → 10 видеокарт",280,470,260,42,C.green,function()if not work then return end;work.steps={{type="event",event="mining",target="",count=10,title="Добыть руду 10 раз"},{type="event",event="factory_produce",target="gpu_basic",count=10,title="Произвести 10 видеокарт"}};if rebuildStages then rebuildStages()end;if tabs.SwitchToName then tabs:SwitchToName("Этапы")end;setStatus("Производственная цепочка создана",C.green);notification.AddLegacy("Производственная цепочка добавлена",NOTIFY_GENERIC,4)end)
+ button(general,"Подготовить тул для NPC",552,470,250,42,Color(58,82,112),function()if not work then setStatus("Сначала выберите квест",C.red)return end;RunConsoleCommand("grm_quest_tool_mode","npc");RunConsoleCommand("grm_quest_tool_npc_id",g.npc:GetText());RunConsoleCommand("grm_quest_tool_npc_name",g.title:GetText());RunConsoleCommand("gmod_tool","grm_quest_tool");f:Close();notification.AddLegacy("Тул готов: наведитесь на землю и нажмите ЛКМ",NOTIFY_HINT,7)end)
+ label(general,"СБРОС ПРОГРЕССА / ПОВТОРНЫЙ ЗАПУСК",18,524,500,22,"GRMQ_Head",C.yellow)
+ local resetChoices={{"Мой персонаж","@self"},{"Все персонажи","*"}};for _,p in ipairs(data.onlinePlayers or{})do resetChoices[#resetChoices+1]={p.name.." · "..p.key,p.key}end;g.resetTarget=comboEntry(general,"Чей прогресс сбросить",18,552,420,resetChoices)
+ button(general,"Сбросить засчёт",454,571,180,38,C.red,function()if not work then setStatus("Выберите квест",C.red)return end;local target=g.resetTarget.ValueID or"@self";local function send()net.Start("GRM_Quest_AdminOp");net.WriteString("reset_progress");net.WriteString(work.id or"");net.WriteString(target);net.SendToServer();setStatus("Запрошен сброс прогресса",C.yellow)end;if target=="*"then Derma_Query("Сбросить этот квест у ВСЕХ персонажей?","Подтверждение","Сбросить",send,"Отмена")else send()end end)
+ label(general,"После сброса квест снова доступен у NPC. Для самостоятельного повтора игроком включите чекбокс «Можно повторять».",18,612,814,28,"GRMQ_Small",C.dim)
 
  -- Stage constructor
- local stageList=darkList(stages,12,44,300,500,{{"#",32},{"Тип",74},{"Название",190}});label(stages,"ПОСЛЕДОВАТЕЛЬНОСТЬ ЭТАПОВ",12,14,300,22,"GRMQ_Head",C.yellow)
- local sf={};sf.type=comboEntry(stages,"Тип этапа",328,18,220,{{"Посетить место","visit"},{"Поговорить с NPC","talk"},{"Событие/счётчик","event"},{"Иметь предмет","item"}});sf.title=textEntry(stages,"Название для игрока",566,18,278);sf.desc=textEntry(stages,"Пояснение",328,76,516,54,true);sf.event=textEntry(stages,"Событие",328,158,160);sf.target=textEntry(stages,"Цель события",500,158,172);sf.npc=textEntry(stages,"ID NPC",684,158,160);sf.item=textEntry(stages,"ID предмета",328,216,220);sf.count=numberEntry(stages,"Количество",560,216,120,1,100000);sf.radius=numberEntry(stages,"Радиус точки",692,216,152,24,10000);sf.consume=vgui.Create("DCheckBoxLabel",stages);sf.consume:SetPos(328,278);sf.consume:SetText("Изъять предметы при выполнении");sf.consume:SetTextColor(C.text);sf.consume:SizeToContents()
+ lifecycleStrip(stages,"active",8)
+ local stageList=darkList(stages,12,104,300,440,{{"#",32},{"Тип",74},{"Название",190}});label(stages,"ПОСЛЕДОВАТЕЛЬНОСТЬ ЭТАПОВ",12,78,300,22,"GRMQ_Head",C.yellow)
+ local sf={};sf.type=comboEntry(stages,"Тип этапа",328,78,220,{{"Посетить место","visit"},{"Поговорить с NPC","talk"},{"Событие/счётчик","event"},{"Иметь предмет","item"}});sf.title=textEntry(stages,"Название для игрока",566,78,278);sf.desc=textEntry(stages,"Пояснение",328,136,516,44,true);sf.event=textEntry(stages,"Событие",328,208,160);sf.target=textEntry(stages,"Цель события",500,208,172);sf.npc=textEntry(stages,"ID NPC",684,208,160);sf.item=textEntry(stages,"ID предмета",328,266,220);sf.count=numberEntry(stages,"Количество",560,266,120,1,100000);sf.radius=numberEntry(stages,"Радиус точки",692,266,152,24,10000);sf.consume=vgui.Create("DCheckBoxLabel",stages);sf.consume:SetPos(328,328);sf.consume:SetText("Изъять предметы при выполнении");sf.consume:SetTextColor(C.text);sf.consume:SizeToContents()
  local selectedStage=0
  rebuildStages=function()stageList:Clear();for i,s in ipairs(work and work.steps or{})do local line=addDarkLine(stageList,i,s.type,s.title);line._index=i end end
  local function loadStage(i)local s=work and work.steps[i];if not s then return end;selectedStage=i;sf.type:SetValue(({visit="Посетить место",talk="Поговорить с NPC",event="Событие/счётчик",item="Иметь предмет"})[s.type]or s.type);sf.type.ValueID=s.type;sf.title:SetText(s.title or"");sf.desc:SetText(s.description or"");sf.event:SetText(s.event or"");sf.target:SetText(s.target or"");sf.npc:SetText(s.npc or"");sf.item:SetText(s.item or"");sf.count:SetValue(s.count or 1);sf.radius:SetValue(s.radius or 120);sf.consume:SetValue(s.consume and 1 or 0)end
  stageList.OnRowSelected=function(_,_,line)loadStage(line._index)end
  local function applyStage()if not work or selectedStage<1 then return end;local old=work.steps[selectedStage]or{};work.steps[selectedStage]={type=sf.type.ValueID or"event",title=sf.title:GetText(),description=sf.desc:GetText(),event=sf.event:GetText(),target=sf.target:GetText(),npc=sf.npc:GetText(),item=sf.item:GetText(),count=sf.count:GetValue(),radius=sf.radius:GetValue(),consume=sf.consume:GetChecked(),pos=old.pos,min=old.min,max=old.max};rebuildStages();loadStage(selectedStage)end
- button(stages,"+ Новый этап",328,326,160,38,C.blue,function()if not work then return end;work.steps=work.steps or{};work.steps[#work.steps+1]={type="event",title="Новый этап",event="generic",target="",count=1};rebuildStages();loadStage(#work.steps)end)
- button(stages,"Применить",500,326,130,38,C.green,applyStage)
- button(stages,"Удалить",642,326,100,38,C.red,function()if work and selectedStage>0 then table.remove(work.steps,selectedStage);selectedStage=0;rebuildStages()end end)
- button(stages,"↑",754,326,42,38,C.card,function()if work and selectedStage>1 then work.steps[selectedStage],work.steps[selectedStage-1]=work.steps[selectedStage-1],work.steps[selectedStage];selectedStage=selectedStage-1;rebuildStages();loadStage(selectedStage)end end)
- button(stages,"↓",802,326,42,38,C.card,function()if work and selectedStage<#work.steps then work.steps[selectedStage],work.steps[selectedStage+1]=work.steps[selectedStage+1],work.steps[selectedStage];selectedStage=selectedStage+1;rebuildStages();loadStage(selectedStage)end end)
- button(stages,"Настроить зону этим тулом",328,382,250,42,C.yellow,function()if not work or selectedStage<1 then setStatus("Выберите этап visit",C.red)return end;applyStage();if not saveWork(true)then return end;RunConsoleCommand("grm_quest_tool_mode","zone");RunConsoleCommand("grm_quest_tool_quest_id",work.id);RunConsoleCommand("grm_quest_tool_step",selectedStage);RunConsoleCommand("gmod_tool","grm_quest_tool");notification.AddLegacy("Тул готов: ЛКМ — первый угол, ПКМ — второй",NOTIFY_HINT,7)end)
- label(stages,"event: mining / factory_produce / inventory_gain / любое событие API. Пустая цель принимает любой предмет или тип руды.",328,448,516,72,"GRMQ_Body",C.dim)
+ button(stages,"+ Новый этап",328,362,160,38,C.blue,function()if not work then return end;work.steps=work.steps or{};work.steps[#work.steps+1]={type="event",title="Новый этап",event="generic",target="",count=1};rebuildStages();loadStage(#work.steps)end)
+ button(stages,"Применить",500,362,130,38,C.green,applyStage)
+ button(stages,"Удалить",642,362,100,38,C.red,function()if work and selectedStage>0 then table.remove(work.steps,selectedStage);selectedStage=0;rebuildStages()end end)
+ button(stages,"↑",754,362,42,38,C.card,function()if work and selectedStage>1 then work.steps[selectedStage],work.steps[selectedStage-1]=work.steps[selectedStage-1],work.steps[selectedStage];selectedStage=selectedStage-1;rebuildStages();loadStage(selectedStage)end end)
+ button(stages,"↓",802,362,42,38,C.card,function()if work and selectedStage<#work.steps then work.steps[selectedStage],work.steps[selectedStage+1]=work.steps[selectedStage+1],work.steps[selectedStage];selectedStage=selectedStage+1;rebuildStages();loadStage(selectedStage)end end)
+ button(stages,"Настроить зону этим тулом",328,414,250,42,C.yellow,function()if not work or selectedStage<1 then setStatus("Выберите этап visit",C.red)return end;applyStage();if not saveWork(true)then return end;RunConsoleCommand("grm_quest_tool_mode","zone");RunConsoleCommand("grm_quest_tool_quest_id",work.id);RunConsoleCommand("grm_quest_tool_step",selectedStage);RunConsoleCommand("gmod_tool","grm_quest_tool");notification.AddLegacy("Тул готов: ЛКМ — первый угол, ПКМ — второй",NOTIFY_HINT,7)end)
+ label(stages,"Этапы выполняются СТРОГО по порядку сверху вниз. Игрок видит только текущий.\n\nevent: mining / factory_produce / inventory_gain / любое событие API. Пустая цель принимает любой предмет или тип руды.",328,466,516,96,"GRMQ_Small",C.dim)
 
- -- Rewards and custom achievement
- local rw={};rw.money=numberEntry(rewards,"Денежная награда за квест",18,18,220,0,100000000);rw.itemID=textEntry(rewards,"ID предмета",18,76,280);rw.itemCount=numberEntry(rewards,"Количество",312,76,130,1,10000);rw.list=darkList(rewards,18,140,560,180,{{"Item ID",360},{"Количество",150}});local rewardItems={}
+ --[[ ВКЛАДКА «НАГРАДЫ» (переделана 28.08).
+
+      Жалоба владельца: «не понятно, как выстраивать выдачу наград и
+      ачивок... как подключить выплаты?»
+
+      Что было не так: поля лежали сплошным списком без объяснения, в
+      какой момент они срабатывают. Выглядело так, будто награду надо
+      где-то отдельно «подключать».
+
+      Теперь вкладка разбита на два блока с заголовками, отвечающими на
+      вопрос «когда»: обе выплаты происходят САМИ в момент завершения
+      последнего этапа, подключать ничего не нужно. Отдельная врезка
+      объясняет, как выдать деньги ПО ХОДУ разговора — это другой
+      механизм, он живёт в диалогах. ]]
+ lifecycleStrip(rewards,"complete",8)
+
+ local rw={}
+
+ -- Блок 1: награда самого квеста.
+ local rwBox=vgui.Create("DPanel",rewards);rwBox:SetPos(12,74);rwBox:SetSize(850,258)
+ rwBox.Paint=function(_,w,h)
+  draw.RoundedBox(8,0,0,w,h,Color(15,24,37));surface.SetDrawColor(55,78,105);surface.DrawOutlinedRect(0,0,w,h,1)
+  draw.RoundedBox(0,0,0,4,h,C.green)
+  draw.SimpleText("НАГРАДА ЗА КВЕСТ","GRMQ_Head",16,18,C.green,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
+  draw.SimpleText("Выдаётся автоматически, когда игрок закрывает последний этап. Подключать ничего не нужно.",
+   "GRMQ_Small",16,40,C.dim,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
+ end
+ rw.money=numberEntry(rwBox,"Деньги (0 — не выдавать)",16,60,220,0,100000000)
+ rw.itemID=textEntry(rwBox,"ID предмета",250,60,250)
+ rw.itemCount=numberEntry(rwBox,"Количество",514,60,120,1,10000)
+ rw.list=darkList(rwBox,16,132,618,110,{{"Предмет",420},{"Кол-во",150}})
+ local rewardItems={}
  rebuildRewards=function()rw.list:Clear();for id,count in pairs(rewardItems)do local line=addDarkLine(rw.list,id,count);line._id=id end end
- button(rewards,"Добавить / изменить",458,95,190,36,C.green,function()local id=string.Trim(rw.itemID:GetText());if id~=""then rewardItems[id]=math.max(1,rw.itemCount:GetValue());rebuildRewards()end end);button(rewards,"Удалить выбранное",660,95,170,36,C.red,function()local i=rw.list:GetSelectedLine();local l=i and rw.list:GetLine(i);if IsValid(l)then rewardItems[l._id]=nil;rebuildRewards()end end)
- label(rewards,"КАСТОМНАЯ АЧИВКА ЗА ЗАВЕРШЕНИЕ",18,338,500,24,"GRMQ_Head",C.yellow);rw.achEnabled=vgui.Create("DCheckBoxLabel",rewards);rw.achEnabled:SetPos(18,370);rw.achEnabled:SetText("Выдать ачивку");rw.achEnabled:SetTextColor(C.text);rw.achEnabled:SizeToContents();rw.achHidden=vgui.Create("DCheckBoxLabel",rewards);rw.achHidden:SetPos(180,370);rw.achHidden:SetText("Скрытая до получения");rw.achHidden:SetTextColor(C.text);rw.achHidden:SizeToContents()
- rw.achID=textEntry(rewards,"ID ачивки",18,400,210);rw.achName=textEntry(rewards,"Название",240,400,310);rw.achReward=numberEntry(rewards,"Награда ачивки",562,400,170,0,100000000);rw.achDesc=textEntry(rewards,"Описание достижения",18,458,714,58,true)
- label(rewards,"Ачивка регистрируется в общей GRM-системе и появляется во вкладке достижений F4. Её награда выдаётся отдельно от награды квеста.",18,548,814,42,"GRMQ_Small",C.dim)
+ button(rwBox,"Добавить предмет",650,79,186,34,C.green,function()local id=string.Trim(rw.itemID:GetText());if id~=""then rewardItems[id]=math.max(1,rw.itemCount:GetValue());rebuildRewards();setStatus("Предмет добавлен в награду",C.green)end end)
+ button(rwBox,"Убрать выбранный",650,121,186,34,C.red,function()local i=rw.list:GetSelectedLine();local l=i and rw.list:GetLine(i);if IsValid(l)then rewardItems[l._id]=nil;rebuildRewards()end end)
+ label(rwBox,"Предметы кладутся в инвентарь. Если инвентарь переполнен, предмет пропадёт — не выдавайте десятки штук.",650,164,196,76,"GRMQ_Small",C.dim)
+
+ -- Блок 2: ачивка со СВОЕЙ наградой.
+ local achBox=vgui.Create("DPanel",rewards);achBox:SetPos(12,342);achBox:SetSize(850,196)
+ achBox.Paint=function(_,w,h)
+  draw.RoundedBox(8,0,0,w,h,Color(15,24,37));surface.SetDrawColor(55,78,105);surface.DrawOutlinedRect(0,0,w,h,1)
+  draw.RoundedBox(0,0,0,4,h,C.yellow)
+  draw.SimpleText("АЧИВКА ЗА ЗАВЕРШЕНИЕ","GRMQ_Head",16,18,C.yellow,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
+  draw.SimpleText("Выдаётся сразу после награды квеста. Её деньги — ОТДЕЛЬНАЯ сумма, она не заменяет награду выше.",
+   "GRMQ_Small",16,40,C.dim,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
+ end
+ rw.achEnabled=vgui.Create("DCheckBoxLabel",achBox);rw.achEnabled:SetPos(16,62);rw.achEnabled:SetText("Выдавать ачивку");rw.achEnabled:SetTextColor(C.text);rw.achEnabled:SizeToContents()
+ rw.achHidden=vgui.Create("DCheckBoxLabel",achBox);rw.achHidden:SetPos(180,62);rw.achHidden:SetText("Скрытая до получения");rw.achHidden:SetTextColor(C.text);rw.achHidden:SizeToContents()
+ rw.achID=textEntry(achBox,"ID ачивки",16,84,210)
+ rw.achName=textEntry(achBox,"Название",240,84,300)
+ rw.achReward=numberEntry(achBox,"Деньги за ачивку",554,84,180,0,100000000)
+ rw.achDesc=textEntry(achBox,"Описание",16,142,718,30)
+ label(achBox,"Появится во вкладке достижений F4.",748,161,92,30,"GRMQ_Small",C.dim)
+
+ --[[ Врезка про выплаты по ходу разговора: владелец спрашивал именно
+      «как подключить выплаты», и ответов на самом деле два. ]]
+ label(rewards,"Нужно выдать деньги ПО ХОДУ разговора, а не в конце? Это делается во вкладке «3. Диалоги»: у ответа игрока выберите действие «Деньги» или «Предмет» и впишите сумму в поле аргумента.",
+  12,546,850,44,"GRMQ_Small",C.dim)
  -- Configurable quest notifications
  local nt={};local function notificationEditor(key,title,y)
-  local box=vgui.Create("DPanel",notifications);box:SetPos(14,y);box:SetSize(828,166);box.Paint=function(_,w,h)draw.RoundedBox(8,0,0,w,h,Color(15,24,37));surface.SetDrawColor(55,78,105);surface.DrawOutlinedRect(0,0,w,h,1)end;label(box,title,14,10,320,22,"GRMQ_Head",C.yellow);local cfg={};cfg.enabled=vgui.Create("DCheckBoxLabel",box);cfg.enabled:SetPos(630,13);cfg.enabled:SetText("Показывать");cfg.enabled:SetTextColor(C.text);cfg.enabled:SizeToContents();cfg.banner=vgui.Create("DCheckBoxLabel",box);cfg.banner:SetPos(720,13);cfg.banner:SetText("Баннер");cfg.banner:SetTextColor(C.text);cfg.banner:SizeToContents();cfg.text=textEntry(box,"Текст ({title}, {step}, {count})",14,42,500);cfg.sound=textEntry(box,"Звук",526,42,286);cfg.duration=numberEntry(box,"Длительность",14,100,130,1,15);nt[key]=cfg
+  local box=vgui.Create("DPanel",notifications);box:SetPos(14,y);box:SetSize(828,164);box.Paint=function(_,w,h)draw.RoundedBox(8,0,0,w,h,Color(15,24,37));surface.SetDrawColor(55,78,105);surface.DrawOutlinedRect(0,0,w,h,1)end;label(box,title,14,10,320,22,"GRMQ_Head",C.yellow);local cfg={};cfg.enabled=vgui.Create("DCheckBoxLabel",box);cfg.enabled:SetPos(630,13);cfg.enabled:SetText("Показывать");cfg.enabled:SetTextColor(C.text);cfg.enabled:SizeToContents();cfg.banner=vgui.Create("DCheckBoxLabel",box);cfg.banner:SetPos(720,13);cfg.banner:SetText("Баннер");cfg.banner:SetTextColor(C.text);cfg.banner:SizeToContents();cfg.text=textEntry(box,"Текст ({title}, {step}, {count})",14,42,500);cfg.sound=textEntry(box,"Звук",526,42,286);cfg.duration=numberEntry(box,"Длительность",14,100,130,1,15);nt[key]=cfg
  end
- notificationEditor("start","ПРИНЯТИЕ КВЕСТА",12);notificationEditor("step","ЗАВЕРШЕНИЕ ЭТАПА",188);notificationEditor("complete","ЗАВЕРШЕНИЕ КВЕСТА",364)
- label(notifications,"Пример звука: buttons/button14.wav. Баннер выводит крупное GRM-уведомление в верхней части экрана.",18,548,810,32,"GRMQ_Small",C.dim)
+ lifecycleStrip(notifications,"start",8)
+ notificationEditor("start","1. ПРИ ПРИНЯТИИ КВЕСТА",74);notificationEditor("step","2. ПРИ ЗАВЕРШЕНИИ КАЖДОГО ЭТАПА",248);notificationEditor("complete","3. ПРИ ЗАВЕРШЕНИИ КВЕСТА",422)
+ label(notifications,"Пример звука: buttons/button14.wav. Баннер выводит крупное уведомление в верхней части экрана. Это только текст на экране — награду выдаёт вкладка «4. Награды».",18,592,810,32,"GRMQ_Small",C.dim)
 
  -- Dialogue graph constructor
- local dlgPhase=comboEntry(dialogues,"Фаза разговора",12,10,210,{{"До принятия","offer"},{"Во время квеста","active"},{"После завершения","complete"}});local dlgList=darkList(dialogues,12,70,270,475,{{"#",32},{"ID",80},{"Реплика",150}});local dn={};dn.id=textEntry(dialogues,"ID узла",296,10,180);dn.speaker=textEntry(dialogues,"Говорящий",488,10,190);dn.text=textEntry(dialogues,"Текст реплики",296,68,548,92,true);dn.next=textEntry(dialogues,"Следующий ID (пусто = следующий)",296,190,260)
- local choiceList=darkList(dialogues,296,265,548,150,{{"Ответ игрока",300},{"Следующий ID",120},{"Действие",100}});local chText=textEntry(dialogues,"Текст ответа",296,400,200);local chNext=textEntry(dialogues,"Следующий ID",508,400,100);local chAction=comboEntry(dialogues,"Действие",620,400,224,{{"Продолжить",""},{"Принять квест","accept"},{"Закрыть","close"},{"Флаг +","set_flag"},{"Флаг −","clear_flag"},{"Деньги","give_money"},{"Предмет","give_item"},{"Событие","emit"}});local chCond=textEntry(dialogues,"Условие flag:x / !flag:x / item:id / money:N / fac:Имя / done:id",296,458,270);local chArg=textEntry(dialogues,"Аргумент действия",578,458,266)
+ --[[ ВКЛАДКА «ДИАЛОГИ» (переделана 28.08).
+
+      Жалоба владельца: «как диалоги нормально настроить?»
+
+      Главное, чего не хватало: нигде не было сказано, что квест
+      выдаётся ТОЛЬКО ответом с действием «Принять квест». Автор
+      заполнял реплики, сохранял — и не мог взять квест у NPC.
+
+      Теперь фаза разговора подсвечивается на ленте жизненного цикла, а
+      под выбором фазы висит пояснение, что именно эта фаза делает. ]]
+ local dlgStrip=lifecycleStrip(dialogues,"offer",8)
+ local dlgPhase=comboEntry(dialogues,"Фаза разговора",12,74,210,{{"До принятия квеста","offer"},{"Во время квеста","active"},{"После завершения","complete"}});local dlgList=darkList(dialogues,12,134,270,411,{{"#",32},{"ID",80},{"Реплика",150}});local dn={};dn.id=textEntry(dialogues,"ID узла",296,74,180);dn.speaker=textEntry(dialogues,"Говорящий",488,74,190);dn.text=textEntry(dialogues,"Текст реплики",296,132,548,60,true);dn.next=textEntry(dialogues,"Следующий ID (пусто = следующая по списку)",296,222,260)
+ local choiceList=darkList(dialogues,296,329,548,124,{{"Ответ игрока",300},{"Следующий ID",120},{"Действие",100}});local chText=textEntry(dialogues,"Текст ответа",296,464,200);local chNext=textEntry(dialogues,"Следующий ID",508,464,100);local chAction=comboEntry(dialogues,"Действие",620,464,224,{{"Продолжить",""},{"Принять квест","accept"},{"Закрыть","close"},{"Флаг +","set_flag"},{"Флаг −","clear_flag"},{"Деньги","give_money"},{"Предмет","give_item"},{"Событие","emit"}});local chCond=textEntry(dialogues,"Условие: flag:x / !flag:x / item:id / money:N / fac:Имя / done:id",296,522,270);local chArg=textEntry(dialogues,"Аргумент: сумма для «Деньги», ID для «Предмет»/«Флаг»",578,522,266)
  local selectedNode,selectedChoice=0,0;local currentChoices={}
  local function phaseNodes()if not work then return{}end;work.dialogue=work.dialogue or{offer={},active={},complete={}};local phase=dlgPhase.ValueID or"offer";work.dialogue[phase]=dialogueNodes(work.dialogue[phase]);return work.dialogue[phase]end
  local function rebuildChoices()choiceList:Clear();for i,ch in ipairs(currentChoices)do local line=addDarkLine(choiceList,ch.text,ch.next,(ch.action or"")..((ch.cond and ch.cond~="")and(" ["..ch.cond.."]")or""));line._index=i end end
  rebuildNodes=function()dlgList:Clear();for i,n in ipairs(phaseNodes())do local line=addDarkLine(dlgList,i,n.id,string.sub(n.text or"",1,42));line._index=i end end
  local function loadNode(i)local n=phaseNodes()[i];if not n then return end;selectedNode=i;dn.id:SetText(n.id or"");dn.speaker:SetText(n.speaker or"");dn.text:SetText(n.text or"");dn.next:SetText(n.next or"");currentChoices=table.Copy(n.choices or{});selectedChoice=0;rebuildChoices()end
- dlgPhase.OnSelect=function(_,_,_,data)dlgPhase.ValueID=data;selectedNode=0;rebuildNodes()end;dlgList.OnRowSelected=function(_,_,line)loadNode(line._index)end;choiceList.OnRowSelected=function(_,_,line)local ch=currentChoices[line._index];if ch then selectedChoice=line._index;chText:SetText(ch.text or"");chNext:SetText(ch.next or"");chCond:SetText(ch.cond or"");chArg:SetText(ch.actionArg or"");chAction.ValueID=ch.action or"";local names={accept="Принять квест",close="Закрыть",set_flag="Флаг +",clear_flag="Флаг −",give_money="Деньги",give_item="Предмет",emit="Событие"};chAction:SetValue(names[ch.action]or"Продолжить")end end
+ dlgPhase.OnSelect=function(_,_,_,data)dlgPhase.ValueID=data;selectedNode=0;rebuildNodes();if IsValid(dlgStrip)then dlgStrip:Remove()end;dlgStrip=lifecycleStrip(dialogues,data=="offer" and "offer" or (data=="active" and "active" or "after"),8);dlgStrip:SetZPos(-1)end;dlgList.OnRowSelected=function(_,_,line)loadNode(line._index)end;choiceList.OnRowSelected=function(_,_,line)local ch=currentChoices[line._index];if ch then selectedChoice=line._index;chText:SetText(ch.text or"");chNext:SetText(ch.next or"");chCond:SetText(ch.cond or"");chArg:SetText(ch.actionArg or"");chAction.ValueID=ch.action or"";local names={accept="Принять квест",close="Закрыть",set_flag="Флаг +",clear_flag="Флаг −",give_money="Деньги",give_item="Предмет",emit="Событие"};chAction:SetValue(names[ch.action]or"Продолжить")end end
  local function applyNode()local nodes=phaseNodes();if selectedNode<1 then return end;nodes[selectedNode]={id=dn.id:GetText(),speaker=dn.speaker:GetText(),text=dn.text:GetText(),next=dn.next:GetText(),choices=table.Copy(currentChoices)};rebuildNodes();loadNode(selectedNode)end
- button(dialogues,"+ Реплика",296,236,110,32,C.blue,function()local nodes=phaseNodes();nodes[#nodes+1]={id=(dlgPhase.ValueID or"offer").."_"..(#nodes+1),speaker=g.npc:GetText(),text="Новая реплика",next="",choices={}};rebuildNodes();loadNode(#nodes)end);button(dialogues,"Применить",414,236,100,32,C.green,applyNode);button(dialogues,"Удалить",522,236,90,32,C.red,function()local nodes=phaseNodes();if selectedNode>0 then table.remove(nodes,selectedNode);selectedNode=0;rebuildNodes()end end);button(dialogues,"↑",620,236,38,32,C.card,function()local n=phaseNodes();if selectedNode>1 then n[selectedNode],n[selectedNode-1]=n[selectedNode-1],n[selectedNode];selectedNode=selectedNode-1;rebuildNodes();loadNode(selectedNode)end end);button(dialogues,"↓",664,236,38,32,C.card,function()local n=phaseNodes();if selectedNode<#n then n[selectedNode],n[selectedNode+1]=n[selectedNode+1],n[selectedNode];selectedNode=selectedNode+1;rebuildNodes();loadNode(selectedNode)end end);button(dialogues,"▶ Тест диалога",712,236,132,32,C.yellow,function()applyNode();playDialogue(g.npc:GetText(),phaseNodes())end)
- button(dialogues,"Холст графа",12,548,270,36,Color(58,82,112),function()if not work then return end;if Q.OpenGraphStudio then Q.OpenGraphStudio({definitions={work}})end end)
- button(dialogues,"+ Ответ",296,518,100,30,C.blue,function()currentChoices[#currentChoices+1]={text=chText:GetText(),next=chNext:GetText(),action=chAction.ValueID or"",actionArg=chArg:GetText(),cond=chCond:GetText()};rebuildChoices()end);button(dialogues,"Изменить",404,518,100,30,C.green,function()if selectedChoice>0 then currentChoices[selectedChoice]={text=chText:GetText(),next=chNext:GetText(),action=chAction.ValueID or"",actionArg=chArg:GetText(),cond=chCond:GetText()};rebuildChoices()end end);button(dialogues,"Удалить",512,518,90,30,C.red,function()if selectedChoice>0 then table.remove(currentChoices,selectedChoice);selectedChoice=0;rebuildChoices()end end)
- label(dialogues,"Узлы идут сверху вниз. «Следующий ID» создаёт переход. Ответы игрока могут вести в разные узлы, принять квест или закрыть разговор.",296,535,548,58,"GRMQ_Body",C.dim)
+ button(dialogues,"+ Реплика",296,286,110,32,C.blue,function()local nodes=phaseNodes();nodes[#nodes+1]={id=(dlgPhase.ValueID or"offer").."_"..(#nodes+1),speaker=g.npc:GetText(),text="Новая реплика",next="",choices={}};rebuildNodes();loadNode(#nodes)end);button(dialogues,"Применить",414,286,100,32,C.green,applyNode);button(dialogues,"Удалить",522,286,90,32,C.red,function()local nodes=phaseNodes();if selectedNode>0 then table.remove(nodes,selectedNode);selectedNode=0;rebuildNodes()end end);button(dialogues,"↑",620,286,38,32,C.card,function()local n=phaseNodes();if selectedNode>1 then n[selectedNode],n[selectedNode-1]=n[selectedNode-1],n[selectedNode];selectedNode=selectedNode-1;rebuildNodes();loadNode(selectedNode)end end);button(dialogues,"↓",664,286,38,32,C.card,function()local n=phaseNodes();if selectedNode<#n then n[selectedNode],n[selectedNode+1]=n[selectedNode+1],n[selectedNode];selectedNode=selectedNode+1;rebuildNodes();loadNode(selectedNode)end end);button(dialogues,"▶ Тест диалога",712,286,132,32,C.yellow,function()applyNode();playDialogue(g.npc:GetText(),phaseNodes())end)
+ button(dialogues,"Холст графа",12,556,270,36,Color(58,82,112),function()if not work then return end;if Q.OpenGraphStudio then Q.OpenGraphStudio({definitions={work}})end end)
+ button(dialogues,"+ Ответ",296,582,100,30,C.blue,function()currentChoices[#currentChoices+1]={text=chText:GetText(),next=chNext:GetText(),action=chAction.ValueID or"",actionArg=chArg:GetText(),cond=chCond:GetText()};rebuildChoices()end);button(dialogues,"Изменить",404,582,100,30,C.green,function()if selectedChoice>0 then currentChoices[selectedChoice]={text=chText:GetText(),next=chNext:GetText(),action=chAction.ValueID or"",actionArg=chArg:GetText(),cond=chCond:GetText()};rebuildChoices()end end);button(dialogues,"Удалить",512,582,90,30,C.red,function()if selectedChoice>0 then table.remove(currentChoices,selectedChoice);selectedChoice=0;rebuildChoices()end end)
+ label(dialogues,"КВЕСТ ВЫДАЁТСЯ ТОЛЬКО ответом с действием «Принять квест» в фазе «До принятия». Без него игрок не сможет взять задание.",296,556,548,26,"GRMQ_Small",C.yellow)
+ label(dialogues,"Реплики идут сверху вниз. «Следующий ID» задаёт переход. Действия «Деньги» и «Предмет» выдают награду прямо в разговоре — это не заменяет награду за квест.",296,584,548,40,"GRMQ_Small",C.dim)
 
  -- Cutscene visual timeline
- local csPhase=comboEntry(cinema,"Фаза показа",12,10,210,{{"При принятии","accept"},{"При завершении","complete"}});local csList=darkList(cinema,12,70,290,480,{{"#",32},{"ID",88},{"Связь",70},{"Титр",95}});local cn={};cn.id=textEntry(cinema,"ID камеры",318,10,160);cn.next=textEntry(cinema,"Следующая камера",490,10,170);cn.transition=comboEntry(cinema,"Переход к этой точке",672,10,172,{{"Мгновенно","cut"},{"Плавный пролёт","move"}});cn.duration=numberEntry(cinema,"Показ точки, сек",318,68,150,.05,30);cn.moveDuration=numberEntry(cinema,"Время пролёта, сек",480,68,160,.05,30);cn.fov=numberEntry(cinema,"FOV",652,68,100,20,120);cn.caption=textEntry(cinema,"Титр / субтитр",318,126,526,60,true);cn.sound=textEntry(cinema,"Путь к звуку",318,214,526);cn.image=textEntry(cinema,"Материал изображения",318,272,526);local selectedCam=0
+ local csStrip=lifecycleStrip(cinema,"start",8)
+ local csPhase=comboEntry(cinema,"Фаза показа",12,74,210,{{"При принятии квеста","accept"},{"При завершении квеста","complete"}});local csList=darkList(cinema,12,134,290,416,{{"#",32},{"ID",88},{"Связь",70},{"Титр",95}});local cn={};cn.id=textEntry(cinema,"ID камеры",318,74,160);cn.next=textEntry(cinema,"Следующая камера",490,74,170);cn.transition=comboEntry(cinema,"Переход к этой точке",672,74,172,{{"Мгновенно","cut"},{"Плавный пролёт","move"}});cn.duration=numberEntry(cinema,"Показ точки, сек",318,132,150,.05,30);cn.moveDuration=numberEntry(cinema,"Время пролёта, сек",480,132,160,.05,30);cn.fov=numberEntry(cinema,"FOV",652,132,100,20,120);cn.caption=textEntry(cinema,"Титр / субтитр",318,190,526,48,true);cn.sound=textEntry(cinema,"Путь к звуку",318,262,526);cn.image=textEntry(cinema,"Материал изображения",318,320,526);local selectedCam=0
  local function phaseCams()if not work then return{}end;work.cutscene=work.cutscene or{accept={},complete={}};local phase=csPhase.ValueID or"accept";work.cutscene[phase]=work.cutscene[phase]or{};return work.cutscene[phase]end
  local function relinkCams()local nodes=phaseCams();for i,node in ipairs(nodes)do node.next=nodes[i+1]and tostring(nodes[i+1].id or("camera_"..(i+1)))or"";if i==1 then node.transition="cut"end end end
  local function nextCameraID()local used={};for _,node in ipairs(phaseCams())do used[tostring(node.id or"")]=true end;local i=1;while used["camera_"..i]do i=i+1 end;return"camera_"..i end
  rebuildCams=function()csList:Clear();for i,n in ipairs(phaseCams())do local relation=i==1 and"СТАРТ"or(n.transition=="move"and"ПРОЛЁТ"or"СКЛЕЙКА");local line=addDarkLine(csList,i,n.id or("camera_"..i),relation,string.sub(n.caption or"",1,24));line._index=i end end
  local function loadCam(i)local n=phaseCams()[i];if not n then return end;selectedCam=i;cn.id:SetText(n.id or("camera_"..i));cn.next:SetText(n.next or"");cn.transition.ValueID=n.transition or(i==1 and"cut"or"move");cn.transition:SetValue(cn.transition.ValueID=="move"and"Плавный пролёт"or"Мгновенно");cn.duration:SetValue(n.duration or 3);cn.moveDuration:SetValue(n.moveDuration or 1);cn.fov:SetValue(n.fov or 75);cn.caption:SetText(n.caption or"");cn.sound:SetText(n.sound or"");cn.image:SetText(n.image or"")end
- csPhase.OnSelect=function(_,_,_,data)csPhase.ValueID=data;selectedCam=0;rebuildCams()end;csList.OnRowSelected=function(_,_,line)loadCam(line._index)end
+ csPhase.OnSelect=function(_,_,_,data)csPhase.ValueID=data;selectedCam=0;rebuildCams();if IsValid(csStrip)then csStrip:Remove()end;csStrip=lifecycleStrip(cinema,data=="complete" and "complete" or "start",8);csStrip:SetZPos(-1)end;csList.OnRowSelected=function(_,_,line)loadCam(line._index)end
  local function applyCam()local n=phaseCams()[selectedCam];if not n then return end;n.id=cn.id:GetText();n.next=cn.next:GetText();n.transition=selectedCam==1 and"cut"or(cn.transition.ValueID or"cut");n.duration=cn.duration:GetValue();n.moveDuration=cn.moveDuration:GetValue();n.fov=cn.fov:GetValue();n.caption=cn.caption:GetText();n.sound=cn.sound:GetText();n.image=cn.image:GetText();rebuildCams();loadCam(selectedCam)end
- button(cinema,"+ Точка из текущего взгляда",318,330,224,38,C.blue,function()local nodes=phaseCams();local index=#nodes+1;local n={id=nextCameraID(),next="",transition=index==1 and"cut"or"move",moveDuration=1,pos={x=EyePos().x,y=EyePos().y,z=EyePos().z},ang={p=EyeAngles().p,y=EyeAngles().y,r=EyeAngles().r},duration=3,fov=75,caption="",sound="",image=""};if nodes[index-1]and tostring(nodes[index-1].next or"")==""then nodes[index-1].next=n.id end;nodes[index]=n;rebuildCams();loadCam(index)end);button(cinema,"Применить",554,330,108,38,C.green,applyCam);button(cinema,"Удалить",674,330,82,38,C.red,function()local n=phaseCams();if selectedCam>0 then local removed=n[selectedCam];table.remove(n,selectedCam);relinkCams();selectedCam=0;rebuildCams()end end);button(cinema,"↑",768,330,36,38,C.card,function()local n=phaseCams();if selectedCam>1 then n[selectedCam],n[selectedCam-1]=n[selectedCam-1],n[selectedCam];relinkCams();selectedCam=selectedCam-1;rebuildCams();loadCam(selectedCam)end end);button(cinema,"↓",808,330,36,38,C.card,function()local n=phaseCams();if selectedCam<#n then n[selectedCam],n[selectedCam+1]=n[selectedCam+1],n[selectedCam];relinkCams();selectedCam=selectedCam+1;rebuildCams();loadCam(selectedCam)end end)
- button(cinema,"Сделать стартовой",318,382,170,40,C.yellow,function()local n=phaseCams();if selectedCam>1 then local node=table.remove(n,selectedCam);table.insert(n,1,node);relinkCams();selectedCam=1;rebuildCams();loadCam(1)end end);button(cinema,"▶ Эта точка",500,382,140,40,C.yellow,function()applyCam();local n=phaseCams()[selectedCam];if n then f:SetVisible(false);startCutscene({n},true);Q.Cutscene.restoreFrame=f end end);button(cinema,"▶ Вся связка",652,382,140,40,C.green,function()applyCam();local nodes=phaseCams();if#nodes==0 then notification.AddLegacy("Нет точек для проверки",NOTIFY_HINT,3)return end;f:SetVisible(false);startCutscene(nodes,true);Q.Cutscene.restoreFrame=f end)
- button(cinema,"Добавлять точки тулом",318,434,210,40,Color(58,82,112),function()if not work then setStatus("Выберите квест",C.red)return end;if not saveWork(true)then return end;RunConsoleCommand("grm_quest_tool_mode","cutscene");RunConsoleCommand("grm_quest_tool_quest_id",work.id);RunConsoleCommand("grm_quest_tool_phase",csPhase.ValueID or"accept");RunConsoleCommand("gmod_tool","grm_quest_tool");notification.AddLegacy("Первая точка станет стартом. Следующие автоматически связываются.",NOTIFY_HINT,7)end)
- label(cinema,"Камера №1 — старт: сцена мгновенно начинается в ней. Для остальных выберите склейку или плавный пролёт. «Следующая камера» связывает точки по ID; пустое поле использует следующую строку.",318,492,526,88,"GRMQ_Body",C.dim)
+ button(cinema,"+ Точка из текущего взгляда",318,382,224,38,C.blue,function()local nodes=phaseCams();local index=#nodes+1;local n={id=nextCameraID(),next="",transition=index==1 and"cut"or"move",moveDuration=1,pos={x=EyePos().x,y=EyePos().y,z=EyePos().z},ang={p=EyeAngles().p,y=EyeAngles().y,r=EyeAngles().r},duration=3,fov=75,caption="",sound="",image=""};if nodes[index-1]and tostring(nodes[index-1].next or"")==""then nodes[index-1].next=n.id end;nodes[index]=n;rebuildCams();loadCam(index)end);button(cinema,"Применить",554,382,108,38,C.green,applyCam);button(cinema,"Удалить",674,382,82,38,C.red,function()local n=phaseCams();if selectedCam>0 then local removed=n[selectedCam];table.remove(n,selectedCam);relinkCams();selectedCam=0;rebuildCams()end end);button(cinema,"↑",768,382,36,38,C.card,function()local n=phaseCams();if selectedCam>1 then n[selectedCam],n[selectedCam-1]=n[selectedCam-1],n[selectedCam];relinkCams();selectedCam=selectedCam-1;rebuildCams();loadCam(selectedCam)end end);button(cinema,"↓",808,382,36,38,C.card,function()local n=phaseCams();if selectedCam<#n then n[selectedCam],n[selectedCam+1]=n[selectedCam+1],n[selectedCam];relinkCams();selectedCam=selectedCam+1;rebuildCams();loadCam(selectedCam)end end)
+ button(cinema,"Сделать стартовой",318,430,170,40,C.yellow,function()local n=phaseCams();if selectedCam>1 then local node=table.remove(n,selectedCam);table.insert(n,1,node);relinkCams();selectedCam=1;rebuildCams();loadCam(1)end end);button(cinema,"▶ Эта точка",500,430,140,40,C.yellow,function()applyCam();local n=phaseCams()[selectedCam];if n then f:SetVisible(false);startCutscene({n},true);Q.Cutscene.restoreFrame=f end end);button(cinema,"▶ Вся связка",652,430,140,40,C.green,function()applyCam();local nodes=phaseCams();if#nodes==0 then notification.AddLegacy("Нет точек для проверки",NOTIFY_HINT,3)return end;f:SetVisible(false);startCutscene(nodes,true);Q.Cutscene.restoreFrame=f end)
+ button(cinema,"Добавлять точки тулом",318,478,210,40,Color(58,82,112),function()if not work then setStatus("Выберите квест",C.red)return end;if not saveWork(true)then return end;RunConsoleCommand("grm_quest_tool_mode","cutscene");RunConsoleCommand("grm_quest_tool_quest_id",work.id);RunConsoleCommand("grm_quest_tool_phase",csPhase.ValueID or"accept");RunConsoleCommand("gmod_tool","grm_quest_tool");notification.AddLegacy("Первая точка станет стартом. Следующие автоматически связываются.",NOTIFY_HINT,7)end)
+ label(cinema,"Камера №1 — старт: сцена мгновенно начинается в ней. Для остальных выберите склейку или плавный пролёт. «Следующая камера» связывает точки по ID; пустое поле использует следующую строку.\n\nКат-сцена НЕ выдаёт награду — это только ролик. Награда настраивается во вкладке «4. Награды».",318,526,526,96,"GRMQ_Small",C.dim)
 
  local function syncGeneral()if not work then return end;work.id=g.id:GetText();work.title=g.title:GetText();work.category=g.category:GetText();work.npc=g.npc:GetText();work.summary=g.summary:GetText();work.prerequisites=splitCSV(g.prereq:GetText());for k,c in pairs(g.flags)do work[k]=c:GetChecked()end;work.rewards=work.rewards or{};work.rewards.money=rw.money:GetValue();work.rewards.items=table.Copy(rewardItems);work.achievement={enabled=rw.achEnabled:GetChecked(),hidden=rw.achHidden:GetChecked(),id=rw.achID:GetText(),name=rw.achName:GetText(),description=rw.achDesc:GetText(),reward=rw.achReward:GetValue()};work.notifications={};for key,cfg in pairs(nt)do work.notifications[key]={enabled=cfg.enabled:GetChecked(),banner=cfg.banner:GetChecked(),text=cfg.text:GetText(),sound=cfg.sound:GetText(),duration=cfg.duration:GetValue()}end;if selectedStage>0 then applyStage()end;if selectedNode>0 then applyNode()end;if selectedCam>0 then applyCam()end end
  saveWork=function(closeAfter)
@@ -492,8 +601,56 @@ local function adminStudio(data)
  questList.OnRowSelected=function(_,_,line)loadDef(line._def)end;rebuildQuestList()
  button(f,"Новый квест",16,714,130,42,C.blue,function()local draft={draft=true,id="quest_"..os.time(),title="Новый квест",category="История",npc="guide",summary="",enabled=true,repeatable=false,autoStart=false,steps={},rewards={money=0,items={}},prerequisites={},dialogue={offer={},active={},complete={}},cutscene={accept={},complete={}}};loadDef(draft);local line=addDarkLine(questList,draft.id,"[НОВЫЙ] "..draft.title,0);line._def=draft;questList:SelectItem(line);setStatus("Черновик появился в списке. Заполните этапы и нажмите «Сохранить».",C.yellow)end)
  button(f,"Сохранить",154,714,110,42,C.green,function()saveWork(false)end)
- button(f,"Удалить",272,714,90,42,C.red,function()if not work then setStatus("Выберите квест",C.red)return end;Derma_Query("Удалить квест «"..tostring(work.title).."»?","GRM Quest Studio","Удалить",function()net.Start("GRM_Quest_AdminOp");net.WriteString("delete");net.WriteString(work.id or"");net.SendToServer();setStatus("Удаление...",C.yellow)end,"Отмена")end)
- local status=label(f,"",378,714,800,42,"GRMQ_Body",C.dim);status.Think=function(self)self:SetText(statusText);self:SetTextColor(statusColor)end
+
+ --[[ ПРОВЕРКА КВЕСТА (заказ владельца 28.08: «ничего не понятно в этом
+      меню»).
+
+      Раньше о том, что квест собран неправильно, автор узнавал только
+      на сервере: подошёл к NPC — а взять нельзя, и почему, неизвестно.
+      Кнопка прогоняет тот же Q.Validate, что и сервер, и показывает
+      человеческим языком, что именно сломано и что просто подозрительно. ]]
+ button(f,"Проверить",372,714,110,42,C.yellow,function()
+  if not work then setStatus("Сначала выберите квест",C.red)return end
+  syncGeneral()
+  local issues=(Q.Validate and Q.Validate(work))or{}
+  local errors,warns=0,0
+  for _,it in ipairs(issues)do if it.level=="error" then errors=errors+1 else warns=warns+1 end end
+
+  local vf=vgui.Create("DFrame")
+  vf:SetSize(660,420);vf:Center();vf:MakePopup();vf:SetTitle("");vf:ShowCloseButton(true)
+  vf.Paint=function(_,w,h)
+   draw.RoundedBox(10,0,0,w,h,C.bg)
+   draw.RoundedBoxEx(10,0,0,w,46,Color(16,25,39),true,true,false,false)
+   draw.SimpleText("ПРОВЕРКА КВЕСТА","GRMQ_Title",18,23,C.text,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
+   local verdict = errors>0 and "НЕ БУДЕТ РАБОТАТЬ" or (warns>0 and "РАБОТАЕТ, НО ЕСТЬ ЗАМЕЧАНИЯ" or "ВСЁ В ПОРЯДКЕ")
+   local vcol = errors>0 and C.red or (warns>0 and C.yellow or C.green)
+   draw.SimpleText(verdict,"GRMQ_Head",w-18,23,vcol,TEXT_ALIGN_RIGHT,TEXT_ALIGN_CENTER)
+  end
+
+  local scroll=vgui.Create("DScrollPanel",vf);scroll:SetPos(14,56);scroll:SetSize(632,350)
+  if #issues==0 then
+   local okp=vgui.Create("DPanel",scroll);okp:SetSize(614,64);okp:Dock(TOP);okp:DockMargin(0,0,0,8)
+   okp.Paint=function(_,w,h)
+    draw.RoundedBox(7,0,0,w,h,Color(20,44,32));draw.RoundedBox(0,0,0,4,h,C.green)
+    draw.SimpleText("Ошибок не найдено. Квест можно сохранять.","GRMQ_Body",16,22,C.text,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
+    draw.SimpleText("Проверьте на сервере: подойдите к NPC и возьмите задание.","GRMQ_Small",16,44,C.dim,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
+   end
+  end
+  for _,it in ipairs(issues)do
+   local isErr=it.level=="error"
+   local row=vgui.Create("DPanel",scroll);row:SetSize(614,52);row:Dock(TOP);row:DockMargin(0,0,0,6)
+   row.Paint=function(_,w,h)
+    draw.RoundedBox(7,0,0,w,h,isErr and Color(46,20,24) or Color(44,37,18))
+    draw.RoundedBox(0,0,0,4,h,isErr and C.red or C.yellow)
+    draw.SimpleText(isErr and "ОШИБКА" or "ВНИМАНИЕ","GRMQ_Small",16,15,isErr and C.red or C.yellow,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
+    draw.SimpleText(tostring(it.text or""),"GRMQ_Small",16,34,C.text,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
+   end
+  end
+  setStatus(("Проверка: ошибок %d, замечаний %d"):format(errors,warns),
+   errors>0 and C.red or (warns>0 and C.yellow or C.green))
+ end)
+ button(f,"Удалить",490,714,90,42,C.red,function()if not work then setStatus("Выберите квест",C.red)return end;Derma_Query("Удалить квест «"..tostring(work.title).."»?","GRM Quest Studio","Удалить",function()net.Start("GRM_Quest_AdminOp");net.WriteString("delete");net.WriteString(work.id or"");net.SendToServer();setStatus("Удаление...",C.yellow)end,"Отмена")end)
+ local status=label(f,"",592,714,600,42,"GRMQ_Body",C.dim);status.Think=function(self)self:SetText(statusText);self:SetTextColor(statusColor)end
  if definitions[1]then loadDef(definitions[1])end
 end
 net.Receive("GRM_Quest_AdminOpen",function()adminStudio(net.ReadTable()or {})end)

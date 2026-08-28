@@ -30,6 +30,160 @@ local function characterKey(ply)
 end
 Q.CharacterKey = characterKey
 
+--[[--------------------------------------------------------------------
+    КОГДА ЧТО СРАБАТЫВАЕТ (заказ владельца 28.08).
+
+    «Не понятно, как выстраивать выдачу наград и ачивок, и к чему
+     сделано криво — до квеста / вовремя / после? Как подключить
+     выплаты? Как диалоги нормально настроить?»
+
+    Порядок жизни квеста жёстко зашит в код, но раньше нигде не был
+    записан, поэтому со стороны выглядел произвольным. Фиксируем его
+    здесь ОДИН раз, и студия строит свою подсказку из этой же таблицы —
+    чтобы описание не разошлось с поведением.
+
+    Ось времени:
+
+      1. ДО КВЕСТА. Игрок подходит к NPC. Проигрывается диалог фазы
+         «offer». Награды тут НЕ выдаются. Единственный способ выдать
+         квест — ответ с действием «Принять квест» (accept). Нет такого
+         ответа — квест взять физически нельзя.
+
+      2. ПРИНЯТИЕ. Q.Start: пишется прогресс, показывается уведомление
+         «start», проигрывается кат-сцена «accept».
+
+      3. ВО ВРЕМЯ. Идут этапы. На каждом выполненном — уведомление
+         «step». Диалог фазы «active» это просто разговор по ходу дела,
+         он на прогресс не влияет (кроме своих действий вроде «Событие»).
+
+      4. ЗАВЕРШЕНИЕ. Когда кончились этапы: сначала НАГРАДА КВЕСТА
+         (деньги и предметы), затем АЧИВКА со своей отдельной наградой,
+         затем уведомление «complete», затем кат-сцена «complete».
+
+      5. ПОСЛЕ. Диалог фазы «complete» — только разговор. Повторная
+         выдача награды не происходит: если квест не «повторяемый»,
+         второй раз его не начать.
+
+    Отсюда ответ на вопрос «как подключить выплаты»: награда квеста —
+    вкладка «Награды», выдаётся САМА в шаге 4. Отдельные выплаты по ходу
+    разговора — действие «Деньги»/«Предмет» у ответа в диалоге.
+----------------------------------------------------------------------]]
+Q.Lifecycle = {
+    { phase = "offer",    when = "ДО КВЕСТА",   what = "Диалог у NPC. Награды не выдаются. Взять квест можно ТОЛЬКО ответом с действием «Принять квест»." },
+    { phase = "start",    when = "ПРИНЯТИЕ",    what = "Уведомление «Принятие квеста» + кат-сцена «При принятии»." },
+    { phase = "active",   when = "ВО ВРЕМЯ",    what = "Этапы по порядку. На каждом — уведомление «Завершение этапа». Диалог «Во время квеста» на прогресс не влияет." },
+    { phase = "complete", when = "ЗАВЕРШЕНИЕ",  what = "1) награда квеста: деньги и предметы; 2) ачивка и её отдельная награда; 3) уведомление; 4) кат-сцена «При завершении»." },
+    { phase = "after",    when = "ПОСЛЕ",       what = "Диалог «После завершения» — только разговор. Награда повторно не выдаётся." },
+}
+
+--[[ ПРОВЕРКА КВЕСТА НА ТИПОВЫЕ ОШИБКИ.
+
+     Держим в ОБЩЕЙ части, а не в студии: так одна и та же проверка
+     работает и в редакторе, и на сервере при сохранении, и в стенде.
+
+     Возвращает список проблем: { level = "error"|"warn", text = ... }.
+     error — квест сломан и работать не будет; warn — работать будет, но
+     почти наверняка не так, как задумано. ]]
+function Q.Validate(def)
+    local out = {}
+    if not istable(def) then return out end
+
+    local function add(level, text) out[#out + 1] = { level = level, text = text } end
+
+    local steps = istable(def.steps) and def.steps or {}
+    local dlg = istable(def.dialogue) and def.dialogue or {}
+    local offer = istable(dlg.offer) and (dlg.offer.nodes or dlg.offer) or {}
+    local rewards = istable(def.rewards) and def.rewards or {}
+    local ach = istable(def.achievement) and def.achievement or {}
+
+    if tostring(def.title or "") == "" then add("error", "Нет названия квеста.") end
+    if #steps == 0 then
+        add("error", "Нет ни одного этапа — квест сохранится черновиком и не появится у NPC.")
+    end
+
+    --[[ САМАЯ ЧАСТАЯ ЛОВУШКА. Квест выдаётся только действием accept в
+         диалоге. Всё настроено, а взять нельзя — и непонятно почему. ]]
+    local hasAccept = false
+    for _, node in ipairs(offer) do
+        for _, ch in ipairs(istable(node) and node.choices or {}) do
+            if tostring(ch.action or "") == "accept" then hasAccept = true break end
+        end
+        if hasAccept then break end
+    end
+    if #offer == 0 then
+        if not def.autoStart then
+            add("error", "Нет диалога «До принятия» — игроку негде взять квест. Добавьте реплику и ответ с действием «Принять квест».")
+        end
+    elseif not hasAccept and not def.autoStart then
+        add("error", "В диалоге «До принятия» нет ответа с действием «Принять квест» — взять квест невозможно.")
+    end
+
+    if tostring(def.npc or "") == "" and not def.autoStart then
+        add("warn", "Не указан ID квестового NPC — квест некому выдавать.")
+    end
+
+    -- Награда: молчаливый ноль почти всегда означает «забыли заполнить».
+    local money = math.floor(tonumber(rewards.money) or 0)
+    local itemCount = 0
+    for _ in pairs(istable(rewards.items) and rewards.items or {}) do itemCount = itemCount + 1 end
+    if money <= 0 and itemCount == 0 and not (ach.enabled and (tonumber(ach.reward) or 0) > 0) then
+        add("warn", "Награды нет совсем: ни денег, ни предметов, ни ачивки.")
+    end
+
+    if ach.enabled then
+        if tostring(ach.name or "") == "" then add("warn", "Ачивка включена, но без названия.") end
+        if tostring(ach.id or "") == "" then add("error", "Ачивка включена, но без ID.") end
+    end
+
+    -- Ссылки между репликами: висячий переход обрывает разговор молча.
+    for phase, list in pairs(dlg) do
+        local nodes = istable(list) and (list.nodes or list) or {}
+        local byID = {}
+        for _, n in ipairs(nodes) do byID[tostring(n.id or "")] = true end
+        for _, n in ipairs(nodes) do
+            local nx = tostring(n.next or "")
+            if nx ~= "" and not byID[nx] then
+                add("warn", ("Реплика «%s» (%s) ведёт на несуществующий ID «%s»."):format(
+                    tostring(n.id or "?"), tostring(phase), nx))
+            end
+            for _, ch in ipairs(istable(n.choices) and n.choices or {}) do
+                local cn = tostring(ch.next or "")
+                if cn ~= "" and not byID[cn] then
+                    add("warn", ("Ответ «%s» ведёт на несуществующий ID «%s»."):format(
+                        tostring(ch.text or "?"), cn))
+                end
+                -- Действие с обязательным аргументом без аргумента молча не сработает.
+                local act = tostring(ch.action or "")
+                local needsArg = { set_flag = true, clear_flag = true, give_money = true,
+                    give_item = true, emit = true }
+                if needsArg[act] and tostring(ch.actionArg or "") == "" then
+                    add("warn", ("Ответ «%s»: действие «%s» без аргумента — ничего не произойдёт."):format(
+                        tostring(ch.text or "?"), act))
+                end
+            end
+        end
+    end
+
+    -- Этапы: пустая цель у типовых ошибок настройки.
+    for i, s in ipairs(steps) do
+        local t = tostring(s.type or "")
+        if t == "event" and tostring(s.event or "") == "" then
+            add("error", ("Этап %d: тип «Событие», но само событие не указано."):format(i))
+        end
+        if t == "item" and tostring(s.item or "") == "" then
+            add("error", ("Этап %d: тип «Иметь предмет», но предмет не указан."):format(i))
+        end
+        if t == "talk" and tostring(s.npc or "") == "" then
+            add("warn", ("Этап %d: разговор с NPC, но ID NPC пуст."):format(i))
+        end
+        if t == "visit" and not istable(s.pos) and not istable(s.min) then
+            add("error", ("Этап %d: «Посетить место» без заданной зоны — настройте её тулом."):format(i))
+        end
+    end
+
+    return out
+end
+
 if SERVER then
     util.AddNetworkString("GRM_Quest_OpenNPC")
     util.AddNetworkString("GRM_Quest_PlayerOp")
