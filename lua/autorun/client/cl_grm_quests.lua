@@ -217,7 +217,18 @@ local function drawCutsceneBars()
 end
 
 hook.Add("HUDPaintBackground", "GRM_Quest_CutsceneHUD", drawCutsceneBars)
-hook.Add("HUDPaint", "GRM_Quest_CutsceneHUDTop", drawCutsceneBars)
+
+--[[ ВЕРХНИЙ ПРОХОД — в DrawOverlay, а не в HUDPaint (правка 28.08).
+
+     Подписи над сущностями теперь рисуются во время сцены, и живут они
+     в том же HUDPaint. Порядок хуков внутри одного события Lua не
+     гарантирует ничего: метка над дверью могла лечь ПОВЕРХ чёрной
+     полосы, если её хук отработал последним.
+
+     DrawOverlay идёт после всего HUDPaint целиком, поэтому полосы
+     гарантированно сверху: подписи видны в кадре, но обрезаются
+     полосами, как в настоящем кино. ]]
+hook.Add("DrawOverlay", "GRM_Quest_CutsceneHUDTop", drawCutsceneBars)
 
 --[[ Стандартный HUD Source: здоровье, патроны, СЕЛЕКТОР ОРУЖИЯ, прицел.
      Возврат false прячет элемент. Чат не трогаем: он рисуется поверх
@@ -238,10 +249,61 @@ end)
      лезли бы поверх полос. На время сцены снимаем их и возвращаем при
      любом выходе. Приём тот же, что в CCTV — там эта задача уже решена. ]]
 local suppressedHUDPaint = {}
+--[[ ЧТО ОСТАВЛЯЕМ РИСОВАТЬСЯ ВО ВРЕМЯ СЦЕНЫ (правка 28.08).
+
+     Владелец: «надо чтобы кат-сцена нормально рендерила подписи ко
+     всяким энтити, сущностям, надписи над ними и т.д.»
+
+     Прошлая версия снимала ВСЕ чужие HUDPaint подряд. Это убрало
+     мусор — но заодно и подписи над объектами мира: названия дверей,
+     таблички недвижимости, имена игроков, метки заданий. В кадре
+     кат-сцены оставалась голая геометрия, что для постановочной сцены
+     как раз плохо: зритель не понимает, на что смотрит.
+
+     Теперь список ЯВНЫЙ. Здесь только то, что привязано к точке в
+     мире — подписи над сущностями и игроками. Всё панельное (полоски
+     здоровья, трекер квестов, компас, уведомления, тулы) по-прежнему
+     снимается: это интерфейс игрока, в кадре ему делать нечего.
+
+     Принцип отбора: рисует ли хук что-то ЧЕРЕЗ ToScreen у конкретного
+     объекта. Если да — это часть мира, оставляем. ]]
 local KEEP_HUDPAINT = {
+    -- Наши полосы и подпись сцены.
     GRM_Quest_CutsceneHUD = true,
     GRM_Quest_CutsceneHUDTop = true,
+
+    -- Подписи над игроками: имя, профессия, описание, состояние.
+    GRM_Nameplate = true,
+    GRM_RPDesc = true,
+    GRM_Arrest_Label = true,
+    GRM_Bleedout_World = true,
+
+    -- Подписи над объектами мира.
+    GRM_Doors_HUD3D2D = true,          -- названия и владельцы дверей
+    GRM_Estate_Labels = true,          -- жильё и бизнес без привязанной двери
+    GRML_EntityLabels = true,          -- логистические точки фракций
+    GRM_FC_ScrapBinLabel = true,       -- контейнеры производства
+    GRM_FC_Progress = true,            -- прогресс станков над ними
+    GRM_ChipControl_WorldTag = true,   -- метки чипованных объектов
+
+    -- Точки назначения: без них в сцене пропадёт цель, к которой ведут.
+    GRM_Jobs_GarbageRouteMarkers = true,
+    GRM_Jobs_GPSMarker = true,
+    GRM_GPS_WorldMarkerHUD = true,
+    GRM_GPS_TempMarkers = true,
+    GRM_FireDispatch_HUD = true,
 }
+
+--[[ Открытая точка расширения: сторонний модуль может попросить не
+     снимать свой мировой хук, не правя этот файл.
+
+     GRM.Quests.KeepDuringCutscene("MyAddon_WorldLabels") ]]
+function Q.KeepDuringCutscene(id, keep)
+    id = tostring(id or "")
+    if id == "" then return false end
+    KEEP_HUDPAINT[id] = keep ~= false
+    return true
+end
 
 local function suppressForeignHUD()
     local hooks = hook.GetTable and hook.GetTable().HUDPaint

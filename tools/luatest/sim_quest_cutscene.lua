@@ -438,21 +438,145 @@ for _, d in ipairs(DRAWN) do
 end
 ok(bgBars >= 2, "полосы рисуются в фоновом проходе, до чужих хуков", bgBars)
 
+--[[ ВЕРХНИЙ ПРОХОД ПЕРЕЕХАЛ В DrawOverlay (правка 28.08).
+
+     Пока снимались ВСЕ чужие HUDPaint, полосам хватало второго прохода
+     в том же HUDPaint. Теперь подписи над сущностями специально
+     оставлены и рисуются там же — а порядок хуков внутри одного события
+     ничем не гарантирован. Метка над дверью могла лечь ПОВЕРХ полосы.
+
+     DrawOverlay идёт после всего HUDPaint целиком, поэтому полосы
+     всегда сверху. ]]
 DRAWN = {}
-for id, fn in pairs(hook._t.HUDPaint or {}) do
-    if id == "GRM_Quest_CutsceneHUDTop" then order[#order + 1] = "bars" end
-    fn()
-end
-local topBars = 0
+for _, fn in pairs(hook._t.HUDPaint or {}) do fn() end
+local barsInHudPaint = 0
 for _, d in ipairs(DRAWN) do
-    if d.kind == "rect" and d.w and d.w >= ScrW() then topBars = topBars + 1 end
+    if d.kind == "rect" and d.w and d.w >= ScrW() then barsInHudPaint = barsInHudPaint + 1 end
 end
-ok(topBars >= 2,
-   "ИСПРАВЛЕНО: полосы рисуются и в основном проходе — накрывают то, что прорвалось",
-   topBars)
+ok(barsInHudPaint == 0,
+   "второго прохода в HUDPaint больше нет — он не давал гарантии порядка",
+   barsInHudPaint)
+
+DRAWN = {}
+hook.Run("DrawOverlay")
+local overlayBars = 0
+for _, d in ipairs(DRAWN) do
+    if d.kind == "rect" and d.w and d.w >= ScrW() then overlayBars = overlayBars + 1 end
+end
+ok(overlayBars >= 2,
+   "ИСПРАВЛЕНО: полосы рисуются в DrawOverlay — гарантированно поверх всех подписей",
+   overlayBars)
 
 hook.Remove("HUDPaint", "AAA_SneakyHUD")
 endCutscene()
+
+-----------------------------------------------------------------------
+print("\n=== 10. ПОДПИСИ НАД СУЩНОСТЯМИ РИСУЮТСЯ В КАДРЕ ===")
+-----------------------------------------------------------------------
+--[[ Заказ владельца 28.08: «надо чтобы кат-сцена нормально рендерила
+     подписи ко всяким энтити, сущностям, надписи над ними и т.д.»
+
+     Прошлая версия снимала ВСЕ чужие HUDPaint и заодно убивала подписи
+     над объектами: названия дверей, таблички недвижимости, имена
+     игроков. В кадре оставалась голая геометрия. ]]
+
+-- Мировые подписи: рисуют текст у конкретной точки мира.
+local WORLD_LABELS = {
+    "GRM_Nameplate", "GRM_RPDesc", "GRM_Doors_HUD3D2D", "GRM_Estate_Labels",
+    "GRML_EntityLabels", "GRM_FC_ScrapBinLabel", "GRM_FC_Progress",
+    "GRM_ChipControl_WorldTag", "GRM_Arrest_Label", "GRM_Bleedout_World",
+    "GRM_Jobs_GPSMarker", "GRM_GPS_WorldMarkerHUD", "GRM_FireDispatch_HUD",
+}
+-- Панельный интерфейс игрока: в кадре ему делать нечего.
+local PANEL_HUDS = {
+    "GRM_HUD_Main", "GRM_Quest_Tracker", "GRM_Minimap_HUD", "GRM_Jobs_HudLine",
+    "GRM_Ach_Toast", "GRM_Weight_Warning", "GRM_Wanted_BadgeV2",
+    "GRM_Augmentations_HUD", "SomeRandomAddon_HUD",
+}
+
+local worldCalls, panelCalls = 0, 0
+for _, id in ipairs(WORLD_LABELS) do
+    hook.Add("HUDPaint", id, function() worldCalls = worldCalls + 1 end)
+end
+for _, id in ipairs(PANEL_HUDS) do
+    hook.Add("HUDPaint", id, function() panelCalls = panelCalls + 1 end)
+end
+
+-- Вне сцены рисуются все.
+worldCalls, panelCalls = 0, 0
+paintFrame()
+ok(worldCalls == #WORLD_LABELS and panelCalls == #PANEL_HUDS,
+   "вне сцены рисуются и подписи, и панели",
+   ("подписи %d, панели %d"):format(worldCalls, panelCalls))
+
+beginCutscene()
+hook.Run("Think")
+
+worldCalls, panelCalls = 0, 0
+paintFrame()
+ok(worldCalls == #WORLD_LABELS,
+   "ИСПРАВЛЕНО: во время сцены подписи над сущностями рисуются",
+   ("%d из %d"):format(worldCalls, #WORLD_LABELS))
+ok(panelCalls == 0,
+   "а панельный интерфейс по-прежнему скрыт — лишнего в кадре нет",
+   panelCalls)
+
+--[[ Проверяем поимённо: пропажа даже одной подписи означает, что в
+     сцене не подписан целый класс объектов. ]]
+--[[ ВАЖНО: хук вешаем и ТОЛЬКО ПОТОМ прогоняем Think.
+
+     Первая версия цикла добавляла хук уже после Think, поэтому снятие
+     до него просто не доходило — проверка проходила даже когда список
+     защищённых имён был пуст. Откат «снимать всё подряд» она не
+     заметила. Теперь порядок правильный: добавили, дали сцене снять
+     лишнее, и только тогда рисуем кадр. ]]
+for _, id in ipairs(WORLD_LABELS) do
+    local called = false
+    hook.Add("HUDPaint", id, function() called = true end)
+    hook.Run("Think")
+    called = false
+    paintFrame()
+    ok(called, "рисуется: " .. id)
+end
+
+--[[ Полосы обязаны накрывать подписи, а не наоборот: иначе метка над
+     дверью торчала бы на чёрной кайме. ]]
+DRAWN = {}
+paintFrame()
+local labelsDrawn = #DRAWN
+hook.Run("DrawOverlay")
+local afterOverlay = 0
+for i = labelsDrawn + 1, #DRAWN do
+    local d = DRAWN[i]
+    if d.kind == "rect" and d.w and d.w >= ScrW() then afterOverlay = afterOverlay + 1 end
+end
+ok(afterOverlay >= 2,
+   "полосы ложатся ПОСЛЕ подписей — подпись обрезается каймой, как в кино",
+   afterOverlay)
+
+--[[ Точка расширения: сторонний модуль может защитить свой мировой хук
+     без правки файла квестов. ]]
+ok(isfunction(Q.KeepDuringCutscene), "есть открытая точка расширения списка")
+local extCalls = 0
+hook.Add("HUDPaint", "ThirdParty_WorldLabels", function() extCalls = extCalls + 1 end)
+Q.KeepDuringCutscene("ThirdParty_WorldLabels")
+hook.Run("Think")
+extCalls = 0
+paintFrame()
+ok(extCalls == 1, "защищённый сторонний хук пережил сцену", extCalls)
+
+Q.KeepDuringCutscene("ThirdParty_WorldLabels", false)
+hook.Run("Think")
+extCalls = 0
+paintFrame()
+ok(extCalls == 0, "и снимается обратно, когда защиту убрали", extCalls)
+
+-- Возвращаем окружение в исходное состояние.
+hook.Run("PlayerButtonDown", LP, KEY_SPACE)
+for _, id in ipairs(WORLD_LABELS) do hook.Remove("HUDPaint", id) end
+for _, id in ipairs(PANEL_HUDS) do hook.Remove("HUDPaint", id) end
+hook.Remove("HUDPaint", "ThirdParty_WorldLabels")
+
 
 -----------------------------------------------------------------------
 print(("\n== ИТОГ: %d ok, %d FAIL =="):format(pass, fail))
