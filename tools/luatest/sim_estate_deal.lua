@@ -139,6 +139,24 @@ GRM.Doors = {
      недвижимость через хук, и только если она отказалась, продаём
      дверь сама по себе. ]]
 GRM.Doors.DoorPrice = 15000
+--[[ Освобождение двери — как в настоящем модуле: сначала спрашиваем
+     недвижимость, и только если она отказалась, освобождаем саму дверь. ]]
+GRM.Doors.ReleaseDoor = function(ply, ent)
+    if not (IsValid(ply) and IsValid(ent)) then return false end
+    local rec = GRM.Doors.GetRecord(ent)
+    if not rec then return false end
+    if rec.owner_type == "none" then return false, "дверь и так ничья" end
+
+    local handled = hook.Run("GRM_DoorReleaseToProperty", ply, ent, rec)
+    if handled ~= nil then return handled == true end
+
+    rec.owner_type = "none"
+    rec.owner_key, rec.owner_nick = "", ""
+    rec.ownable = true
+    GRM.Doors.ApplyRecordVisual(ent, rec)
+    return true
+end
+
 GRM.Doors.ClaimDoor = function(ply, ent, mode)
     if not (IsValid(ply) and IsValid(ent)) then return false end
     local rec = GRM.Doors.GetRecord(ent)
@@ -768,6 +786,197 @@ do
         local t=f:read("*a") f:close() return t end)()
     ok(prop:find("GRM.EstateDeal.DoorNearZone", 1, true) ~= nil,
        "проверка «рядом» учитывает игрока у двери снаружи зоны")
+end
+
+-----------------------------------------------------------------------
+print("\n=== 17. ОСВОБОДИТЬ ЧЕРЕЗ ДВЕРЬ = ПРОДАТЬ ГОСУДАРСТВУ ===")
+-----------------------------------------------------------------------
+--[[ «Если я через дверь нажал освободить, то дом сразу же должен быть
+     продан государству.»
+
+     Раньше кнопка снимала владельца ТОЛЬКО с двери: объект оставался за
+     игроком, но без входа — внутрь не попасть, а деньги не вернулись. ]]
+
+-- Рынок: продажа государству за долю цены.
+GRM.Estate.StateBuyback = 0.6
+GRM.Estate.IsOwner = function(ply, rec)
+    return tostring(rec.ownerType or "") == "character"
+       and tostring(rec.ownerKey or "") == ply._key
+end
+GRM.Estate.IsBusiness = function(rec) return GRM.Estate.KindOf(rec) == "business" end
+GRM.Estate.CashInZone = function(rec) return rec._cash or 0 end
+GRM.Estate.InvalidateScan = function() end
+GRM.Estate.Sync = function() end
+GRM.Estate.SellToState = function(ply, rec)
+    if not GRM.Estate.IsOwner(ply, rec) then return false, "Это не ваш объект" end
+    if GRM.Estate.IsBusiness(rec) and GRM.Estate.CashInZone(rec) > 0 then
+        return false, "Сначала снимите кассу бизнеса"
+    end
+    local price = math.floor((tonumber(rec.purchasePrice) or 0) * GRM.Estate.StateBuyback)
+    local debt = math.max(0, tonumber(rec.utilityDebt) or 0)
+    local paid = math.min(debt, price)
+    local payout = price - paid
+    rec.ownerType, rec.ownerKey, rec.ownerName = "none", "", ""
+    rec.tenure, rec.rentUntil = "none", 0
+    rec.employees, rec.guests, rec.tempKeys = {}, {}, {}
+    rec.utilityDebt = debt - paid
+    GRM.GiveMoney(ply, payout)
+    hook.Run("GRM_PropertyOwnerChanged", rec, "release", ply)
+    return true, "Продано государству за " .. payout .. " GRM"
+end
+
+do
+    P.Records = {}
+    DOOR_RECS = {}
+    WORLD = {}
+    local home = P.Normalize({
+        id="r1", name="Дом на продажу", type="apartment",
+        ownerType="none", tenure="none", purchasePrice=100000, rentPrice=9000,
+        utilityDebt=0,
+        zone={mins=Vector(8000,-100,0), maxs=Vector(8200,100,200)},
+    })
+    P.Records["r1"] = home
+    P.Reindex()
+
+    local dr = mkDoor("rd1", Vector(8100, 0, 10))
+    local seller = mkPly({ key="21:char1", name="Продавец", pos=Vector(8100, 0, 0) })
+    PLAYERS = { seller }
+    WALLET[seller] = 500000
+
+    -- Сначала покупаем.
+    GRM.Doors.ClaimDoor(seller, dr, "buy")
+    ok(home.ownerKey == "21:char1", "дом куплен")
+    local afterBuy = WALLET[seller]
+
+    -- Теперь освобождаем ЧЕРЕЗ ДВЕРЬ.
+    NOTIFIED = {}
+    local okRel = GRM.Doors.ReleaseDoor(seller, dr)
+
+    ok(okRel == true, "освобождение через дверь прошло")
+    ok(home.ownerType == "none",
+       "ГЛАВНОЕ: продан ВЕСЬ объект, а не только дверь", tostring(home.ownerType))
+    ok(WALLET[seller] == afterBuy + 60000,
+       "ИСПРАВЛЕНО: за дом вернули 60% цены, а не ноль",
+       WALLET[seller] - afterBuy)
+
+    local told = false
+    for _, n in ipairs(NOTIFIED) do
+        if n.to == seller and tostring(n.msg):find("государству", 1, true) then told = true end
+    end
+    ok(told, "игроку сказали, за сколько продали")
+end
+
+-----------------------------------------------------------------------
+print("\n=== 18. ДОЛГ УДЕРЖИВАЕТСЯ, КАССА МЕШАЕТ ===")
+-----------------------------------------------------------------------
+do
+    P.Records = {} DOOR_RECS = {} WORLD = {}
+    local biz = P.Normalize({
+        id="r2", name="Ларёк", type="shop", estateKind="business",
+        ownerType="character", ownerKey="22:char1", tenure="owned",
+        purchasePrice=100000, utilityDebt=25000,
+        zone={mins=Vector(9000,-100,0), maxs=Vector(9200,100,200)},
+    })
+    P.Records["r2"] = biz
+    P.Reindex()
+    local dr = mkDoor("rd2", Vector(9100, 0, 10))
+    DOOR_RECS["rd2"] = { id="rd2", owner_type="player", owner_key="22:char1",
+                         owner_nick="Торговец", ownable=false, title="Ларёк" }
+
+    local biznes = mkPly({ key="22:char1", name="Торговец", pos=Vector(9100, 0, 0) })
+    PLAYERS = { biznes }
+    WALLET[biznes] = 0
+
+    -- Несобранная касса не даёт продать: деньги пропали бы вместе с объектом.
+    biz._cash = 5000
+    NOTIFIED = {}
+    local okRel = GRM.Doors.ReleaseDoor(biznes, dr)
+    ok(okRel == false, "с несобранной кассой объект не продаётся")
+    ok(biz.ownerKey == "22:char1", "и владелец не сменился")
+    local why = false
+    for _, n in ipairs(NOTIFIED) do
+        if tostring(n.msg):find("кассу", 1, true) then why = true end
+    end
+    ok(why, "причина названа, а не молчаливый отказ")
+
+    -- Кассу сняли — продаётся, долг удержан.
+    biz._cash = 0
+    GRM.Doors.ReleaseDoor(biznes, dr)
+    ok(biz.ownerType == "none", "после сбора кассы продажа прошла")
+    ok(WALLET[biznes] == 60000 - 25000,
+       "ИСПРАВЛЕНО: долг по ЖКХ удержан из выплаты",
+       WALLET[biznes])
+    ok(biz.utilityDebt == 0, "и долг погашен", biz.utilityDebt)
+end
+
+-----------------------------------------------------------------------
+print("\n=== 19. ЧУЖОЕ И ОБЫЧНЫЕ ДВЕРИ ===")
+-----------------------------------------------------------------------
+do
+    P.Records = {} DOOR_RECS = {} WORLD = {}
+    local home = P.Normalize({
+        id="r3", name="Чужой дом", type="apartment",
+        ownerType="character", ownerKey="30:char1", tenure="owned",
+        purchasePrice=50000,
+        zone={mins=Vector(10000,-100,0), maxs=Vector(10200,100,200)},
+    })
+    P.Records["r3"] = home
+    P.Reindex()
+    local dr = mkDoor("rd3", Vector(10100, 0, 10))
+    DOOR_RECS["rd3"] = { id="rd3", owner_type="player", owner_key="30:char1",
+                         owner_nick="Хозяин", ownable=false }
+
+    local thief = mkPly({ key="31:char1", name="Чужак", pos=Vector(10100, 0, 0) })
+    PLAYERS = { thief }
+    WALLET[thief] = 0
+    NOTIFIED = {}
+
+    local okRel = GRM.Doors.ReleaseDoor(thief, dr)
+    ok(okRel == false, "чужой дом через дверь не продать")
+    ok(home.ownerKey == "30:char1", "владелец не сменился")
+    ok(WALLET[thief] == 0, "и денег чужак не получил")
+
+    -- Обычная дверь вне зон освобождается как раньше.
+    local lone = mkDoor("rd_lone", Vector(60000, 60000, 0))
+    DOOR_RECS["rd_lone"] = { id="rd_lone", owner_type="player", owner_key="31:char1",
+                             owner_nick="Чужак", ownable=false }
+    local okLone = GRM.Doors.ReleaseDoor(thief, lone)
+    ok(okLone == true, "обычная дверь освобождается по-старому")
+    ok(DOOR_RECS["rd_lone"].owner_type == "none", "и становится ничьей")
+    ok(DOOR_RECS["rd_lone"].ownable == true, "и снова покупаемой")
+end
+
+-----------------------------------------------------------------------
+print("\n=== 20. ИСХОДНИКИ ===")
+-----------------------------------------------------------------------
+do
+    local doors = (function() local f=assert(io.open("lua/autorun/sh_grm_doors.lua"))
+        local t=f:read("*a") f:close() return t end)()
+    ok(doors:find("GRM_DoorReleaseToProperty", 1, true) ~= nil,
+       "модуль дверей спрашивает недвижимость перед освобождением")
+    local rel = doors:match("function D%.ReleaseDoor.-\n    end")
+    local hookPos = rel and rel:find("GRM_DoorReleaseToProperty", 1, true)
+    local clearPos = rel and rel:find('rec.owner_type = "none"', 1, true)
+    ok(hookPos and clearPos and hookPos < clearPos,
+       "спрашивает ДО обнуления двери — объект не останется без входа")
+
+    local deal = (function() local f=assert(io.open("lua/autorun/sh_grm_estate_deal.lua"))
+        local t=f:read("*a") f:close() return t end)()
+    ok(deal:find("function DL.ReleaseByDoor", 1, true) ~= nil, "обработчик есть")
+    ok(deal:find("ES.SellToState(ply, target)", 1, true) ~= nil,
+       "продажа идёт через рынок — выплата и долг считаются там")
+    ok(deal:find("P.CanManage and P.CanManage(ply, target)", 1, true) ~= nil,
+       "права проверяет property, своей копии нет")
+
+    -- Окно квартиры должно вести себя так же.
+    local panel = (function() local f=assert(io.open("lua/autorun/sh_grm_housing_panel.lua"))
+        local t=f:read("*a") f:close() return t end)()
+    ok(panel:find("ES.SellToState(ply, rec)", 1, true) ~= nil,
+       "ИСПРАВЛЕНО: отказ от жилья в /home тоже продаёт, а не обнуляет молча")
+    ok(panel:find("ПРОДАТЬ ГОСУДАРСТВУ", 1, true) ~= nil,
+       "и кнопка честно называет, что произойдёт")
+    ok(panel:find("buyback = ", 1, true) ~= nil,
+       "сумма выплаты показывается ДО согласия")
 end
 
 print("")

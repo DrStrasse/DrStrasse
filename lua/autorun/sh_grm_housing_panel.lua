@@ -118,6 +118,11 @@ if SERVER then
             rentPrice = tonumber(rec.rentPrice) or 0,
             utilityDebt = tonumber(rec.utilityDebt) or 0,
             utilityRate = tonumber(rec.utilityRate) or 0,
+            --[[ Сколько вернут при продаже государству. Показывается на
+                 кнопке отказа: игрок должен видеть сумму ДО того, как
+                 согласится, а не узнавать её постфактум. ]]
+            buyback = (GRM.Estate and GRM.Estate.StateBuyback)
+                and math.floor((tonumber(rec.purchasePrice) or 0) * GRM.Estate.StateBuyback) or 0,
             sealed = rec.sealed == true,
             sealReason = tostring(rec.sealReason or ""),
             doors = #(rec.doors or {}),
@@ -239,7 +244,23 @@ if SERVER then
         elseif act == "extend" then
             P.PanelAction(ply, { action = "extend_rent", id = rec.id })
         elseif act == "release" then
-            P.PanelAction(ply, { action = "release", id = rec.id })
+            --[[ Отказ от жилья = продажа государству (единое правило,
+                 28.08). Раньше здесь просто обнулялся владелец: игрок
+                 терял квартиру и не получал НИЧЕГО, хотя в этом же окне
+                 ему показывали «вернут при продаже: N GRM». Теперь
+                 деньги действительно возвращаются, а долг по ЖКХ
+                 удерживается. ]]
+            local ES = GRM.Estate
+            if ES and ES.SellToState then
+                local okSell, msg = ES.SellToState(ply, rec)
+                if GRM.Notify then
+                    GRM.Notify(ply, tostring(msg or (okSell and "Объект продан государству."
+                        or "Не удалось продать объект.")),
+                        okSell and 120 or 255, okSell and 220 or 150, okSell and 150 or 110)
+                end
+            else
+                P.PanelAction(ply, { action = "release", id = rec.id })
+            end
         else
             return
         end
@@ -417,9 +438,13 @@ if CLIENT then
         if d.isOwner then
             local rel = card(host, 52)
             rel.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, C.card) end
-            local b = mkBtn(rel, "ОТКАЗАТЬСЯ ОТ ЖИЛЬЯ", C.red, function()
-                Derma_Query("Отказаться от жилья? Все ключи будут удалены.", "Жильё",
-                    "Да", function() send({ action = "release" }) end, "Нет")
+            --[[ Текст кнопки честно называет, что произойдёт: объект
+                 уходит государству за выкуп, а не «просто освобождается».
+                 Раньше человек жал «отказаться» и терял деньги молча. ]]
+            local b = mkBtn(rel, "ПРОДАТЬ ГОСУДАРСТВУ", C.red, function()
+                Derma_Query(("Продать жильё государству за %d GRM?\nКлючи жильцов будут удалены.")
+                    :format(d.buyback or 0), "Жильё",
+                    "Продать", function() send({ action = "release" }) end, "Отмена")
             end)
             b:SetSize(260, 34) b:SetPos(16, 9)
         end

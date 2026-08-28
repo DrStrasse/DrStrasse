@@ -305,6 +305,67 @@ if SERVER then
     end)
 
     -----------------------------------------------------------------
+    -- ОСВОБОЖДЕНИЕ ДВЕРИ = ПРОДАЖА ОБЪЕКТА ГОСУДАРСТВУ
+    -----------------------------------------------------------------
+    --[[ Заказ владельца 28.08: «если я через дверь нажал освободить, то
+         дом сразу же должен быть продан государству».
+
+         Раньше кнопка «ОСВОБОДИТЬ» в меню двери снимала владельца ТОЛЬКО
+         с двери. Объект оставался за игроком, но без входа: внутрь не
+         попасть, продать нельзя, деньги не вернулись. Теперь дверь
+         объекта освобождается вместе с ним — и с выплатой.
+
+         Возвращаем:
+           nil   — дверь не наша, пусть модуль дверей освобождает как обычно;
+           true  — объект продан государству;
+           false — продать не вышло (не владелец, касса не снята). ]]
+    function DL.ReleaseByDoor(ply, ent, rec)
+        local P, ES = GRM.Property, GRM.Estate
+        if not (IsValid(ply) and IsValid(ent) and P and ES) then return nil end
+
+        -- Объект ищем так же, как при покупке: по привязке и по зоне.
+        local target
+        if P.GetByDoor then target = select(1, P.GetByDoor(ent)) end
+        if not target and istable(P.Records) then
+            local pos = ent:GetPos()
+            for _, r in pairs(P.Records) do
+                if ES.KindOf and ES.KindOf(r) ~= "none" and istable(r.zone) then
+                    if DL.DoorNearZone(r, pos) then target = r break end
+                end
+            end
+        end
+        if not istable(target) then return nil end
+
+        -- Свободный объект отдавать нечего: дверь освобождается сама.
+        if tostring(target.ownerType or "none") == "none" then return nil end
+
+        --[[ Освобождать чужое нельзя. Проверку прав отдаём property:
+             своя копия правил владения — вторая точка для ошибки. ]]
+        if not (P.CanManage and P.CanManage(ply, target)) then
+            tell(ply, "Это не ваш объект — освобождать нечего.", false)
+            return false
+        end
+
+        if ES.SellToState then
+            local okSell, msg = ES.SellToState(ply, target)
+            --[[ Частая причина отказа — несобранная касса бизнеса.
+                 Сообщаем её игроку, иначе кнопка выглядит сломанной. ]]
+            tell(ply, tostring(msg or (okSell and "Объект продан государству."
+                or "Не удалось продать объект.")), okSell)
+            return okSell == true
+        end
+
+        -- Рынка нет: освобождаем штатно, хотя бы без потери доступа.
+        P.PanelAction(ply, { action = "release", id = target.id })
+        tell(ply, "Объект освобождён.", true)
+        return true
+    end
+
+    hook.Add("GRM_DoorReleaseToProperty", "GRM_EstateDeal_ReleaseByDoor", function(ply, ent, rec)
+        return DL.ReleaseByDoor(ply, ent, rec)
+    end)
+
+    -----------------------------------------------------------------
     -- ДАННЫЕ ДЛЯ ОКНА СДЕЛКИ
     -----------------------------------------------------------------
     --- Объект, с которым игрок может заключить сделку прямо сейчас.

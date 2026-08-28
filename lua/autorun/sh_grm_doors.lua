@@ -1769,6 +1769,22 @@ if SERVER then
         if not rec then return false, "Запись не найдена" end
         local acc = D.EvaluateAccess(rec, actorOf(ply, rec))
         if not acc.own then return false, "Вы не являетесь владельцем этой двери" end
+
+        --[[ ДВЕРЬ ОТ ОБЪЕКТА НЕДВИЖИМОСТИ (заказ владельца 28.08:
+             «если я через дверь нажал освободить, то дом сразу же должен
+              быть продан государству»).
+
+             Если дверь входит в квартиру или бизнес, освобождать её
+             отдельно бессмысленно и вредно: объект остался бы у
+             владельца, но БЕЗ входной двери — попасть внутрь стало бы
+             нельзя, а деньги за жильё никто не вернул бы.
+
+             Отдаём такое освобождение недвижимости: она продаст объект
+             государству целиком, с выплатой и удержанием долга по ЖКХ,
+             и заодно освободит все двери и оборудование. ]]
+        local handled = hook.Run("GRM_DoorReleaseToProperty", ply, ent, rec)
+        if handled ~= nil then return handled == true, "" end
+
         rec.owner_type = "none"
         rec.owner_key, rec.owner_nick, rec.owner_faction, rec.owner_category = "", "", "", ""
         rec.co_owners, rec.factions, rec.roles, rec.categories = {}, {}, {}, {}
