@@ -146,6 +146,8 @@ function ENT:kitchenOp(ply, op, data)
         end
         self:SetStoveRecipe(rid)
         self:SetStoveState(1)
+        -- Начало и конец пишем парой: по ним считается доля прогресса.
+        self:SetStoveStart(os.time())
         self.FinishAt = os.time() + (tonumber(rec.time) or 30)
         self:SetStoveFinish(self.FinishAt)
         self:ArmStoveTimer()
@@ -226,8 +228,16 @@ function ENT:KitchenPermApply(t)
     if isstring(t.recipe) and FK().Recipe(t.recipe) then
         self:SetStoveRecipe(t.recipe)
         self:SetStoveState(1)
-        self.FinishAt = os.time() + math.max(1, tonumber(t.remain) or 1)
+        local remain = math.max(1, tonumber(t.remain) or 1)
+        self.FinishAt = os.time() + remain
         self:SetStoveFinish(self.FinishAt)
+        --[[ После рестарта началом считаем «сейчас минус уже пройденное».
+             Полную длительность берём из рецепта: иначе бар прыгнул бы
+             на ноль и блюдо, которому осталось 5 секунд, показывало бы
+             «только начали». ]]
+        local recDef = FK().Recipe(t.recipe)
+        local total = (istable(recDef) and tonumber(recDef.time)) or remain
+        self:SetStoveStart(os.time() - math.max(0, total - remain))
         self:ArmStoveTimer()
     end
     self:SyncReadyNW()
