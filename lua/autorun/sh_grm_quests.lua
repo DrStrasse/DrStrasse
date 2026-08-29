@@ -495,7 +495,7 @@ if SERVER then
              Пустое значение = «карта не указана»: так открываются
              старые квесты, созданные до этой правки. ]]
         local questMap=string.lower(trim(raw.map,64))
-        return {id=id,map=questMap,copyNotes=normalizeCopyNotes(raw.copyNotes),title=title,draft=draft,summary=summary,category=trim(raw.category,48),npc=trim(raw.npc,64),repeatable=raw.repeatable==true,autoStart=raw.autoStart==true,enabled=raw.enabled~=false,requireFaction=trim(raw.requireFaction,64),requireFlag=trim(raw.requireFlag,64),requireMoney=math.Clamp(math.floor(tonumber(raw.requireMoney)or 0),0,100000000),prerequisites=prerequisites,steps=steps,rewards=rewards,achievement=normalizeAchievement(raw.achievement,id,title,summary),notifications={start=normalizeNotification(notifications.start,"Получен квест: {title}",false),step=normalizeNotification(notifications.step,"Этап выполнен: {step}",false),complete=normalizeNotification(notifications.complete,"Квест завершён: {title}",true)},dialogue=normalizeDialogue(raw.dialogue),music=normalizeMusic(raw.music),graph=normalizeGraph(raw.graph),cutscene={accept=normalizeCutscene(raw.cutscene and raw.cutscene.accept),complete=normalizeCutscene(raw.cutscene and raw.cutscene.complete)}}
+        return {id=id,map=questMap,copyNotes=normalizeCopyNotes(raw.copyNotes),title=title,draft=draft,summary=summary,category=trim(raw.category,48),npc=trim(raw.npc,64),repeatable=raw.repeatable==true,autoStart=raw.autoStart==true,enabled=raw.enabled~=false,requireFaction=trim(raw.requireFaction,64),requireFlag=trim(raw.requireFlag,64),requireMoney=math.Clamp(math.floor(tonumber(raw.requireMoney)or 0),0,100000000),prerequisites=prerequisites,steps=steps,rewards=rewards,achievement=normalizeAchievement(raw.achievement,id,title,summary),notifications={start=normalizeNotification(notifications.start,"Получен квест: {title}",false),step=normalizeNotification(notifications.step,"Этап выполнен: {step}",false),complete=normalizeNotification(notifications.complete,"Квест завершён: {title}",true)},dialogue=normalizeDialogue(raw.dialogue),music=normalizeMusic(raw.music),graph=normalizeGraph(raw.graph),cutscene={accept=normalizeCutscene(raw.cutscene and raw.cutscene.accept),complete=normalizeCutscene(raw.cutscene and raw.cutscene.complete),acceptAfterDialogue=raw.cutscene and raw.cutscene.acceptAfterDialogue==true,completeAfterDialogue=raw.cutscene and raw.cutscene.completeAfterDialogue==true}}
     end
 
     function Q.SaveDefinitions()
@@ -622,6 +622,48 @@ if SERVER then
         ply.GRMQuestCutscenePVS={nodes=table.Copy(nodes or{}),expires=CurTime()+duration+8}
     end
     local function cutscene(ply,nodes)if not IsValid(ply)or#(nodes or {})==0 then return end;startCutscenePVS(ply,nodes);net.Start("GRM_Quest_Cutscene")net.WriteTable(nodes)net.Send(ply)end
+
+    --[[ ОЧЕРЕДЬ РОЛИКОВ: «сыграть, когда закончится разговор».
+
+         ЗАЧЕМ. Ролик «При принятии» запускался прямо из Q.Start, а
+         Q.Start зовут из ответа «Принять квест» — то есть ещё внутри
+         диалога. Игрок видел титр кат-сцены поверх открытого окна с
+         репликой «1 / 2» (скриншот владельца 29.08).
+
+         Прошлая попытка чинить это пометкой на СВЯЗИ графа не помогала:
+         путь Q.Start -> cutscene() графа не касается вовсе. Поэтому
+         момент запуска теперь свойство САМОГО РОЛИКА, а здесь — простой
+         буфер на игрока.
+
+         Держим ОДИН отложенный ролик: если за разговор накопилось бы
+         несколько, показывать их подряд поверх друг друга бессмысленно —
+         выигрывает последний назначенный. ]]
+    Q.PendingCutscene = Q.PendingCutscene or {}
+
+    --- Отложить ролик до конца разговора. true, если действительно отложен.
+    function Q.QueueCutscene(ply,nodes,tag)
+        if not IsValid(ply) then return false end
+        if #(nodes or {})==0 then return false end
+        Q.PendingCutscene[ply]={nodes=table.Copy(nodes),tag=tostring(tag or "")}
+        return true
+    end
+
+    --- Выпустить отложенный ролик. Зовётся из ВСЕХ точек выхода диалога.
+    function Q.FlushCutscene(ply)
+        if not IsValid(ply) then return false end
+        local rec=Q.PendingCutscene[ply]
+        if not istable(rec) then return false end
+        -- Снимаем ДО показа: иначе повторный выход из разговора
+        -- проиграет тот же ролик второй раз.
+        Q.PendingCutscene[ply]=nil
+        cutscene(ply,rec.nodes)
+        return true
+    end
+
+    --- Игрок ушёл — буфер не держим.
+    hook.Add("PlayerDisconnected","GRM_Quest_PendingCutsceneDrop",function(ply)
+        Q.PendingCutscene[ply]=nil
+    end)
 
     net.Receive("GRM_Quest_CutscenePreview",function(_,ply)
         if not IsValid(ply)or not ply:IsSuperAdmin()then return end;local nodes=normalizeCutscene(net.ReadTable()or{});if#nodes>0 then startCutscenePVS(ply,nodes)end
@@ -776,7 +818,13 @@ if SERVER then
         if not Q.GraphDrives(def,"achieve") then unlockQuestAchievement(ply,def) end
         questNotice(ply,"complete",def)
         if not Q.GraphDrives(def,"music") then questMusic(ply,"complete",def) end
-        if not Q.GraphDrives(def,"cut_complete") then cutscene(ply,def.cutscene.complete) end
+        if not Q.GraphDrives(def,"cut_complete") then
+            if def.cutscene.completeAfterDialogue then
+                Q.QueueCutscene(ply,def.cutscene.complete,"complete")
+            else
+                cutscene(ply,def.cutscene.complete)
+            end
+        end
         -- Триггер «finish»: запускаем всё, что подключено к нему линиями.
         Q.RunGraphFrom(ply,def,"finish",p)
         hook.Run("GRM_QuestCompleted",ply,def.id);Q.SaveProgress();sync(ply)
@@ -789,7 +837,16 @@ if SERVER then
         local def=Q.Definitions[tostring(questID or "")];local ok,why=canStart(ply,def);if not ok then return false,why end
         local all=progressFor(ply);all[def.id]={status="active",step=1,count=0,startedAt=os.time()};questNotice(ply,"start",def)
         if not Q.GraphDrives(def,"music") then questMusic(ply,"start",def) end
-        if not Q.GraphDrives(def,"cut_accept") then cutscene(ply,def.cutscene.accept) end
+        --[[ Ролик принятия: если автор попросил «после диалога», не
+             показываем сразу — игрок ещё читает реплику. Выпустит
+             Q.FlushCutscene, когда разговор закончится. ]]
+        if not Q.GraphDrives(def,"cut_accept") then
+            if def.cutscene.acceptAfterDialogue then
+                Q.QueueCutscene(ply,def.cutscene.accept,"accept")
+            else
+                cutscene(ply,def.cutscene.accept)
+            end
+        end
         -- Триггер «start»: линии от блока СТАРТ.
         Q.RunGraphFrom(ply,def,"start",all[def.id])
         checkCurrent(ply,def,all[def.id]);Q.SaveProgress();sync(ply);hook.Run("GRM_QuestStarted",ply,def.id);return true

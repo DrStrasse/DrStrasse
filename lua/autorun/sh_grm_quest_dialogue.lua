@@ -209,9 +209,23 @@ if SERVER then
 
          Список чистим сразу: повторный вызов не должен запустить ролик
          второй раз. ]]
+    --[[ Конец разговора: выпускаем и отложенные эффекты графа, и
+         отложенный ролик (Q.FlushCutscene). Ролик «При принятии» ставится
+         в очередь из Q.Start, потому что принятие происходит ВНУТРИ
+         диалога — иначе титр лезет поверх открытой реплики. ]]
     local function flushPending(ply)
-        local sess = ply and ply.GRMQuestDlg
-        if not (IsValid(ply) and istable(sess) and istable(sess.pending)) then return end
+        if not IsValid(ply) then return end
+        --[[ Ролик выпускаем ПЕРВЫМ и БЕЗУСЛОВНО.
+
+             Ниже стоит выход по пустому sess.pending — список отложенных
+             эффектов графа. У квеста со скриншота владельца линий к
+             ролику нет вообще: ролик кладёт в очередь Q.Start. Если
+             сначала проверить pending, функция вернётся раньше, и
+             отложенный ролик не сыграет НИКОГДА — это хуже, чем показать
+             его не вовремя. ]]
+        if Q.FlushCutscene then Q.FlushCutscene(ply) end
+        local sess = ply.GRMQuestDlg
+        if not (istable(sess) and istable(sess.pending)) then return end
         local list, def = sess.pending, Q.Definitions and Q.Definitions[tostring(sess.questID or "")]
         sess.pending = nil
         if not (def and Q.RunGraphFrom) then return end

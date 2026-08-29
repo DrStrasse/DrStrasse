@@ -197,9 +197,22 @@ ok(server:find('if not Q.GraphDrives(def,"reward") then reward(ply,def) end', 1,
    "ИСПРАВЛЕНО: награда по линии не выдаётся повторно в конце квеста")
 ok(server:find('if not Q.GraphDrives(def,"achieve") then unlockQuestAchievement(ply,def) end', 1, true) ~= nil,
    "ачивка тоже")
-ok(server:find('if not Q.GraphDrives(def,"cut_complete") then cutscene(ply,def.cutscene.complete) end', 1, true) ~= nil,
+--[[ Ролики проверяем по СМЫСЛУ, а не по точной однострочной записи.
+     Внутри ветки GraphDrives теперь есть развилка «сразу / ждать конца
+     диалога» (флаг acceptAfterDialogue), поэтому строка в одну линию
+     больше не совпадает. Важно ровно одно: показ ролика по фазе стоит
+     ПОД защитой GraphDrives, иначе линия графа и фаза сыграют его
+     дважды. ]]
+local function guardedCutscene(src, guard, call)
+    local at = src:find('if not Q.GraphDrives(def,"' .. guard .. '")', 1, true)
+    if not at then return false end
+    -- тело ветки: до конца блока (следующая строка того же отступа)
+    local chunk = src:sub(at, at + 700)
+    return chunk:find(call, 1, true) ~= nil
+end
+ok(guardedCutscene(server, "cut_complete", "cutscene(ply,def.cutscene.complete)"),
    "ролик завершения тоже")
-ok(server:find('if not Q.GraphDrives(def,"cut_accept") then cutscene(ply,def.cutscene.accept) end', 1, true) ~= nil,
+ok(guardedCutscene(server, "cut_accept", "cutscene(ply,def.cutscene.accept)"),
    "ролик принятия тоже")
 ok(server:find('if not Q.GraphDrives(def,"music") then questMusic(ply,"start",def) end', 1, true) ~= nil,
    "музыка при старте тоже")

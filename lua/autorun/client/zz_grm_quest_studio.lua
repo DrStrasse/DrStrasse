@@ -316,7 +316,15 @@ function Q.BlocksToQuest(work, blocks)
     local out = table.Copy(work or {})
     out.dialogue = { offer = {}, active = {}, complete = {} }
     out.steps = {}
-    out.cutscene = { accept = {}, complete = {} }
+    --[[ Камеры пересобираем из блоков, а ФЛАГИ МОМЕНТА переносим.
+         Пересоздание таблицы с нуля стирало acceptAfterDialogue при
+         первом же сохранении: автор включал «ждать конца диалога», жал
+         сохранить — и настройка молча пропадала. ]]
+    out.cutscene = {
+        accept = {}, complete = {},
+        acceptAfterDialogue = (work and work.cutscene and work.cutscene.acceptAfterDialogue) == true,
+        completeAfterDialogue = (work and work.cutscene and work.cutscene.completeAfterDialogue) == true,
+    }
     out.rewards = { money = 0, items = {} }
     out.music = nil
 
@@ -1215,19 +1223,49 @@ function Q.OpenGraphStudio(data)
                 if Q.Cutscene then Q.Cutscene.restoreFrame = f end
             end
 
-            --[[ МОМЕНТ ЗАПУСКА — ЗДЕСЬ, В ПАНЕЛИ САМОЙ КАТ-СЦЕНЫ.
+            --[[ ГЛАВНЫЙ ПЕРЕКЛЮЧАТЕЛЬ МОМЕНТА — ПЕРВЫМ ДЕЛОМ.
 
                  Владелец 29.08: «так и где для кат-сцены правило, чтобы
-                 она запускалась после диалога?»
+                 она запускалась после диалога?» и следом — ролик всё
+                 равно шёл поверх открытого диалога «1 / 2».
 
-                 Настройка живёт на СВЯЗИ (один ролик можно подключить к
-                 нескольким репликам с разным моментом), но искать её
-                 логично там, где настраивают сам ролик. Раньше
-                 переключатель был только в панели реплики — и его
-                 никто не находил.
+                 ПОЧЕМУ РАНЬШЕ НЕ РАБОТАЛО. Момент был свойством СВЯЗИ
+                 графа. Но ролик «При принятии» запускает Q.Start, а его
+                 зовут из ответа «Принять квест» — то есть внутри
+                 разговора, мимо графа. Пометка на линии в этот путь не
+                 попадала вообще.
 
-                 Собираем все входящие связи и даём переключить каждую
-                 прямо отсюда. ]]
+                 ТЕПЕРЬ это свойство САМОГО РОЛИКА и стоит первым в его
+                 панели: ролик один, а линий к нему может не быть вовсе. ]]
+            local afterKey = (d.phase == "complete") and "completeAfterDialogue" or "acceptAfterDialogue"
+            work.cutscene = work.cutscene or {}
+
+            local waitHdr = vgui.Create("DLabel", right)
+            waitHdr:Dock(TOP) waitHdr:SetTall(20) waitHdr:DockMargin(10, 8, 10, 0)
+            waitHdr:SetFont("GRMQS_Small") waitHdr:SetTextColor(COL.gold)
+            waitHdr:SetText("КОГДА ЗАПУСКАТЬ ЭТОТ РОЛИК")
+
+            local waitBtn = vgui.Create("DButton", right)
+            waitBtn:Dock(TOP) waitBtn:SetTall(46) waitBtn:DockMargin(10, 4, 10, 0) waitBtn:SetText("")
+            waitBtn.Paint = function(sp, w, h)
+                local wait = work.cutscene[afterKey] == true
+                draw.RoundedBox(5, 0, 0, w, h, sp:IsHovered() and Color(34, 46, 62) or COL.card)
+                draw.RoundedBox(0, 0, 0, 4, h, wait and COL.accent or COL.gold)
+                draw.SimpleText(wait and "ЖДАТЬ КОНЦА ДИАЛОГА" or "СРАЗУ",
+                    "GRMQS_Body", 12, 11, wait and COL.accent or COL.gold)
+                draw.SimpleText(wait
+                        and "Ролик дождётся, пока игрок дочитает и закроет разговор"
+                        or "Ролик стартует в момент события — может перекрыть диалог",
+                    "GRMQS_Small", 12, 29, COL.dim)
+            end
+            waitBtn.DoClick = function()
+                work.cutscene[afterKey] = not (work.cutscene[afterKey] == true)
+                rebuildProps()
+            end
+
+            --[[ Ниже — тонкая настройка для тех, кто ведёт ролик ЛИНИЕЙ от
+                 конкретной реплики. Это отдельный случай: переключатель
+                 выше решает вопрос для обычного «при принятии/завершении». ]]
             local incoming = {}
             for _, ob in ipairs(blocks) do
                 for _, l in ipairs(ob.links or {}) do
@@ -1249,7 +1287,7 @@ function Q.OpenGraphStudio(data)
                 local hdr = vgui.Create("DLabel", right)
                 hdr:Dock(TOP) hdr:SetTall(20) hdr:DockMargin(10, 6, 10, 0)
                 hdr:SetFont("GRMQS_Small") hdr:SetTextColor(COL.gold)
-                hdr:SetText("КОГДА ЗАПУСКАТЬ ЭТОТ РОЛИК")
+                hdr:SetText("ОТДЕЛЬНО ПО КАЖДОЙ ЛИНИИ")
 
                 for _, row in ipairs(incoming) do
                     local l, fromBlock = row.link, row.from
