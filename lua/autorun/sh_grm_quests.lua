@@ -84,6 +84,120 @@ Q.Lifecycle = {
      Возвращает список проблем: { level = "error"|"warn", text = ... }.
      error — квест сломан и работать не будет; warn — работать будет, но
      почти наверняка не так, как задумано. ]]
+--[[--------------------------------------------------------------------
+    КОПИРОВАНИЕ КВЕСТА И ШАБЛОНЫ (заказ владельца 29.08).
+
+    «Сделай возможность копирования квестов и создание шаблонов, но при
+     этом с пометкой о необходимости изменить какие-либо параметры или
+     просто плашку с предупреждением, что параметры могут отличаться.»
+
+    ЧТО НЕЛЬЗЯ ПРОСТО СКОПИРОВАТЬ. Копия квеста — это не копия текста:
+    часть данных привязана к конкретному месту и к конкретным именам.
+
+      • ID квеста — обязан быть новым, иначе копия ЗАТРЁТ оригинал;
+      • ID достижения — если оставить старый, два квеста будут выдавать
+        одну и ту же ачивку, и вторая просто не сработает;
+      • зоны этапов «посетить место» — это координаты. В копии они
+        указывают туда же, куда оригинал: обычно это ошибка;
+      • точки камер — тоже координаты, тот же случай;
+      • ID квестового NPC — если оставить прежний, оба квеста повиснут
+        на одном персонаже;
+      • «предыдущие квесты» — ссылки могли остаться от старой цепочки.
+
+    Поэтому копия помечается: Q.CopyQuest готовит данные, а
+    Q.CopyWarnings перечисляет, что перепроверить. Список строится по
+    ФАКТИЧЕСКОМУ содержимому, а не общими словами: пустые разделы не
+    упоминаются, чтобы предупреждение не превращалось в шум.
+----------------------------------------------------------------------]]
+
+--- Что в этом квесте требует правки после копирования.
+function Q.CopyWarnings(def)
+    local out = {}
+    if not istable(def) then return out end
+    local function add(level, text) out[#out + 1] = { level = level, text = text } end
+
+    add("must", "ID квеста заменён на новый — переименуйте на осмысленный.")
+
+    local zones, cams = 0, 0
+    for _, s in ipairs(istable(def.steps) and def.steps or {}) do
+        if tostring(s.type or "") == "visit" and (istable(s.min) or istable(s.pos)) then
+            zones = zones + 1
+        end
+    end
+    for _, phase in ipairs({ "accept", "complete" }) do
+        cams = cams + #((istable(def.cutscene) and def.cutscene[phase]) or {})
+    end
+
+    if zones > 0 then
+        add("must", ("Зон этапов «посетить место»: %d — координаты те же, что у оригинала. Переставьте тулом."):format(zones))
+    end
+    if cams > 0 then
+        add("must", ("Точек камер: %d — снимают то же место. Переснимите или переставьте."):format(cams))
+    end
+    if tostring(def.npc or "") ~= "" then
+        add("check", ("NPC «%s» тот же. Если это отдельный персонаж — задайте новый ID."):format(tostring(def.npc)))
+    end
+    local ach = istable(def.achievement) and def.achievement or {}
+    if ach.enabled then
+        add("must", "ID достижения обновлён: со старым оба квеста выдавали бы одну ачивку.")
+    end
+    if #(istable(def.prerequisites) and def.prerequisites or {}) > 0 then
+        add("check", "Заданы «предыдущие квесты» — проверьте, нужна ли эта цепочка копии.")
+    end
+    local m = tostring(def.map or "")
+    if m ~= "" and m ~= string.lower((game and game.GetMap and game.GetMap()) or "") then
+        add("must", ("Квест был создан для карты «%s» — координаты здесь не совпадут."):format(m))
+    end
+    add("check", "Награда, тексты и уведомления скопированы как есть — при необходимости поправьте.")
+
+    return out
+end
+
+--[[ Подготовить копию. Возвращает новый квест и список предупреждений.
+
+     asTemplate=true — режим шаблона: чистим то, что почти наверняка
+     придётся задавать заново (координаты зон, камеры, привязку к NPC),
+     оставляя структуру этапов и диалогов. Иначе автор получил бы «почти
+     готовый» квест, который тихо ведёт игроков в старые точки. ]]
+function Q.CopyQuest(def, newID, asTemplate)
+    if not istable(def) then return nil, {} end
+    local out = table.Copy(def)
+
+    newID = string.lower(trim(newID, 64)):gsub("[^%w_%-%:]", "_")
+    if newID == "" then newID = tostring(def.id or "quest") .. "_copy" end
+    out.id = newID
+    out.title = tostring(def.title or "") .. (asTemplate and " (шаблон)" or " (копия)")
+
+    --[[ Черновик: копия не должна сразу появиться у NPC и начать
+         водить игроков по чужим координатам. ]]
+    out.draft = true
+    out.enabled = false
+
+    -- Карта — та, где делают копию: координаты всё равно перепроверять.
+    out.map = string.lower((game and game.GetMap and game.GetMap()) or "")
+
+    --[[ ID достижения обязан быть свой, иначе ачивка второго квеста
+         молча не выдастся: система считает её уже полученной. ]]
+    if istable(out.achievement) and out.achievement.enabled then
+        out.achievement.id = "quest_" .. newID
+    end
+
+    -- Раскладку графа сохраняем: она удобна и переносится без вреда.
+    if asTemplate then
+        for _, s in ipairs(istable(out.steps) and out.steps or {}) do
+            -- Координаты чистим, тип и текст оставляем: структура полезна.
+            s.min, s.max, s.pos = nil, nil, nil
+        end
+        out.cutscene = { accept = {}, complete = {} }
+        out.npc = ""
+        out.prerequisites = {}
+    end
+
+    local warnings = Q.CopyWarnings(def)
+    out.copyNotes = warnings
+    return out, warnings
+end
+
 function Q.Validate(def)
     local out = {}
     if not istable(def) then return out end
@@ -120,6 +234,13 @@ function Q.Validate(def)
 
     --[[ Чужая карта — это не опечатка, а гарантированно нерабочий
          квест: координаты зон и камер здесь ни на что не указывают. ]]
+    --[[ Непроверенная копия — частая причина «квест ведёт не туда»:
+         координаты остались от оригинала. Предупреждаем, но не ошибкой:
+         автор мог осознанно оставить те же точки. ]]
+    if istable(def.copyNotes) and #def.copyNotes > 0 then
+        add("warn", ("Это копия: не подтверждено %d пункт(ов) проверки — координаты и ID могли остаться от оригинала."):format(#def.copyNotes))
+    end
+
     local qmap = string.lower(tostring(def.map or ""))
     local nowMap = string.lower((game and game.GetMap and game.GetMap()) or "")
     if qmap ~= "" and nowMap ~= "" and qmap ~= nowMap then
@@ -324,6 +445,22 @@ if SERVER then
         if #out.links==0 then return nil end
         return out
     end
+    --[[ Заметки копии живут в самом квесте: автор мог закрыть студию и
+         вернуться завтра. Без сохранения предупреждение исчезло бы, а
+         старые координаты остались. ]]
+    local function normalizeCopyNotes(value)
+        if not istable(value) then return nil end
+        local out={}
+        for _,n in ipairs(value)do
+            if #out>=24 then break end
+            local text=trim(istable(n) and n.text or n,300)
+            if text~=""then
+                out[#out+1]={text=text,level=(istable(n) and n.level=="check")and"check"or"must"}
+            end
+        end
+        if #out==0 then return nil end
+        return out
+    end
     function Q.NormalizeDefinition(raw)
         raw=istable(raw)and raw or {}
         local id=string.lower(trim(raw.id,64)):gsub("[^%w_%-%:]","_")
@@ -346,7 +483,7 @@ if SERVER then
              Пустое значение = «карта не указана»: так открываются
              старые квесты, созданные до этой правки. ]]
         local questMap=string.lower(trim(raw.map,64))
-        return {id=id,map=questMap,title=title,draft=draft,summary=summary,category=trim(raw.category,48),npc=trim(raw.npc,64),repeatable=raw.repeatable==true,autoStart=raw.autoStart==true,enabled=raw.enabled~=false,requireFaction=trim(raw.requireFaction,64),requireFlag=trim(raw.requireFlag,64),requireMoney=math.Clamp(math.floor(tonumber(raw.requireMoney)or 0),0,100000000),prerequisites=prerequisites,steps=steps,rewards=rewards,achievement=normalizeAchievement(raw.achievement,id,title,summary),notifications={start=normalizeNotification(notifications.start,"Получен квест: {title}",false),step=normalizeNotification(notifications.step,"Этап выполнен: {step}",false),complete=normalizeNotification(notifications.complete,"Квест завершён: {title}",true)},dialogue=normalizeDialogue(raw.dialogue),music=normalizeMusic(raw.music),graph=normalizeGraph(raw.graph),cutscene={accept=normalizeCutscene(raw.cutscene and raw.cutscene.accept),complete=normalizeCutscene(raw.cutscene and raw.cutscene.complete)}}
+        return {id=id,map=questMap,copyNotes=normalizeCopyNotes(raw.copyNotes),title=title,draft=draft,summary=summary,category=trim(raw.category,48),npc=trim(raw.npc,64),repeatable=raw.repeatable==true,autoStart=raw.autoStart==true,enabled=raw.enabled~=false,requireFaction=trim(raw.requireFaction,64),requireFlag=trim(raw.requireFlag,64),requireMoney=math.Clamp(math.floor(tonumber(raw.requireMoney)or 0),0,100000000),prerequisites=prerequisites,steps=steps,rewards=rewards,achievement=normalizeAchievement(raw.achievement,id,title,summary),notifications={start=normalizeNotification(notifications.start,"Получен квест: {title}",false),step=normalizeNotification(notifications.step,"Этап выполнен: {step}",false),complete=normalizeNotification(notifications.complete,"Квест завершён: {title}",true)},dialogue=normalizeDialogue(raw.dialogue),music=normalizeMusic(raw.music),graph=normalizeGraph(raw.graph),cutscene={accept=normalizeCutscene(raw.cutscene and raw.cutscene.accept),complete=normalizeCutscene(raw.cutscene and raw.cutscene.complete)}}
     end
 
     function Q.SaveDefinitions()

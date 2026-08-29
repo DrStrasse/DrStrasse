@@ -1361,9 +1361,13 @@ function Q.OpenGraphStudio(data)
                      откроет его и будет чинить несуществующие точки. ]]
                 local alien = tostring(dd.map or "") ~= ""
                     and tostring(dd.map) ~= string.lower(game.GetMap() or "")
+                -- Непроверенная копия видна в списке: её легко забыть.
+                local unchecked = istable(dd.copyNotes) and #dd.copyNotes > 0
                 draw.SimpleText((alien and "ДРУГАЯ КАРТА · " or "")
+                    .. (unchecked and "НЕ ПРОВЕРЕН · " or "")
                     .. (dd.draft and "черновик · " or "") .. tostring(#(dd.steps or {})) .. " эт.",
-                    "GRMQS_Small", w - 10, 22, alien and COL.red or COL.dim, TEXT_ALIGN_RIGHT)
+                    "GRMQS_Small", w - 10, 22,
+                    (alien or unchecked) and COL.red or COL.dim, TEXT_ALIGN_RIGHT)
             end
             b.DoClick = function() loadWork(dd) end
         end
@@ -1381,6 +1385,50 @@ function Q.OpenGraphStudio(data)
             }
             defs[#defs + 1] = draft
             loadWork(draft)
+        end
+
+        --[[ КОПИЯ И ШАБЛОН (заказ владельца 29.08).
+
+             Копия — точный дубль: этапы, диалоги, камеры, награда.
+             Шаблон — та же структура, но без привязок к месту:
+             координаты зон, камеры и NPC очищены. Иначе автор получил
+             бы «почти готовый» квест, тихо ведущий игроков в старые
+             точки — худший вид ошибки, потому что он не виден. ]]
+        local function makeCopy(asTemplate)
+            if not work then
+                notification.AddLegacy("Сначала выберите квест", NOTIFY_HINT, 3) return
+            end
+            if not (Q.CopyQuest and Q.CopyWarnings) then
+                notification.AddLegacy("Модуль квестов не загружен", NOTIFY_ERROR, 4) return
+            end
+            -- Собираем текущее состояние графа: копируем то, что на экране.
+            local src = Q.BlocksToQuest(work, blocks)
+            local base = tostring(src.id or "quest")
+            --[[ Ищем свободный ID: «_copy» на уже существующем имени
+                 затёр бы прошлую копию. ]]
+            local taken = {}
+            for _, d in ipairs(defs) do taken[tostring(d.id or "")] = true end
+            local suffix = asTemplate and "_tpl" or "_copy"
+            local newID, n = base .. suffix, 1
+            while taken[newID] do n = n + 1 newID = base .. suffix .. n end
+
+            local copy, warnings = Q.CopyQuest(src, newID, asTemplate)
+            if not copy then return end
+            defs[#defs + 1] = copy
+            loadWork(copy)
+            notification.AddLegacy(asTemplate and "Шаблон создан" or "Копия создана", NOTIFY_GENERIC, 4)
+        end
+
+        local cp = mkBtn(left, "Копировать квест", Color(58, 82, 112))
+        cp:Dock(TOP) cp:SetTall(26) cp:DockMargin(8, 4, 8, 2)
+        cp.DoClick = function() makeCopy(false) end
+
+        local tpl = mkBtn(left, "Сделать шаблон", Color(58, 82, 112))
+        tpl:Dock(TOP) tpl:SetTall(26) tpl:DockMargin(8, 0, 8, 4)
+        tpl.DoClick = function()
+            Derma_Query("Шаблон очистит координаты зон, камеры и привязку к NPC.\n" ..
+                "Этапы, диалоги и награда сохранятся.\n\nСоздать шаблон?",
+                "Шаблон квеста", "Создать", function() makeCopy(true) end, "Отмена")
         end
 
         --[[ ПАЛИТРА БЛОКОВ — то, что владелец назвал «боковыми
@@ -1417,6 +1465,56 @@ function Q.OpenGraphStudio(data)
                  чужой карты, автор правил бы точки, которых здесь нет,
                  и не понимал, почему ничего не работает. Показываем
                  карту явно и предупреждаем красным. ]]
+            --[[ ПЛАШКА ПРЕДУПРЕЖДЕНИЯ У КОПИИ (заказ владельца 29.08).
+
+                 Висит, пока автор не подтвердит, что всё проверил.
+                 Показываем КОНКРЕТНО, что перепроверить, а не общее
+                 «параметры могут отличаться»: список строится по
+                 фактическому содержимому квеста.
+
+                 Красным — то, что почти наверняка сломано (координаты,
+                 ID достижения). Жёлтым — то, что стоит глянуть. ]]
+            if istable(work.copyNotes) and #work.copyNotes > 0 then
+                local must = 0
+                for _, n in ipairs(work.copyNotes) do
+                    if n.level ~= "check" then must = must + 1 end
+                end
+
+                local warn = vgui.Create("DPanel", left)
+                warn:Dock(TOP) warn:SetTall(30 + #work.copyNotes * 30)
+                warn:DockMargin(10, 8, 10, 0)
+                warn.Paint = function(_, w, h)
+                    draw.RoundedBox(6, 0, 0, w, h, Color(48, 34, 14))
+                    draw.RoundedBox(0, 0, 0, 4, h, must > 0 and COL.red or COL.gold)
+                    draw.SimpleText(must > 0
+                            and ("ПРОВЕРЬТЕ ПЕРЕД ЗАПУСКОМ · " .. must)
+                            or "ПРОВЕРЬТЕ ПАРАМЕТРЫ",
+                        "GRMQS_Body", 10, 14, must > 0 and COL.red or COL.gold)
+                    local y = 34
+                    for _, n in ipairs(work.copyNotes) do
+                        local col = (n.level == "check") and COL.dim or Color(240, 190, 120)
+                        -- Текст длинный: переносим, иначе он уедет за панель.
+                        local lines = Q.WrapText(n.text, "GRMQS_Small", w - 24, 2)
+                        for _, line in ipairs(lines) do
+                            draw.SimpleText("• " .. line, "GRMQS_Small", 10, y, col)
+                            y = y + 14
+                        end
+                        y = y + 2
+                    end
+                end
+
+                local done = mkBtn(left, "Я всё проверил — убрать напоминание", COL.green)
+                done:Dock(TOP) done:SetTall(26) done:DockMargin(10, 4, 10, 0)
+                done.DoClick = function()
+                    --[[ Снимаем только по явному действию: если гасить
+                         автоматически при первом сохранении, напоминание
+                         исчезнет раньше, чем автор что-то исправит. ]]
+                    work.copyNotes = nil
+                    rebuildList()
+                    notification.AddLegacy("Напоминание снято", NOTIFY_GENERIC, 3)
+                end
+            end
+
             local questMap = tostring(work.map or "")
             local here = string.lower(game.GetMap() or "")
             local mapRow = vgui.Create("DPanel", left)
