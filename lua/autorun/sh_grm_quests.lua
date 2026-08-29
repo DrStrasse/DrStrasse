@@ -450,24 +450,140 @@ if SERVER then
         local a=def.achievement;if not(a and a.enabled and GRM.Ach and GRM.Ach.Register and GRM.Ach.Unlock and GRM.Ach.RecOf)then return end
         GRM.Ach.Register({id=a.id,name=a.name,desc=a.description,metric="quest:"..def.id,goal=1,reward=a.reward,hidden=a.hidden,questID=def.id});GRM.Ach.Unlock(ply,GRM.Ach.Defs[a.id],GRM.Ach.RecOf(ply))
     end
+    --[[--------------------------------------------------------------
+        ГРАФ УПРАВЛЯЕТ КВЕСТОМ (заказ владельца 29.08:
+        «делай чтобы линия управляла связями, чтобы графы не были
+         бесполезными»).
+
+        Было: связи в редакторе — просто картинка. Ролик играл по своей
+        фазе, награда выдавалась в конце, музыка по выбранному моменту.
+        Протянутая линия ни на что не влияла.
+
+        Стало: блоки делятся на ДВА вида.
+
+          ТРИГГЕРЫ — то, что происходит в игре:
+             start           принятие квеста
+             <id реплики>    игрок дошёл до этой реплики
+             step_<N>        закрыт N-й этап
+             finish          квест завершён
+
+          ЭФФЕКТЫ — то, что запускается по линии:
+             cut_accept / cut_complete   ролик
+             music                        звук
+             reward                       деньги и предметы
+             achieve                      достижение
+
+        Когда срабатывает триггер, идём по его связям и выполняем
+        подключённые эффекты. Цепочки поддерживаются: эффект тоже может
+        вести к следующему эффекту.
+
+        ВАЖНО ПРО ДВОЙНОЙ ЗАПУСК. Если ролик подключён линией, он НЕ
+        должен вдобавок играть по своей фазе — иначе зритель увидит его
+        дважды. Поэтому эффект, у которого есть входящая связь,
+        считается «управляемым графом» и из штатных точек пропускается.
+    ----------------------------------------------------------------]]
+    local EFFECT_UIDS = {cut_accept=true,cut_complete=true,music=true,reward=true,achieve=true}
+
+    --- Есть ли у эффекта входящая связь: значит им управляет граф.
+    function Q.GraphDrives(def,uid)
+        if not (istable(def) and istable(def.graph) and istable(def.graph.links)) then return false end
+        uid=tostring(uid or "")
+        for _,l in ipairs(def.graph.links)do
+            if tostring(l.to or "")==uid then return true end
+        end
+        return false
+    end
+
+    --- Куда ведут связи от блока.
+    local function graphTargets(def,uid)
+        local out={}
+        if not (istable(def) and istable(def.graph) and istable(def.graph.links)) then return out end
+        uid=tostring(uid or "")
+        for _,l in ipairs(def.graph.links)do
+            if tostring(l.from or "")==uid then out[#out+1]=tostring(l.to or "") end
+        end
+        return out
+    end
+
+    --[[ Выполнить ОДИН блок-эффект. Возвращает true, если это был
+         эффект: по нему решаем, идти ли дальше по цепочке. ]]
+    local function runEffect(ply,def,uid,p)
+        if uid=="cut_accept" then cutscene(ply,def.cutscene and def.cutscene.accept) return true end
+        if uid=="cut_complete" then cutscene(ply,def.cutscene and def.cutscene.complete) return true end
+        if uid=="music" then
+            local m=def.music
+            if istable(m) then
+                net.Start("GRM_Quest_Music")
+                    net.WriteString(trim(m.sound,160))
+                    net.WriteFloat(math.Clamp(tonumber(m.volume)or 1,.1,1))
+                    net.WriteBool(m.loop==true)
+                net.Send(ply)
+            end
+            return true
+        end
+        if uid=="reward" then reward(ply,def) return true end
+        if uid=="achieve" then unlockQuestAchievement(ply,def) return true end
+        return false
+    end
+
+    --[[ Пройти по связям от триггера и выполнить эффекты.
+
+         Защита от зацикливания обязательна: автор может свести линии в
+         кольцо, и без пометки посещённых сервер уйдёт в бесконечный
+         цикл, повесив карту. ]]
+    function Q.RunGraphFrom(ply,def,fromUID,p)
+        if not (IsValid(ply) and istable(def)) then return 0 end
+        local seen,queue,fired={},{tostring(fromUID or "")},0
+        local guard=0
+        while #queue>0 do
+            guard=guard+1;if guard>64 then break end
+            local cur=table.remove(queue,1)
+            for _,nxt in ipairs(graphTargets(def,cur))do
+                if not seen[nxt] then
+                    seen[nxt]=true
+                    if runEffect(ply,def,nxt,p) then fired=fired+1 end
+                    -- Цепочка: эффект может вести к следующему эффекту.
+                    queue[#queue+1]=nxt
+                end
+            end
+        end
+        return fired
+    end
+
     local function finishQuest(ply,def,p)
-        p.status="completed";p.completedAt=os.time();reward(ply,def);unlockQuestAchievement(ply,def);questNotice(ply,"complete",def);questMusic(ply,"complete",def);cutscene(ply,def.cutscene.complete);hook.Run("GRM_QuestCompleted",ply,def.id);Q.SaveProgress();sync(ply)
+        p.status="completed";p.completedAt=os.time()
+        --[[ Блоки, подключённые линией, запускает граф — здесь их
+             пропускаем, иначе награда выдастся дважды, а ролик
+             проиграется два раза подряд. ]]
+        if not Q.GraphDrives(def,"reward") then reward(ply,def) end
+        if not Q.GraphDrives(def,"achieve") then unlockQuestAchievement(ply,def) end
+        questNotice(ply,"complete",def)
+        if not Q.GraphDrives(def,"music") then questMusic(ply,"complete",def) end
+        if not Q.GraphDrives(def,"cut_complete") then cutscene(ply,def.cutscene.complete) end
+        -- Триггер «finish»: запускаем всё, что подключено к нему линиями.
+        Q.RunGraphFrom(ply,def,"finish",p)
+        hook.Run("GRM_QuestCompleted",ply,def.id);Q.SaveProgress();sync(ply)
     end
     local function checkCurrent(ply,def,p)
         local step=def.steps[p.step or 1];if not step then finishQuest(ply,def,p)return end
-        if step.type=="item"then p.count=itemCount(ply,step.item);if p.count>=step.count then if step.consume and GRM.Inventory and GRM.Inventory.RemoveItem then GRM.Inventory.RemoveItem(ply,step.item,step.count)end;p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);questMusic(ply,"step",def);checkCurrent(ply,def,p)end end
+        if step.type=="item"then p.count=itemCount(ply,step.item);if p.count>=step.count then if step.consume and GRM.Inventory and GRM.Inventory.RemoveItem then GRM.Inventory.RemoveItem(ply,step.item,step.count)end;p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);if not Q.GraphDrives(def,"music") then questMusic(ply,"step",def) end;Q.RunGraphFrom(ply,def,"step_"..tostring((tonumber(p.step) or 1)-1),p);checkCurrent(ply,def,p)end end
     end
     function Q.Start(ply,questID)
         local def=Q.Definitions[tostring(questID or "")];local ok,why=canStart(ply,def);if not ok then return false,why end
-        local all=progressFor(ply);all[def.id]={status="active",step=1,count=0,startedAt=os.time()};questNotice(ply,"start",def);questMusic(ply,"start",def);cutscene(ply,def.cutscene.accept);checkCurrent(ply,def,all[def.id]);Q.SaveProgress();sync(ply);hook.Run("GRM_QuestStarted",ply,def.id);return true
+        local all=progressFor(ply);all[def.id]={status="active",step=1,count=0,startedAt=os.time()};questNotice(ply,"start",def)
+        if not Q.GraphDrives(def,"music") then questMusic(ply,"start",def) end
+        if not Q.GraphDrives(def,"cut_accept") then cutscene(ply,def.cutscene.accept) end
+        -- Триггер «start»: линии от блока СТАРТ.
+        Q.RunGraphFrom(ply,def,"start",all[def.id])
+        checkCurrent(ply,def,all[def.id]);Q.SaveProgress();sync(ply);hook.Run("GRM_QuestStarted",ply,def.id);return true
     end
     function Q.Event(ply,eventName,target,amount,meta)
         if not IsValid(ply)then return end;eventName=trim(eventName,64);target=trim(target,96);amount=math.max(1,math.floor(tonumber(amount)or 1));local all=progressFor(ply)
-        for id,p in pairs(all)do local def=Q.Definitions[id];if def and def.enabled and not def.draft and p.status=="active"then local step=def.steps[p.step or 1];local match=step and step.type=="event"and step.event==eventName and(step.target==""or step.target==target);if match then p.count=math.min(step.count,(tonumber(p.count)or 0)+amount);if p.count>=step.count then p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);questMusic(ply,"step",def);checkCurrent(ply,def,p)end end end end
+        for id,p in pairs(all)do local def=Q.Definitions[id];if def and def.enabled and not def.draft and p.status=="active"then local step=def.steps[p.step or 1];local match=step and step.type=="event"and step.event==eventName and(step.target==""or step.target==target);if match then p.count=math.min(step.count,(tonumber(p.count)or 0)+amount);if p.count>=step.count then p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);if not Q.GraphDrives(def,"music") then questMusic(ply,"step",def) end;Q.RunGraphFrom(ply,def,"step_"..tostring((tonumber(p.step) or 1)-1),p);checkCurrent(ply,def,p)end end end end
         Q.SaveProgress();sync(ply)
     end
     function Q.Talk(ply,npcID)
-        local all=progressFor(ply);for id,p in pairs(all)do local def=Q.Definitions[id];local step=def and def.steps[p.step or 1];if def and def.enabled and not def.draft and p.status=="active"and step and step.type=="talk"and step.npc==npcID then p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);questMusic(ply,"step",def);checkCurrent(ply,def,p)end end;Q.SaveProgress();sync(ply)
+        local all=progressFor(ply);for id,p in pairs(all)do local def=Q.Definitions[id];local step=def and def.steps[p.step or 1];if def and def.enabled and not def.draft and p.status=="active"and step and step.type=="talk"and step.npc==npcID then p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);if not Q.GraphDrives(def,"music") then questMusic(ply,"step",def) end;Q.RunGraphFrom(ply,def,"step_"..tostring((tonumber(p.step) or 1)-1),p);checkCurrent(ply,def,p)end end;Q.SaveProgress();sync(ply)
     end
 
     local function inZone(pos,step)
@@ -478,7 +594,7 @@ if SERVER then
         local changed,changedPlayers=false,{}
         for _,ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll())do if IsValid(ply)and ply:Alive()then local all=progressFor(ply);for id,p in pairs(all)do local def=Q.Definitions[id];local step=def and def.steps[p.step or 1]
             if def and def.enabled and not def.draft and p.status=="active"and step then
-                if step.type=="visit"and inZone(ply:GetPos(),step)then p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);questMusic(ply,"step",def);checkCurrent(ply,def,p);changed=true;changedPlayers[ply]=true
+                if step.type=="visit"and inZone(ply:GetPos(),step)then p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);if not Q.GraphDrives(def,"music") then questMusic(ply,"step",def) end;Q.RunGraphFrom(ply,def,"step_"..tostring((tonumber(p.step) or 1)-1),p);checkCurrent(ply,def,p);changed=true;changedPlayers[ply]=true
                 elseif step.type=="item"then local before=p.count;checkCurrent(ply,def,p);if before~=p.count then changed=true;changedPlayers[ply]=true end end
             end
         end end end

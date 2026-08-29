@@ -141,6 +141,21 @@ if SERVER then
     end
 
     local function sendNode(ply, npcName, questID, phase, node, index, nodes)
+        --[[ РЕПЛИКА КАК ТРИГГЕР ГРАФА (заказ владельца 29.08).
+
+             Игрок дошёл до этой реплики — запускаем всё, что подключено
+             к ней линией: ролик, музыку, награду. Именно это делает
+             граф рабочим, а не декоративным.
+
+             Зовём ДО отправки узла: ролик должен начаться вместе с
+             репликой, а не после того, как игрок её закроет. ]]
+        if Q.RunGraphFrom and node then
+            local def = Q.Definitions and Q.Definitions[tostring(questID or "")]
+            if def then
+                local uid = tostring(node.id or "")
+                if uid ~= "" then Q.RunGraphFrom(ply, def, uid, nil) end
+            end
+        end
         local choices = visibleChoices(ply, node)
         net.Start(NET_NODE)
             net.WriteString(tostring(npcName or ""))

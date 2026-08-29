@@ -603,6 +603,21 @@ function Q.OpenGraphStudio(data)
                     draw.SimpleText(line, "GRMQS_Small", 10, 34 + (li - 1) * 15, COL.text)
                 end
 
+                --[[ Показываем, что блок запускается ЛИНИЕЙ, а не своей
+                     фазой: иначе непонятно, работает связь или нет. ]]
+                local driven = false
+                for _, ob in ipairs(blocks) do
+                    for _, l in ipairs(ob.links or {}) do
+                        if l.to == b.uid then driven = true break end
+                    end
+                    if driven then break end
+                end
+                if driven and (b.kind == "cutscene" or b.kind == "music"
+                    or b.kind == "reward" or b.kind == "achieve") then
+                    draw.SimpleText("◀ по линии", "GRMQS_Small", w - 10, h - 12,
+                        COL.accent, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                end
+
                 if b.kind == "dialogue" then
                     local chs = (b.data or {}).choices or {}
                     local foot = #chs > 0 and (#chs .. " отв.") or "линейно"
@@ -703,8 +718,29 @@ function Q.OpenGraphStudio(data)
             data = { enabled = true, id = "quest_" .. tostring(work.id or ""),
                 name = work.title or "Достижение", description = work.summary or "", reward = 0 }
         end
+        --[[ UID НОВОГО БЛОКА (исправлено 29.08).
+
+             Движок опознаёт блоки по uid: этапы как «step_N», эффекты по
+             постоянному имени. Случайный uid вида «step_48231_3» после
+             сохранения превращался в «step_1» — связи, нарисованные до
+             сохранения, теряли цель.
+
+             Поэтому uid сразу такой же, каким его сделает загрузка. ]]
+        local uid
+        if kind == "step" then
+            local n = 0
+            for _, ob in ipairs(blocks) do if ob.kind == "step" then n = n + 1 end end
+            uid = "step_" .. (n + 1)
+        elseif kind == "dialogue" then
+            uid = data.id
+        elseif kind == "cutscene" then
+            uid = "cut_" .. (data.phase == "complete" and "complete" or "accept")
+        else
+            uid = kind == "achieve" and "achieve" or kind
+        end
+
         blocks[#blocks + 1] = {
-            uid = kind .. "_" .. (os.time() % 100000) .. "_" .. #blocks,
+            uid = uid,
             kind = kind, data = data, x = 320, y = 120 + (#blocks % 5) * 40, links = {},
         }
         selected = #blocks
@@ -939,7 +975,23 @@ function Q.OpenGraphStudio(data)
             ph:Dock(TOP) ph:SetTall(26) ph:DockMargin(10, 6, 10, 0)
             ph:AddChoice("При принятии квеста", "accept", d.phase ~= "complete")
             ph:AddChoice("При завершении квеста", "complete", d.phase == "complete")
-            ph.OnSelect = function(_, _, _, v) d.phase = v rebuildCards() end
+            ph.OnSelect = function(_, _, _, v)
+                --[[ Фаза входит в uid блока: без переименования связь
+                     осталась бы указывать на «cut_accept», которого уже
+                     нет. Переписываем ссылки, как при смене ID реплики. ]]
+                local oldUID = tostring(b.uid or "")
+                local newUID = "cut_" .. (v == "complete" and "complete" or "accept")
+                if oldUID ~= newUID then
+                    for _, ob in ipairs(blocks) do
+                        for _, l in ipairs(ob.links or {}) do
+                            if l.to == oldUID then l.to = newUID end
+                        end
+                    end
+                    b.uid = newUID
+                end
+                d.phase = v
+                rebuildCards()
+            end
 
             local add = mkBtn(right, "+ Камера из взгляда", COL.green)
             add:Dock(TOP) add:SetTall(30) add:DockMargin(10, 8, 10, 4)
@@ -1056,6 +1108,21 @@ function Q.OpenGraphStudio(data)
                 Q.StartCutscene(table.Copy(d.cams), true)
                 if Q.Cutscene then Q.Cutscene.restoreFrame = f end
             end
+
+            --[[ Объясняем главное правило: линия перебивает фазу. ]]
+            local drivenNote = vgui.Create("DLabel", right)
+            drivenNote:Dock(TOP) drivenNote:SetTall(46) drivenNote:DockMargin(10, 6, 10, 4)
+            drivenNote:SetWrap(true) drivenNote:SetFont("GRMQS_Small")
+            local isDriven = false
+            for _, ob in ipairs(blocks) do
+                for _, l in ipairs(ob.links or {}) do
+                    if l.to == b.uid then isDriven = true break end
+                end
+            end
+            drivenNote:SetTextColor(isDriven and COL.accent or COL.dim)
+            drivenNote:SetText(isDriven
+                and "Запускается ЛИНИЕЙ: сработает там, где вы её подключили, а не по фазе."
+                or "Сейчас играет по своей фазе. Протяните линию от реплики или этапа, чтобы задать точный момент.")
 
             local tool = mkBtn(right, "Ставить точки тулом в мире", Color(58, 82, 112))
             tool:Dock(TOP) tool:SetTall(26) tool:DockMargin(10, 2, 10, 6)
