@@ -1215,20 +1215,79 @@ function Q.OpenGraphStudio(data)
                 if Q.Cutscene then Q.Cutscene.restoreFrame = f end
             end
 
-            --[[ Объясняем главное правило: линия перебивает фазу. ]]
+            --[[ МОМЕНТ ЗАПУСКА — ЗДЕСЬ, В ПАНЕЛИ САМОЙ КАТ-СЦЕНЫ.
+
+                 Владелец 29.08: «так и где для кат-сцены правило, чтобы
+                 она запускалась после диалога?»
+
+                 Настройка живёт на СВЯЗИ (один ролик можно подключить к
+                 нескольким репликам с разным моментом), но искать её
+                 логично там, где настраивают сам ролик. Раньше
+                 переключатель был только в панели реплики — и его
+                 никто не находил.
+
+                 Собираем все входящие связи и даём переключить каждую
+                 прямо отсюда. ]]
+            local incoming = {}
+            for _, ob in ipairs(blocks) do
+                for _, l in ipairs(ob.links or {}) do
+                    if l.to == b.uid then
+                        incoming[#incoming + 1] = { link = l, from = ob }
+                    end
+                end
+            end
+
             local drivenNote = vgui.Create("DLabel", right)
             drivenNote:Dock(TOP) drivenNote:SetTall(46) drivenNote:DockMargin(10, 6, 10, 4)
             drivenNote:SetWrap(true) drivenNote:SetFont("GRMQS_Small")
-            local isDriven = false
-            for _, ob in ipairs(blocks) do
-                for _, l in ipairs(ob.links or {}) do
-                    if l.to == b.uid then isDriven = true break end
-                end
-            end
-            drivenNote:SetTextColor(isDriven and COL.accent or COL.dim)
-            drivenNote:SetText(isDriven
+            drivenNote:SetTextColor(#incoming > 0 and COL.accent or COL.dim)
+            drivenNote:SetText(#incoming > 0
                 and "Запускается ЛИНИЕЙ: сработает там, где вы её подключили, а не по фазе."
                 or "Сейчас играет по своей фазе. Протяните линию от реплики или этапа, чтобы задать точный момент.")
+
+            if #incoming > 0 then
+                local hdr = vgui.Create("DLabel", right)
+                hdr:Dock(TOP) hdr:SetTall(20) hdr:DockMargin(10, 6, 10, 0)
+                hdr:SetFont("GRMQS_Small") hdr:SetTextColor(COL.gold)
+                hdr:SetText("КОГДА ЗАПУСКАТЬ ЭТОТ РОЛИК")
+
+                for _, row in ipairs(incoming) do
+                    local l, fromBlock = row.link, row.from
+                    --[[ Для реплики момент имеет смысл: её текст читают.
+                         Для этапа и старта разговора нет, там «после
+                         диалога» ничего не изменит — так и пишем, чтобы
+                         автор не искал несуществующую разницу. ]]
+                    local isDialogue = fromBlock.kind == "dialogue"
+                    local btn = vgui.Create("DButton", right)
+                    btn:Dock(TOP) btn:SetTall(38) btn:DockMargin(10, 4, 10, 0) btn:SetText("")
+                    btn.Paint = function(sp, w, h)
+                        local after = (l.when == "after")
+                        draw.RoundedBox(5, 0, 0, w, h, sp:IsHovered() and Color(34, 46, 62) or COL.card)
+                        draw.RoundedBox(0, 0, 0, 4, h, after and COL.accent or COL.gold)
+                        draw.SimpleText("от: " .. tostring(fromBlock.uid), "GRMQS_Small", 10, 10, COL.text)
+                        if isDialogue then
+                            draw.SimpleText(after and "ПОСЛЕ диалога" or "СРАЗУ при показе реплики",
+                                "GRMQS_Small", 10, 26, after and COL.accent or COL.dim)
+                        else
+                            draw.SimpleText("сразу (у этого блока нет диалога)",
+                                "GRMQS_Small", 10, 26, COL.dim)
+                        end
+                    end
+                    btn.DoClick = function()
+                        if not isDialogue then
+                            notification.AddLegacy("Момент важен только для связи от реплики", NOTIFY_HINT, 4)
+                            return
+                        end
+                        l.when = (l.when == "after") and "now" or "after"
+                        rebuildCards() rebuildProps()
+                    end
+                end
+
+                local tip = vgui.Create("DLabel", right)
+                tip:Dock(TOP) tip:SetTall(44) tip:DockMargin(10, 4, 10, 4)
+                tip:SetWrap(true) tip:SetFont("GRMQS_Small") tip:SetTextColor(COL.dim)
+                tip:SetText("Клик по строке меняет момент. «ПОСЛЕ диалога» — ролик дождётся, пока игрок дочитает и закроет разговор.")
+            end
 
             local tool = mkBtn(right, "Ставить точки тулом в мире", Color(58, 82, 112))
             tool:Dock(TOP) tool:SetTall(26) tool:DockMargin(10, 2, 10, 6)
