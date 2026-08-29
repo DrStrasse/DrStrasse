@@ -1096,7 +1096,14 @@ function Q.OpenGraphStudio(data)
                     if path == "" then
                         notification.AddLegacy("Звук не задан", NOTIFY_HINT, 3) return
                     end
-                    surface.PlaySound((path:gsub("^sound/", "")))
+                    --[[ Через браузер: он глушит предыдущий трек. Иначе
+                         повторные нажатия наслаивали бы звуки друг на
+                         друга — та же беда, что была в списке звуков. ]]
+                    if GRM.SoundBrowser and GRM.SoundBrowser.Play then
+                        GRM.SoundBrowser.Play(path)
+                    else
+                        surface.PlaySound((path:gsub("^sound/", "")))
+                    end
                 end
 
                 local img = field(right, "Картинка (материал)", cam.image)
@@ -1217,7 +1224,13 @@ function Q.OpenGraphStudio(data)
             test:Dock(TOP) test:SetTall(26) test:DockMargin(10, 4, 10, 6)
             test.DoClick = function()
                 local path = string.Trim(snd:GetValue() or "")
-                if path ~= "" then surface.PlaySound(path) end
+                if path ~= "" then
+                    if GRM.SoundBrowser and GRM.SoundBrowser.Play then
+                        GRM.SoundBrowser.Play(path)
+                    else
+                        surface.PlaySound(path)
+                    end
+                end
             end
             local note = vgui.Create("DLabel", right)
             note:Dock(TOP) note:SetTall(58) note:DockMargin(10, 4, 10, 6)

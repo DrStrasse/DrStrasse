@@ -97,6 +97,47 @@ function SB.Filter(list, query)
     return out
 end
 
+--[[ ПРОСЛУШИВАНИЕ С ОСТАНОВКОЙ (жалоба владельца 29.08: «нажимаю на
+     звук, он проигрывает, нажимаю на следующий — он запускает
+     следующий, но предыдущий не останавливает»).
+
+     Причина: surface.PlaySound выстреливает звук и забывает о нём —
+     остановить его нечем. Перебирая список из десятка треков, человек
+     получал какофонию из всех сразу.
+
+     CreateSound даёт объект с методом Stop. Держим ссылку на текущий
+     трек и снимаем его перед запуском следующего.
+
+     SoundLevel 0 — звук не затухает с расстоянием: иначе длинный трек
+     стихал бы, стоит игроку отойти, пока он слушает. ]]
+function SB.Play(path)
+    path = string.Trim(tostring(path or ""))
+    if path == "" then return end
+    -- Пути пишут по-разному: движку нужен вариант без ведущей папки.
+    path = path:gsub("^sound/", "")
+
+    SB.Stop()
+
+    local lp = LocalPlayer()
+    if IsValid(lp) and isfunction(CreateSound) then
+        local ok, patch = pcall(CreateSound, lp, path)
+        if ok and patch then
+            SB._patch = patch
+            pcall(function() patch:SetSoundLevel(0) patch:PlayEx(1, 100) end)
+            return
+        end
+    end
+    -- Запасной путь: хотя бы проиграть, если CreateSound недоступен.
+    surface.PlaySound(path)
+end
+
+function SB.Stop()
+    if SB._patch then
+        pcall(function() SB._patch:Stop() end)
+        SB._patch = nil
+    end
+end
+
 local function mkBtn(parent, text, col)
     local b = vgui.Create("DButton", parent)
     b:SetText("") b:SetCursor("hand")
@@ -185,8 +226,10 @@ function SB.Open(onPick, current)
             end
             row.DoClick = function()
                 pickRow(path)
-                -- Клик сразу проигрывает: выбирать звук вслепую бессмысленно.
-                surface.PlaySound(path)
+                --[[ Клик сразу проигрывает: выбирать звук вслепую
+                     бессмысленно. Предыдущий трек при этом глушится —
+                     иначе при переборе списка играли бы все разом. ]]
+                SB.Play(path)
             end
             row.DoDoubleClick = function()
                 pickRow(path)
@@ -211,10 +254,20 @@ function SB.Open(onPick, current)
 
     search.OnChange = function() rebuild() end
 
+    --[[ Закрыли окно — звук обязан замолчать. Иначе выбранный трек
+         продолжал бы играть поверх игры, и остановить его было бы
+         нечем: окна уже нет. ]]
+    f.OnClose = function() SB.Stop() end
+    f.OnRemove = function() SB.Stop() end
+
+    local stopBtn = mkBtn(f, "■ Стоп", COL.card)
+    stopBtn:SetSize(80, 30) stopBtn:SetPos(f:GetWide() - 378, f:GetTall() - 44)
+    stopBtn.DoClick = function() SB.Stop() end
+
     local play = mkBtn(f, "▶ Прослушать", COL.card)
     play:SetSize(130, 30) play:SetPos(f:GetWide() - 292, f:GetTall() - 44)
     play.DoClick = function()
-        if selected ~= "" then surface.PlaySound(selected) end
+        if selected ~= "" then SB.Play(selected) end
     end
 
     local apply = mkBtn(f, "Выбрать", COL.green)
@@ -224,6 +277,8 @@ function SB.Open(onPick, current)
             notification.AddLegacy("Сначала выберите звук", NOTIFY_HINT, 3)
             return
         end
+        -- Прослушивание глушим: дальше звук нужен в сцене, а не здесь.
+        SB.Stop()
         if isfunction(onPick) then onPick(selected) end
         f:Close()
     end
