@@ -34,6 +34,47 @@ if SERVER then
  function JB.MarkGarbageTruck(veh,ply,j,preserveState)
   if not IsValid(veh)then return end;local source=veh;local load=JB.GetGarbageLoad(source);veh=JB.SetGarbageLoad(source,load);if not IsValid(veh)then return end;JB.GarbageTrucks[veh]=true;nwInt(veh,"GRM_GarbageCapacity",tonumber(JB.WorkConfig and JB.WorkConfig.garbageCapacity)or 3);if not preserveState then nwString(veh,"GRM_GarbageState","collecting")end;if IsValid(ply)then veh._grmGarbageDriver=ply;if veh:GetNWEntity("GRM_GarbageDriverEntity")~=ply then veh:SetNWEntity("GRM_GarbageDriverEntity",ply)end;nwString(veh,"GRM_GarbageDriver",ply:GetNWString("GRM_RPName",ply:Nick()))end
  end
+ --[[ ВОССТАНОВЛЕНИЕ ГРУЗА ПОСЛЕ ПЕРЕЗАПУСКА СЕРВЕРА.
+
+      Пакеты в кузове живут на энтити (veh.GRM_GarbageLoad + NW), а машина
+      после рестарта — новая и пустая. Сам рейс при этом сохраняется на диск
+      вместе со счётчиком garbageCollected.
+
+      Без восстановления получался тупик: в прогрессе «собрано 3/3», кузов
+      пустой, а полигон принимает только полный рейс — ни доехать, ни сдать,
+      только провалить и потерять время.
+
+      Правило простое: в кузове должно быть НЕ МЕНЬШЕ, чем помнит рейс.
+      Берём максимум фактического и сохранённого, поэтому повторные вызовы
+      ничего не «надувают», а реально догруженный сверх счётчика мусор не
+      затирается. ]]
+ function JB.RestoreGarbageLoad(ply,j,veh)
+  if not istable(j) or j.tplId~="garbage" then return end
+  if not IsValid(veh) then return end
+  local saved=math.max(0,math.floor(tonumber(j.garbageCollected) or 0))
+  if saved<=0 then return end
+  local cap=math.max(0,math.floor(tonumber(JB.WorkConfig and JB.WorkConfig.garbageCapacity) or saved))
+  if cap>0 and saved>cap then saved=cap end
+  local actual=JB.GetGarbageLoad(veh)
+  if actual>=saved then return end                 -- уже не меньше — не трогаем
+  local root=JB.SetGarbageLoad(veh,saved) or veh
+  JB.MarkGarbageTruck(root,ply,j,true)
+  if IsValid(ply) and GRM.Notify then
+   GRM.Notify(ply,("Груз рейса восстановлен: %d пакет(ов) в кузове."):format(saved),120,220,255)
+  end
+  audit("garbage.restore",ply,{vehicle=IsValid(root) and root:EntIndex() or 0},{load=saved,was=actual})
+  return saved
+ end
+ --[[ Сел за руль мусоровоза со своим рейсом — груз возвращается сам.
+      Игроку не нужно знать, что сервер перезапускался. ]]
+ hook.Add("PlayerEnteredVehicle","GRM_Garbage_RestoreLoad",function(ply,seat)
+  local j=JB.GetActiveJob and JB.GetActiveJob(ply)
+  if not(istable(j) and j.tplId=="garbage") then return end
+  local veh=rootVehicle(seat)
+  if not IsValid(veh) then return end
+  if JB.IsVehicleClassAllowed and not JB.IsVehicleClassAllowed(veh,"garbage") then return end
+  JB.RestoreGarbageLoad(ply,j,veh)
+ end)
  local function binState(bin)local now=CurTime();if(tonumber(bin._grmGarbageSearchingUntil)or 0)>now then return"searching"end;return bin:GetReadyAt()>now and"cooldown"or"ready"end
  local function bindTopology()
   local all,points,dumps=pointMap();local bins=ents.FindByClass("grm_garbage_bin");local claimed,bindings,boundRec={},{},{};local radius=tonumber(JB.WorkConfig and JB.WorkConfig.garbageBindRadius)or 500
