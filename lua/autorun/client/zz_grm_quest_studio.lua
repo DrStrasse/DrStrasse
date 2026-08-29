@@ -292,9 +292,18 @@ function Q.QuestToBlocks(work)
             -- Диалоговые связи уже восстановлены из next/choices.
             local dup = false
             for _, ex in ipairs(from.links) do
-                if (ex.port or 0) == port then dup = true break end
+                if (ex.port or 0) == port then
+                    --[[ Связь уже есть — но режим мог быть задан только в
+                         сохранённой раскладке. Переносим его, иначе
+                         «после диалога» терялось при переоткрытии. ]]
+                    ex.when = (l.when == "after") and "after" or ex.when
+                    dup = true break
+                end
             end
-            if not dup then from.links[#from.links + 1] = { to = to.uid, port = port } end
+            if not dup then
+                from.links[#from.links + 1] = { to = to.uid, port = port,
+                    when = (l.when == "after") and "after" or "now" }
+            end
         end
     end
 
@@ -362,6 +371,8 @@ function Q.BlocksToQuest(work, blocks)
                 from = tostring(b.uid or ""),
                 to = tostring(l.to or ""),
                 port = math.floor(tonumber(l.port) or 0),
+                -- Момент запуска: сразу при показе реплики или после разговора.
+                when = (l.when == "after") and "after" or "now",
             }
         end
     end
@@ -614,7 +625,18 @@ function Q.OpenGraphStudio(data)
                 end
                 if driven and (b.kind == "cutscene" or b.kind == "music"
                     or b.kind == "reward" or b.kind == "achieve") then
-                    draw.SimpleText("◀ по линии", "GRMQS_Small", w - 10, h - 12,
+                    --[[ Показываем и МОМЕНТ: без этого «после разговора»
+                         видно только в панели, и на графе непонятно,
+                         почему ролик идёт не сразу. ]]
+                    local after = false
+                    for _, ob in ipairs(blocks) do
+                        for _, l in ipairs(ob.links or {}) do
+                            if l.to == b.uid and l.when == "after" then after = true break end
+                        end
+                        if after then break end
+                    end
+                    draw.SimpleText(after and "◀ после диалога" or "◀ по линии",
+                        "GRMQS_Small", w - 10, h - 12,
                         COL.accent, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
                 end
 
@@ -822,6 +844,49 @@ function Q.OpenGraphStudio(data)
                 end
                 d.id, b.uid = newID, newID
                 rebuildCards() rebuildProps()
+            end
+
+            --[[ КОГДА СРАБАТЫВАЮТ ЭФФЕКТЫ ЭТОЙ РЕПЛИКИ (заказ владельца
+                 29.08: «кат-сцена срабатывает ещё до момента пока не
+                 прошёл диалог, сделай для неё настройку срабатывать
+                 после диалога»).
+
+                 Настройка на самой связи, а не на кат-сцене: один ролик
+                 может быть подключён к нескольким репликам, и момент у
+                 каждой свой. ]]
+            local outLinks = {}
+            for _, l in ipairs(b.links or {}) do outLinks[#outLinks + 1] = l end
+            if #outLinks > 0 then
+                local hdr = vgui.Create("DLabel", right)
+                hdr:Dock(TOP) hdr:SetTall(20) hdr:DockMargin(10, 10, 10, 0)
+                hdr:SetFont("GRMQS_Small") hdr:SetTextColor(COL.gold)
+                hdr:SetText("КОГДА ЗАПУСКАТЬ ПОДКЛЮЧЁННОЕ")
+
+                for _, l in ipairs(outLinks) do
+                    local target = l.to
+                    local row = vgui.Create("DButton", right)
+                    row:Dock(TOP) row:SetTall(34) row:DockMargin(10, 4, 10, 0) row:SetText("")
+                    row.Paint = function(sp, w, h)
+                        local after = (l.when == "after")
+                        draw.RoundedBox(5, 0, 0, w, h, sp:IsHovered() and Color(34, 46, 62) or COL.card)
+                        draw.RoundedBox(0, 0, 0, 4, h, after and COL.accent or COL.gold)
+                        draw.SimpleText("→ " .. tostring(target), "GRMQS_Small", 10, 9, COL.text)
+                        draw.SimpleText(after and "после разговора" or "сразу при показе реплики",
+                            "GRMQS_Small", 10, 23, after and COL.accent or COL.dim)
+                    end
+                    row.DoClick = function()
+                        --[[ Переключаем по клику: две кнопки на связь
+                             заняли бы всю панель, а связей может быть
+                             несколько. ]]
+                        l.when = (l.when == "after") and "now" or "after"
+                        rebuildCards() rebuildProps()
+                    end
+                end
+
+                local note = vgui.Create("DLabel", right)
+                note:Dock(TOP) note:SetTall(40) note:DockMargin(10, 4, 10, 4)
+                note:SetWrap(true) note:SetFont("GRMQS_Small") note:SetTextColor(COL.dim)
+                note:SetText("Клик по строке меняет момент. «После разговора» — ролик не перекроет текст, который игрок ещё читает.")
             end
 
             local addCh = mkBtn(right, "+ Ответ игрока", COL.card)

@@ -245,8 +245,14 @@ ok(closedStep(2) == "step_1", "после первого этапа тригге
 ok(closedStep(3) == "step_2", "после второго — step_2", closedStep(3))
 
 -- Реплика как триггер.
-ok(dialogue:find("Q.RunGraphFrom(ply, def, uid, nil)", 1, true) ~= nil,
-   "ИСПРАВЛЕНО: показ реплики запускает подключённые эффекты")
+--[[ С 29.08 у связи есть момент запуска, и показ реплики поднимает
+     только режим «сразу»: отложенные ждут конца разговора. Раньше здесь
+     проверялся безрежимный вызов — он больше не должен существовать.
+     Подробности — в sim_quest_cutscene_after_dialogue. ]]
+ok(dialogue:find('Q.RunGraphFrom(ply, def, uid, nil, "now")', 1, true) ~= nil,
+   "ИСПРАВЛЕНО: показ реплики запускает подключённые эффекты режима «сразу»")
+ok(dialogue:find("local function flushPending", 1, true) ~= nil,
+   "а отложенные выпускаются в конце разговора")
 local sendFn = dialogue:match("local function sendNode.-\n        local choices") or ""
 ok(sendFn:find("Q.RunGraphFrom", 1, true) ~= nil,
    "и делает это ДО отправки реплики — ролик стартует вместе с ней")

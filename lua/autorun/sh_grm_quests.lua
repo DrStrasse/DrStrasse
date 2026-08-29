@@ -438,8 +438,20 @@ if SERVER then
             if #out.links>=256 then break end
             local from,to=trim(l.from,64),trim(l.to,64)
             if from~=""and to~=""then
+                --[[ КОГДА СРАБАТЫВАЕТ СВЯЗЬ ОТ РЕПЛИКИ (жалоба владельца
+                     29.08: «кат-сцена срабатывает ещё до момента пока не
+                     прошёл диалог»).
+
+                     По умолчанию эффект запускался в момент ПОКАЗА
+                     реплики — ролик перекрывал ещё не прочитанный текст.
+                     Теперь у связи есть режим:
+                       now   — сразу, как реплика появилась (было раньше);
+                       after — когда игрок закончит разговор.
+                     Значение по умолчанию оставляем now: у существующих
+                     квестов поведение не поменяется без ведома автора. ]]
                 out.links[#out.links+1]={from=from,to=to,
-                    port=math.Clamp(math.floor(tonumber(l.port)or 0),0,32)}
+                    port=math.Clamp(math.floor(tonumber(l.port)or 0),0,32),
+                    when=(l.when=="after")and"after"or"now"}
             end
         end
         if #out.links==0 then return nil end
@@ -678,13 +690,21 @@ if SERVER then
         return false
     end
 
-    --- Куда ведут связи от блока.
-    local function graphTargets(def,uid)
+    --[[ Куда ведут связи от блока.
+
+         mode фильтрует по моменту запуска:
+           nil     — все связи (для эффектов внутри цепочки);
+           "now"   — только те, что срабатывают сразу;
+           "after" — только отложенные до конца разговора. ]]
+    local function graphTargets(def,uid,mode)
         local out={}
         if not (istable(def) and istable(def.graph) and istable(def.graph.links)) then return out end
         uid=tostring(uid or "")
         for _,l in ipairs(def.graph.links)do
-            if tostring(l.from or "")==uid then out[#out+1]=tostring(l.to or "") end
+            if tostring(l.from or "")==uid then
+                local w=(l.when=="after")and"after"or"now"
+                if not mode or w==mode then out[#out+1]=tostring(l.to or "") end
+            end
         end
         return out
     end
@@ -715,14 +735,20 @@ if SERVER then
          Защита от зацикливания обязательна: автор может свести линии в
          кольцо, и без пометки посещённых сервер уйдёт в бесконечный
          цикл, повесив карту. ]]
-    function Q.RunGraphFrom(ply,def,fromUID,p)
+    function Q.RunGraphFrom(ply,def,fromUID,p,mode)
         if not (IsValid(ply) and istable(def)) then return 0 end
         local seen,queue,fired={},{tostring(fromUID or "")},0
         local guard=0
+        local first=true
         while #queue>0 do
             guard=guard+1;if guard>64 then break end
             local cur=table.remove(queue,1)
-            for _,nxt in ipairs(graphTargets(def,cur))do
+            --[[ Режим касается только связей ОТ ТРИГГЕРА. Внутри цепочки
+                 эффектов фильтр не нужен: раз цепочка уже запущена,
+                 она отрабатывает целиком. ]]
+            local useMode=first and mode or nil
+            first=false
+            for _,nxt in ipairs(graphTargets(def,cur,useMode))do
                 if not seen[nxt] then
                     seen[nxt]=true
                     if runEffect(ply,def,nxt,p) then fired=fired+1 end

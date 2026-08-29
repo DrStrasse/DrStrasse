@@ -153,7 +153,21 @@ if SERVER then
             local def = Q.Definitions and Q.Definitions[tostring(questID or "")]
             if def then
                 local uid = tostring(node.id or "")
-                if uid ~= "" then Q.RunGraphFrom(ply, def, uid, nil) end
+                if uid ~= "" then
+                    --[[ Только связи с режимом «сразу». Остальные копим и
+                         запустим, когда разговор закончится: иначе ролик
+                         перекрывал текст, который игрок ещё не прочитал. ]]
+                    Q.RunGraphFrom(ply, def, uid, nil, "now")
+
+                    local sess = ply.GRMQuestDlg
+                    if istable(sess) then
+                        sess.pending = istable(sess.pending) and sess.pending or {}
+                        --[[ Копим ID реплик, а не готовые эффекты: к концу
+                             разговора квест могли пересохранить, и список
+                             эффектов устарел бы. ]]
+                        sess.pending[#sess.pending + 1] = uid
+                    end
+                end
             end
         end
         local choices = visibleChoices(ply, node)
@@ -186,6 +200,26 @@ if SERVER then
         sendNode(ply, ply.GRMQuestDlg.npcName, questID, phase, nodes[1], 1, nodes)
         return true
     end
+
+    --[[ Выпустить эффекты, отложенные до конца разговора.
+
+         Зовём во ВСЕХ точках выхода: закрыл действием, дошёл до конца
+         веток, оборвал по расстоянию. Пропустить хоть одну — и ролик
+         не сыграет вовсе, что хуже прежнего поведения.
+
+         Список чистим сразу: повторный вызов не должен запустить ролик
+         второй раз. ]]
+    local function flushPending(ply)
+        local sess = ply and ply.GRMQuestDlg
+        if not (IsValid(ply) and istable(sess) and istable(sess.pending)) then return end
+        local list, def = sess.pending, Q.Definitions and Q.Definitions[tostring(sess.questID or "")]
+        sess.pending = nil
+        if not (def and Q.RunGraphFrom) then return end
+        for _, uid in ipairs(list) do
+            Q.RunGraphFrom(ply, def, uid, nil, "after")
+        end
+    end
+    Q.FlushDialogueGraph = flushPending
 
     local function runAction(ply, def, action, arg)
         action = string.lower(trim(action, 24))
@@ -228,6 +262,9 @@ if SERVER then
         local sess = ply.GRMQuestDlg
         if not istable(sess) or not IsValid(sess.npc) then return end
         if ply:GetPos():DistToSqr(sess.npc:GetPos()) > 220 * 220 then
+            --[[ Отошёл от NPC — разговор тоже окончен. Без этого
+                 отложенный ролик завис бы навсегда. ]]
+            flushPending(ply)
             ply.GRMQuestDlg = nil
             return
         end
@@ -248,6 +285,7 @@ if SERVER then
 
         local result = runAction(ply, def, ch.action, ch.actionArg)
         if result == "close" then
+            flushPending(ply)
             ply.GRMQuestDlg = nil
             net.Start(NET_NODE)
                 net.WriteString("")
@@ -271,6 +309,7 @@ if SERVER then
         if nextID ~= "" then nxt, ni = findNode(nodes, nextID)
         else ni = nodeIndex + 1; nxt = nodes[ni] end
         if not nxt then
+            flushPending(ply)
             ply.GRMQuestDlg = nil
             net.Start(NET_NODE)
                 net.WriteString("") net.WriteString("") net.WriteString("")
