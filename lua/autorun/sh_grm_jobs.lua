@@ -700,6 +700,7 @@ if SERVER then
         st.nick = rpName(ply)
         st.done = (tonumber(st.done) or 0) + 1
         st.earned = (tonumber(st.earned) or 0) + (tonumber(j.reward) or 0)
+        if JB.NoteJobFinished then JB.NoteJobFinished(ply, j.tplId) end
         if GRM.GiveMoney then GRM.GiveMoney(ply, j.reward, "Биржа труда: " .. tostring(j.title)) end
         if GRM.Notify then GRM.Notify(ply, "Задача выполнена: " .. tostring(j.title) .. " (+" .. (GRM.Format and GRM.Format(j.reward) or tostring(j.reward)) .. ")", 120, 255, 150) end
         saveActive("выполнено")
@@ -718,6 +719,9 @@ if SERVER then
             JB.RefundSystemReward(j.budgetEscrow, tostring(why or "провал"))
         end
         releasePost(j, why)
+        -- Провал даёт паузу, но НЕ съедает часовой лимит: иначе неудача
+        -- наказывала бы дважды — и без денег, и без работы до конца часа.
+        if JB.NoteJobFailed and not isstring(ply) then JB.NoteJobFailed(ply, j.tplId) end
         saveActive("провал: " .. tostring(why))
         local p = isstring(ply) and nil or ply
         if IsValid(p) then
@@ -806,7 +810,23 @@ if SERVER then
                             if pp:DistToSqr(j.center) < returnRadius * returnRadius then JB.Complete(ply) end
                         else -- goto
                             local targetRadius = tonumber(j.zoneRadius) or 170
-                            if pp:DistToSqr(j.target) < targetRadius * targetRadius then JB.Complete(ply) end
+                            if pp:DistToSqr(j.target) < targetRadius * targetRadius then
+                                --[[ У КУРЬЕРА ДОСТАВКА = ДОСТАВКА ГРУЗА.
+                                     Дойти до адреса мало: посылку могли
+                                     отнять, уронить при смерти или увести.
+                                     Без неё точка не засчитывается — иначе
+                                     физический предмет был бы декорацией. ]]
+                                if j.tplId == "courier" and JB.HasParcel then
+                                    if JB.HasParcel(ply) then
+                                        if JB.DeliverParcel then JB.DeliverParcel(ply, j) else JB.Complete(ply) end
+                                    elseif (j._parcelHintAt or 0) < CurTime() then
+                                        j._parcelHintAt = CurTime() + 8
+                                        if GRM.Notify then GRM.Notify(ply, "Вы на месте, но посылки нет. Найдите её и вернитесь.", 255, 150, 110) end
+                                    end
+                                else
+                                    JB.Complete(ply)
+                                end
+                            end
                         end
                     end
                 end
@@ -920,6 +940,17 @@ if SERVER then
             return
         end
         if tostring(offer.blockedReason or"")~=""then if GRM.Notify then GRM.Notify(ply,tostring(offer.blockedReason),255,150,95)end return end
+        --[[ ТЕМП РАБОТ. Раньше ограничителем служила только казна: пока в
+             ней есть деньги, одну и ту же короткую задачу можно было
+             брать без остановки. Пауза и часовой потолок живут в
+             sh_grm_jobs_limits.lua. ]]
+        if JB.CanTakeJob then
+            local allowed, why = JB.CanTakeJob(ply)
+            if not allowed then
+                if GRM.Notify then GRM.Notify(ply, tostring(why or "Сейчас работу взять нельзя."), 255, 190, 110) end
+                return
+            end
+        end
         local reward=offer.reward
         JB.StartJob(ply, {
             tplId = offer.tplId, title = offer.title, desc = offer.desc, jtype = offer.jtype,
