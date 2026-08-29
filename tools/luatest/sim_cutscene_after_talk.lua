@@ -69,9 +69,15 @@ print("\n=== 2. Q.START НЕ ИГРАЕТ РОЛИК, ЕСЛИ ЖДЁМ КОНЦ
 local startBody = bodyOf(quests, "function Q.Start(ply,questID)")
 ok(startBody ~= "", "тело Q.Start найдено")
 ok(startBody:find("acceptAfterDialogue", 1, true) ~= nil,
-    "Q.Start проверяет флаг перед запуском ролика")
-ok(startBody:find("QueueCutscene", 1, true) ~= nil or startBody:find("PendingCutscene", 1, true) ~= nil,
-    "вместо немедленного показа ролик уходит в очередь")
+    "Q.Start передаёт флаг «ждать конца диалога»")
+--[[ САМ ГЕЙТ ЖИВЁТ НЕ ЗДЕСЬ. Путей запуска ролика несколько (Q.Start,
+     финал квеста, линия графа от реплики, линия от этапа), и проверка в
+     одном из них ничего не решает: у владельца ролик висел на ЛИНИИ и
+     шёл мимо Q.Start. Поэтому откладывание стоит в общей функции показа
+     cutscene(), через которую проходят все пути. ]]
+local cutFn = quests:match("local function cutscene%(ply,nodes.-\n    end") or ""
+ok(cutFn:find("QueueCutscene", 1, true) ~= nil and cutFn:find("GRMQuestDlg", 1, true) ~= nil,
+    "общая функция показа откладывает ролик, если идёт разговор")
 
 print("\n=== 3. ОЧЕРЕДЬ ВЫПУСКАЕТСЯ НА ВЫХОДЕ ИЗ РАЗГОВОРА ===")
 ok(quests:find("function Q.QueueCutscene", 1, true) ~= nil, "есть постановка ролика в очередь")

@@ -121,7 +121,9 @@ ok(finish ~= "", "функция завершения квеста найден�
 local pReward = finish:find("reward(ply,def)", 1, true)
 local pAch    = finish:find("unlockQuestAchievement", 1, true)
 local pNotice = finish:find('questNotice(ply,"complete"', 1, true)
-local pCut    = finish:find("cutscene(ply,def.cutscene.complete)", 1, true)
+-- По началу вызова: аргументы (флаг «ждать конца диалога», тег) со
+-- временем добавляются, а проверяем мы ПОРЯДОК шагов, а не сигнатуру.
+local pCut    = finish:find("cutscene(ply,def.cutscene.complete", 1, true)
 ok(pReward and pAch and pReward < pAch,
    "в коде награда квеста выдаётся ДО ачивки — как и написано в подсказке")
 ok(pAch and pNotice and pAch < pNotice, "ачивка до уведомления")

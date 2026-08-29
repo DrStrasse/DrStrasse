@@ -210,9 +210,11 @@ local function guardedCutscene(src, guard, call)
     local chunk = src:sub(at, at + 700)
     return chunk:find(call, 1, true) ~= nil
 end
-ok(guardedCutscene(server, "cut_complete", "cutscene(ply,def.cutscene.complete)"),
+-- Вызов ищем по началу: аргументы (флаг «ждать конца диалога», тег)
+-- добавляются и меняются, а важна сама обёртка GraphDrives.
+ok(guardedCutscene(server, "cut_complete", "cutscene(ply,def.cutscene.complete"),
    "ролик завершения тоже")
-ok(guardedCutscene(server, "cut_accept", "cutscene(ply,def.cutscene.accept)"),
+ok(guardedCutscene(server, "cut_accept", "cutscene(ply,def.cutscene.accept"),
    "ролик принятия тоже")
 ok(server:find('if not Q.GraphDrives(def,"music") then questMusic(ply,"start",def) end', 1, true) ~= nil,
    "музыка при старте тоже")

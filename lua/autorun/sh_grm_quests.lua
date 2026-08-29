@@ -621,7 +621,39 @@ if SERVER then
         if not IsValid(ply)then return end;local duration=0;for _,node in ipairs(nodes or{})do duration=duration+math.Clamp(tonumber(node.duration)or 3,.05,30)+(node.transition=="move"and math.Clamp(tonumber(node.moveDuration)or 1,.05,30)or 0)end
         ply.GRMQuestCutscenePVS={nodes=table.Copy(nodes or{}),expires=CurTime()+duration+8}
     end
-    local function cutscene(ply,nodes)if not IsValid(ply)or#(nodes or {})==0 then return end;startCutscenePVS(ply,nodes);net.Start("GRM_Quest_Cutscene")net.WriteTable(nodes)net.Send(ply)end
+    --[[ ЕДИНСТВЕННАЯ ТОЧКА ПОКАЗА РОЛИКА — И ЕДИНСТВЕННОЕ МЕСТО ГЕЙТА.
+
+         Владелец дважды сообщал, что ролик лезет поверх открытого
+         диалога. Обе прошлые попытки закрывали по ОДНОМУ пути:
+
+           1) пометка на связи графа — мимо: ролик «при принятии» идёт из
+              Q.Start и графа не касается;
+           2) флаг в Q.Start — мимо: у владельца ролик висит на ЛИНИИ от
+              блока, его зовёт runEffect, минуя Q.Start.
+
+         Путей запуска несколько (Q.Start, финал квеста, граф от реплики,
+         граф от этапа), и латать каждый — гарантия промахнуться снова.
+         Поэтому проверка стоит ЗДЕСЬ: через эту функцию проходят все.
+
+         Правило: идёт разговор и у ролика включено «ждать конца
+         диалога» — откладываем. Разговора нет — показываем сразу, иначе
+         ролик от этапа посреди города повис бы в очереди до следующей
+         болтовни с NPC. ]]
+    local function cutsceneNow(ply,nodes)
+        if not IsValid(ply) or #(nodes or {})==0 then return end
+        startCutscenePVS(ply,nodes)
+        net.Start("GRM_Quest_Cutscene")net.WriteTable(nodes)net.Send(ply)
+    end
+    Q._CutsceneNow = cutsceneNow
+
+    local function cutscene(ply,nodes,afterDialogue,tag)
+        if not IsValid(ply) or #(nodes or {})==0 then return end
+        if afterDialogue and istable(ply.GRMQuestDlg) then
+            Q.QueueCutscene(ply,nodes,tag)
+            return
+        end
+        cutsceneNow(ply,nodes)
+    end
 
     --[[ ОЧЕРЕДЬ РОЛИКОВ: «сыграть, когда закончится разговор».
 
@@ -656,7 +688,9 @@ if SERVER then
         -- Снимаем ДО показа: иначе повторный выход из разговора
         -- проиграет тот же ролик второй раз.
         Q.PendingCutscene[ply]=nil
-        cutscene(ply,rec.nodes)
+        -- Показ БЕЗ гейта: разговор уже закончен, второй раз откладывать
+        -- некуда — иначе ролик заперся бы в очереди навсегда.
+        cutsceneNow(ply,rec.nodes)
         return true
     end
 
@@ -754,8 +788,19 @@ if SERVER then
     --[[ Выполнить ОДИН блок-эффект. Возвращает true, если это был
          эффект: по нему решаем, идти ли дальше по цепочке. ]]
     local function runEffect(ply,def,uid,p)
-        if uid=="cut_accept" then cutscene(ply,def.cutscene and def.cutscene.accept) return true end
-        if uid=="cut_complete" then cutscene(ply,def.cutscene and def.cutscene.complete) return true end
+        --[[ Ролик по ЛИНИИ ГРАФА — тот самый случай владельца. Флаг
+             «ждать конца диалога» берём с самого ролика: линия может
+             идти от реплики, и показывать поверх неё нельзя. ]]
+        if uid=="cut_accept" then
+            cutscene(ply,def.cutscene and def.cutscene.accept,
+                def.cutscene and def.cutscene.acceptAfterDialogue,"accept")
+            return true
+        end
+        if uid=="cut_complete" then
+            cutscene(ply,def.cutscene and def.cutscene.complete,
+                def.cutscene and def.cutscene.completeAfterDialogue,"complete")
+            return true
+        end
         if uid=="music" then
             local m=def.music
             if istable(m) then
@@ -819,11 +864,7 @@ if SERVER then
         questNotice(ply,"complete",def)
         if not Q.GraphDrives(def,"music") then questMusic(ply,"complete",def) end
         if not Q.GraphDrives(def,"cut_complete") then
-            if def.cutscene.completeAfterDialogue then
-                Q.QueueCutscene(ply,def.cutscene.complete,"complete")
-            else
-                cutscene(ply,def.cutscene.complete)
-            end
+            cutscene(ply,def.cutscene.complete,def.cutscene.completeAfterDialogue,"complete")
         end
         -- Триггер «finish»: запускаем всё, что подключено к нему линиями.
         Q.RunGraphFrom(ply,def,"finish",p)
@@ -841,11 +882,7 @@ if SERVER then
              показываем сразу — игрок ещё читает реплику. Выпустит
              Q.FlushCutscene, когда разговор закончится. ]]
         if not Q.GraphDrives(def,"cut_accept") then
-            if def.cutscene.acceptAfterDialogue then
-                Q.QueueCutscene(ply,def.cutscene.accept,"accept")
-            else
-                cutscene(ply,def.cutscene.accept)
-            end
+            cutscene(ply,def.cutscene.accept,def.cutscene.acceptAfterDialogue,"accept")
         end
         -- Триггер «start»: линии от блока СТАРТ.
         Q.RunGraphFrom(ply,def,"start",all[def.id])
