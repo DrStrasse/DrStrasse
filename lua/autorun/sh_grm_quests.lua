@@ -118,6 +118,14 @@ function Q.Validate(def)
         add("error", "В диалоге «До принятия» нет ответа с действием «Принять квест» — взять квест невозможно.")
     end
 
+    --[[ Чужая карта — это не опечатка, а гарантированно нерабочий
+         квест: координаты зон и камер здесь ни на что не указывают. ]]
+    local qmap = string.lower(tostring(def.map or ""))
+    local nowMap = string.lower((game and game.GetMap and game.GetMap()) or "")
+    if qmap ~= "" and nowMap ~= "" and qmap ~= nowMap then
+        add("error", ("Квест создан для карты «%s», а сейчас «%s» — зоны и камеры не совпадут."):format(qmap, nowMap))
+    end
+
     if tostring(def.npc or "") == "" and not def.autoStart then
         add("warn", "Не указан ID квестового NPC — квест некому выдавать.")
     end
@@ -326,7 +334,19 @@ if SERVER then
         for itemID,count in pairs(istable(raw.rewards and raw.rewards.items)and raw.rewards.items or {})do rewards.items[trim(itemID,96)]=math.Clamp(math.floor(tonumber(count)or 1),1,10000)end
         local prerequisites={};for _,v in ipairs(istable(raw.prerequisites)and raw.prerequisites or {})do prerequisites[#prerequisites+1]=trim(v,64)end
         local title,summary=trim(raw.title,100),trim(raw.summary,400);local notifications=istable(raw.notifications)and raw.notifications or{}
-        return {id=id,title=title,draft=draft,summary=summary,category=trim(raw.category,48),npc=trim(raw.npc,64),repeatable=raw.repeatable==true,autoStart=raw.autoStart==true,enabled=raw.enabled~=false,requireFaction=trim(raw.requireFaction,64),requireFlag=trim(raw.requireFlag,64),requireMoney=math.Clamp(math.floor(tonumber(raw.requireMoney)or 0),0,100000000),prerequisites=prerequisites,steps=steps,rewards=rewards,achievement=normalizeAchievement(raw.achievement,id,title,summary),notifications={start=normalizeNotification(notifications.start,"Получен квест: {title}",false),step=normalizeNotification(notifications.step,"Этап выполнен: {step}",false),complete=normalizeNotification(notifications.complete,"Квест завершён: {title}",true)},dialogue=normalizeDialogue(raw.dialogue),music=normalizeMusic(raw.music),graph=normalizeGraph(raw.graph),cutscene={accept=normalizeCutscene(raw.cutscene and raw.cutscene.accept),complete=normalizeCutscene(raw.cutscene and raw.cutscene.complete)}}
+        --[[ КАРТА КВЕСТА (заказ владельца 29.08: «квесты должны
+             запоминать конкретную карту, под которую создавались»).
+
+             Файл определений и так свой у каждой карты, но внутри
+             записи карта не хранилась. Из-за этого квест, перенесённый
+             копированием файла или восстановленный из бэкапа, молча
+             оказывался на чужой карте: зоны этапов и точки камер — это
+             координаты, на другой карте они указывают в пустоту.
+
+             Пустое значение = «карта не указана»: так открываются
+             старые квесты, созданные до этой правки. ]]
+        local questMap=string.lower(trim(raw.map,64))
+        return {id=id,map=questMap,title=title,draft=draft,summary=summary,category=trim(raw.category,48),npc=trim(raw.npc,64),repeatable=raw.repeatable==true,autoStart=raw.autoStart==true,enabled=raw.enabled~=false,requireFaction=trim(raw.requireFaction,64),requireFlag=trim(raw.requireFlag,64),requireMoney=math.Clamp(math.floor(tonumber(raw.requireMoney)or 0),0,100000000),prerequisites=prerequisites,steps=steps,rewards=rewards,achievement=normalizeAchievement(raw.achievement,id,title,summary),notifications={start=normalizeNotification(notifications.start,"Получен квест: {title}",false),step=normalizeNotification(notifications.step,"Этап выполнен: {step}",false),complete=normalizeNotification(notifications.complete,"Квест завершён: {title}",true)},dialogue=normalizeDialogue(raw.dialogue),music=normalizeMusic(raw.music),graph=normalizeGraph(raw.graph),cutscene={accept=normalizeCutscene(raw.cutscene and raw.cutscene.accept),complete=normalizeCutscene(raw.cutscene and raw.cutscene.complete)}}
     end
 
     function Q.SaveDefinitions()
@@ -373,8 +393,26 @@ if SERVER then
         Q.SaveProgress();for _,online in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll())do if IsValid(online)and(not targetKey or targetKey=="*"or characterKey(online)==targetKey)then sync(online)end end
         hook.Run("GRM_QuestProgressReset",questID,targetKey,removed);return removed
     end
+    --[[ Подходит ли квест текущей карте.
+
+         Зоны этапов и точки камер — это координаты. На другой карте они
+         указывают в пустоту: игрок получит цель, до которой невозможно
+         дойти, а кат-сцена снимет стену.
+
+         Квест без метки считаем совместимым: иначе после обновления
+         все существующие квесты разом перестали бы выдаваться. ]]
+    function Q.FitsMap(def)
+        if not istable(def) then return false end
+        local m=string.lower(trim(def.map,64))
+        if m=="" then return true end
+        return m==string.lower(game.GetMap() or "")
+    end
+
     local function canStart(ply,def)
         if not def or not def.enabled then return false,"Квест отключён"end
+        if not Q.FitsMap(def) then
+            return false,"Квест создан для карты "..tostring(def.map).." и здесь не работает"
+        end
         if def.draft or #(def.steps or{})==0 then return false,"Квест пока является черновиком"end
         local all=progressFor(ply);local old=all[def.id]
         if old and old.status=="active"then return false,"Квест уже выполняется"end
@@ -390,7 +428,16 @@ if SERVER then
     end
     sync=function(ply)
         if not IsValid(ply)then return end
-        local all=progressFor(ply);local defs={};for id,p in pairs(all)do local d=Q.Definitions[id];if d then defs[#defs+1]={definition=d,progress=p}end end
+        --[[ Показываем только квесты ТЕКУЩЕЙ карты.
+
+             Прогресс общий на весь сервер, а определения свои у каждой
+             карты. Квест другой карты и так не попадал в журнал (его
+             определения тут нет), но если карты делят имя квеста, в
+             журнал лез бы чужой — с целями, до которых не дойти.
+
+             Прогресс при этом НЕ трогаем: вернётся игрок на ту карту —
+             продолжит с того же места. ]]
+        local all=progressFor(ply);local defs={};for id,p in pairs(all)do local d=Q.Definitions[id];if d and Q.FitsMap(d) then defs[#defs+1]={definition=d,progress=p}end end
         net.Start("GRM_Quest_Sync")net.WriteTable(defs)net.Send(ply)
     end
     Q.Sync=sync
@@ -579,7 +626,7 @@ if SERVER then
     end
     function Q.Event(ply,eventName,target,amount,meta)
         if not IsValid(ply)then return end;eventName=trim(eventName,64);target=trim(target,96);amount=math.max(1,math.floor(tonumber(amount)or 1));local all=progressFor(ply)
-        for id,p in pairs(all)do local def=Q.Definitions[id];if def and def.enabled and not def.draft and p.status=="active"then local step=def.steps[p.step or 1];local match=step and step.type=="event"and step.event==eventName and(step.target==""or step.target==target);if match then p.count=math.min(step.count,(tonumber(p.count)or 0)+amount);if p.count>=step.count then p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);if not Q.GraphDrives(def,"music") then questMusic(ply,"step",def) end;Q.RunGraphFrom(ply,def,"step_"..tostring((tonumber(p.step) or 1)-1),p);checkCurrent(ply,def,p)end end end end
+        for id,p in pairs(all)do local def=Q.Definitions[id];if def and def.enabled and not def.draft and Q.FitsMap(def) and p.status=="active"then local step=def.steps[p.step or 1];local match=step and step.type=="event"and step.event==eventName and(step.target==""or step.target==target);if match then p.count=math.min(step.count,(tonumber(p.count)or 0)+amount);if p.count>=step.count then p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);if not Q.GraphDrives(def,"music") then questMusic(ply,"step",def) end;Q.RunGraphFrom(ply,def,"step_"..tostring((tonumber(p.step) or 1)-1),p);checkCurrent(ply,def,p)end end end end
         Q.SaveProgress();sync(ply)
     end
     function Q.Talk(ply,npcID)
@@ -634,7 +681,12 @@ if SERVER then
     hook.Add("PlayerSayTransform","GRM_Quest_JournalChat",function(ply,pack)if not istable(pack)then return end;local cmd=string.lower(trim(pack[1],64));if cmd=="/quests"or cmd=="!quests"or cmd=="/квесты"then openJournal(ply);pack[1]="";pack.SkipPlayerSay=true end end)
     net.Receive("GRM_Quest_AdminOp",function(_,ply)
         if not IsValid(ply)or not ply:IsSuperAdmin()then return end;local op=net.ReadString()
-        if op=="save"then local def,why=Q.NormalizeDefinition(net.ReadTable());if not def then notice(ply,false,why)return end;Q.Definitions[def.id]=def;Q.SaveDefinitions();Q.RegisterAchievements();adminOpen(ply);notice(ply,true,"Квест сохранён: "..def.id)
+        if op=="save"then local def,why=Q.NormalizeDefinition(net.ReadTable());if not def then notice(ply,false,why)return end
+            --[[ Квест создаётся на той карте, где его правят. Ставим
+                 метку при сохранении, а не при создании: так её получат
+                 и старые квесты, которые просто открыли и сохранили. ]]
+            if tostring(def.map or "")=="" then def.map=string.lower(game.GetMap() or "") end
+            Q.Definitions[def.id]=def;Q.SaveDefinitions();Q.RegisterAchievements();adminOpen(ply);notice(ply,true,"Квест сохранён: "..def.id)
         elseif op=="reset_progress"then local id=trim(net.ReadString(),64);local target=trim(net.ReadString(),96);if target=="@self"then target=characterKey(ply)elseif target~="*"and target:match("^%d+$")then target=target..":char1"end;local count=Q.ResetProgress(id,target);notice(ply,true,"Сброшен прогресс: "..count.." записей")
         elseif op=="delete"then local id=trim(net.ReadString(),64);local old=Q.Definitions[id];if old and old.achievement and GRM.Ach and GRM.Ach.Unregister then GRM.Ach.Unregister(old.achievement.id)end;Q.Definitions[id]=nil;Q.SaveDefinitions();adminOpen(ply);notice(ply,true,"Квест удалён")
         elseif op=="request"then adminOpen(ply)end
@@ -657,7 +709,7 @@ if SERVER then
     end
 
     hook.Add("GRM_CharacterChanged","GRM_Quest_CharacterSync",function(ply)timer.Simple(1,function()if IsValid(ply)then sync(ply)end end)end)
-    hook.Add("PlayerInitialSpawn","GRM_Quest_Join",function(ply)timer.Simple(3,function()if not IsValid(ply)then return end;for _,def in pairs(Q.Definitions)do if def.autoStart and not def.draft then Q.Start(ply,def.id)end end;sync(ply)end)end)
+    hook.Add("PlayerInitialSpawn","GRM_Quest_Join",function(ply)timer.Simple(3,function()if not IsValid(ply)then return end;for _,def in pairs(Q.Definitions)do if def.autoStart and not def.draft and Q.FitsMap(def) then Q.Start(ply,def.id)end end;sync(ply)end)end)
     hook.Add("ShutDown","GRM_Quest_Save",function()Q.SaveDefinitions();Q.SaveProgress()end)
     hook.Add("PostCleanupMap","GRM_Quest_NPCRestore",function()timer.Simple(1,function()for _,r in ipairs(Q._NPCRecords or {})do Q.SpawnNPC(r.id,r.name,r.model,vec(r.pos),ang(r.ang))end end)end)
 if GRM.Boot and GRM.Boot.Task then

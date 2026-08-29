@@ -1357,8 +1357,13 @@ function Q.OpenGraphStudio(data)
                 draw.SimpleText(dd.title or dd.id, "GRMQS_Body", 10, 6, COL.text)
                 -- ID видно прямо в списке: не нужно открывать каждый квест.
                 draw.SimpleText(tostring(dd.id or ""), "GRMQS_Small", 10, 22, COL.accent)
-                draw.SimpleText((dd.draft and "черновик · " or "") .. tostring(#(dd.steps or {})) .. " эт.",
-                    "GRMQS_Small", w - 10, 22, COL.dim, TEXT_ALIGN_RIGHT)
+                --[[ Квест чужой карты помечаем в списке: иначе автор
+                     откроет его и будет чинить несуществующие точки. ]]
+                local alien = tostring(dd.map or "") ~= ""
+                    and tostring(dd.map) ~= string.lower(game.GetMap() or "")
+                draw.SimpleText((alien and "ДРУГАЯ КАРТА · " or "")
+                    .. (dd.draft and "черновик · " or "") .. tostring(#(dd.steps or {})) .. " эт.",
+                    "GRMQS_Small", w - 10, 22, alien and COL.red or COL.dim, TEXT_ALIGN_RIGHT)
             end
             b.DoClick = function() loadWork(dd) end
         end
@@ -1368,6 +1373,8 @@ function Q.OpenGraphStudio(data)
         nw.DoClick = function()
             local draft = {
                 draft = true, id = "quest_" .. os.time(), title = "Новый квест", npc = "guide",
+                -- Квест создаётся под ту карту, на которой его делают.
+                map = string.lower(game.GetMap() or ""),
                 summary = "", enabled = true, steps = {}, rewards = { money = 0, items = {} },
                 dialogue = { offer = {}, active = {}, complete = {} },
                 cutscene = { accept = {}, complete = {} },
@@ -1404,6 +1411,27 @@ function Q.OpenGraphStudio(data)
                  через «предыдущие квесты», поэтому иногда его нужно
                  переименовать. Чистим теми же правилами, что сервер, —
                  иначе значение молча изменится при сохранении. ]]
+            --[[ КАРТА КВЕСТА (заказ владельца 29.08).
+
+                 Зоны этапов и точки камер — координаты. Открыв квест
+                 чужой карты, автор правил бы точки, которых здесь нет,
+                 и не понимал, почему ничего не работает. Показываем
+                 карту явно и предупреждаем красным. ]]
+            local questMap = tostring(work.map or "")
+            local here = string.lower(game.GetMap() or "")
+            local mapRow = vgui.Create("DPanel", left)
+            mapRow:Dock(TOP) mapRow:SetTall(38) mapRow:DockMargin(10, 8, 10, 0)
+            mapRow.Paint = function(_, w, h)
+                local mismatch = questMap ~= "" and questMap ~= here
+                draw.RoundedBox(5, 0, 0, w, h, mismatch and Color(52, 24, 28) or Color(20, 30, 44))
+                draw.RoundedBox(0, 0, 0, 4, h, mismatch and COL.red or COL.accent)
+                draw.SimpleText(questMap ~= "" and ("Карта: " .. questMap) or "Карта не задана",
+                    "GRMQS_Small", 10, 12, mismatch and COL.red or COL.text)
+                draw.SimpleText(mismatch and ("вы на " .. here .. " — точки не совпадут")
+                        or (questMap == "" and "проставится при сохранении" or "совпадает с текущей"),
+                    "GRMQS_Small", 10, 26, COL.dim)
+            end
+
             local iE = field(left, "ID квеста (латиница)", work.id)
             iE.OnChange = function(s2)
                 local raw = string.lower(string.Trim(s2:GetValue() or "")):gsub("[^%w_%-%:]", "_")
