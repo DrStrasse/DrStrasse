@@ -52,12 +52,15 @@ function UI.OpenReprogram(chip)
     end; net.Start("GRM_AugChip_Reprogram"); net.WriteString(chip.id or ""); net.WriteTable(mods); net.SendToServer(); f:Close() end
 end
 
-net.Receive("GRM_AugChip_Sync", function()
-    GRM.AugHUD = GRM.AugHUD or {}
-    GRM.AugHUD.CachedChips = net.ReadTable() or {}
-    GRM.AugHUD.HasServerSync = true
-    hook.Run("GRM_AugmentationStateUpdated")
-end)
+--[[ СИНХРОНИЗАЦИЮ ЧИПОВ ПРИНИМАЕТ ОДИН МОДУЛЬ — cl_grm_augmentations_hud.
+     Здесь стоял ВТОРОЙ net.Receive на то же сообщение. В GMod второй
+     ресивер молча заменяет первый, и кто победит — решает алфавитный
+     порядок загрузки файлов. Наш вариант ещё и не выставлял LastUpdate,
+     поэтому при перестановке имён файлов HUD переставал видеть свежесть
+     данных. Держим один обработчик, а обновление ловим хуком, который он
+     же и запускает. ]]
+-- Перерисовку окна по свежим данным делает хук GRM_AugUI_RefreshState в
+-- конце этого файла; отдельный обработчик здесь не нужен.
 
 function UI.Open()
     net.Start("GRM_AugChip_RequestSync"); net.SendToServer()

@@ -1748,8 +1748,8 @@ function Q.OpenGraphStudio(data)
     if defs[1] then loadWork(defs[1]) else rebuildProps() end
 end
 
-net.Receive("GRM_Quest_AdminOpen", function()
-    Q.OpenGraphStudio(net.ReadTable() or {})
-end)
+-- Приём GRM_Quest_AdminOpen живёт в cl_grm_quests: он выбирает узловой
+-- редактор (эта функция) и падает на старое окно, только если студия
+-- не загрузилась. Второй ресивер здесь молча затирал бы тот выбор.
 
 print("[GRM Quest Studio] v3 unified node editor")

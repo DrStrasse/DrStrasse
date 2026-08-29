@@ -761,6 +761,19 @@ local function adminStudio(data)
  local status=label(f,"",592,714,600,42,"GRMQ_Body",C.dim);status.Think=function(self)self:SetText(statusText);self:SetTextColor(statusColor)end
  if definitions[1]then loadDef(definitions[1])end
 end
-net.Receive("GRM_Quest_AdminOpen",function()adminStudio(net.ReadTable()or {})end)
+--[[ ОКНО РЕДАКТОРА ОТКРЫВАЕТ ТОЛЬКО zz_grm_quest_studio (узловой граф).
+     Здесь стоял второй net.Receive на GRM_Quest_AdminOpen, открывавший
+     старое вкладочное окно. Два ресивера на одно сообщение — это не «оба
+     сработают», а «второй заменит первый»: какой именно останется,
+     решал алфавитный порядок загрузки (cl_… против zz_…). Достаточно
+     переименовать файл — и у владельца молча открылся бы старый
+     редактор вместо графа. Оставляем один явный вход. ]]
+net.Receive("GRM_Quest_AdminOpen", function()
+    local data = net.ReadTable() or {}
+    if Q.OpenGraphStudio then return Q.OpenGraphStudio(data) end
+    -- Узловой редактор почему-то не загрузился — открываем старое окно,
+    -- чтобы админ не остался вовсе без инструмента.
+    adminStudio(data)
+end)
 concommand.Add("grm_quests_admin",function()net.Start("GRM_Quest_AdminOp")net.WriteString("request")net.SendToServer()end)
 print("[GRM Quests] client v1.4.0 loaded")
