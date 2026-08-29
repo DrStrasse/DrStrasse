@@ -1361,7 +1361,7 @@ if SERVER then
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
         local key = memberKey(newLeaderSteamID)
-        if not f.Members[key]then local existing=getFactionOfPlayer(key);if existing then return false,"Игрок уже состоит во фракции "..existing end;f.Members[key]={Role=getDefaultMemberRole(f),Department=getDefaultDepartment(f)};added=true;hook.Run("GRM_FactionMemberJoined",factionName,key,f.Members[key],nil,"leader_assignment")end
+        if not f.Members[key]then local existing=getFactionOfPlayer(key);if existing then return false,"Игрок уже состоит во фракции "..existing end;f.Members[key]={Role=getDefaultMemberRole(f),Department=getDefaultDepartment(f)};hook.Run("GRM_FactionMemberJoined",factionName,key,f.Members[key],nil,"leader_assignment")end
         local oldLeader=f.Leader;if oldLeader and f.Members[oldLeader]then local oldRole=f.Members[oldLeader].Role;f.Members[oldLeader].Role=getDefaultMemberRole(f);hook.Run("GRM_FactionMemberRoleChanged",factionName,oldLeader,f.Members[oldLeader],oldRole,f.Members[oldLeader].Role,nil)end
         f.Leader=key;local previous=f.Members[key].Role;f.Members[key].Role=f.LeaderRoleName;hook.Run("GRM_FactionMemberRoleChanged",factionName,key,f.Members[key],previous,f.LeaderRoleName,nil);hook.Run("GRM_FactionLeaderChanged",factionName,oldLeader,key)
         saveFactions(Factions)
@@ -2132,12 +2132,30 @@ end
 -- ============================================================
 if CLIENT then
     pcall(include, "autorun/client/cl_grm_factions_unified_ui.lua")
-    ui           = ui           or {}
+    -- Ссылки на живые панели окна фракций. Таблица ЛОКАЛЬНАЯ: раньше
+    -- имя `ui` было глобальным и делилось со всеми аддонами сервера —
+    -- любой чужой скрипт с такой же переменной затирал наши панели.
+    local ui = {}
+
+    --[[ ФОРВАРД-ДЕКЛАРАЦИИ ОБНОВЛЕНИЙ ОКНА.
+         Эти функции зовут друг друга и обработчики net вперемешку, часть
+         вызовов стоит выше определений. Раньше они объявлялись просто как
+         `function имя(...)` — то есть уходили в ГЛОБАЛЬНОЕ пространство
+         имён сервера и клиента. Восемь безымянных `updateRanksList`,
+         `refreshAllUI` и подобных в общем namespace — прямая заявка на
+         конфликт с любым чужим аддоном. Держим локально, а порядок
+         вызовов обеспечиваем декларацией здесь. ]]
+    local refreshAllUI, updateLeaderRanks, updateLeaderDepartments
+    local updateLeaderMemberList, updateRanksList, updateDepartmentsList
+    local updateMemberListForFaction, updateDepWavePanel
     FactionsData = FactionsData or {}
     FactionCharacterChoices = FactionCharacterChoices or {}
     local pendingActionCallback = nil
     local pendingDataCallback   = nil
-    local nameCache             = nameCache or {}
+    -- Кэш имён по SteamID. `nameCache or {}` справа читало ГЛОБАЛ (локала
+    -- ещё нет в этой точке) — то есть всегда nil, и «или» просто создавало
+    -- пустую таблицу. Пишем честно, без иллюзии переиспользования.
+    local nameCache             = {}
 
     -- Цвета UI
     local THEME = {
@@ -2493,7 +2511,7 @@ if CLIENT then
     -- ============================================================
     -- refreshAllUI — FIX: запрашивает данные с сервера если пусто
     -- ============================================================
-    function refreshAllUI(data)
+    refreshAllUI = function(data)
         -- Если данные не переданы и локальный кеш пуст — запросить с сервера
         if not data and (not FactionsData or table.Count(FactionsData) == 0) then
             getData(function(freshData)
@@ -2612,7 +2630,7 @@ if CLIENT then
     -- ============================================================
     -- ЛИДЕР: РАНГИ
     -- ============================================================
-    function updateLeaderRanks(data)
+    updateLeaderRanks = function(data)
         if not IsValid(ui.ranksScrollLeader) then return end
         local scroll = ui.ranksScrollLeader
         safeScrollClear(scroll)
@@ -2710,7 +2728,7 @@ if CLIENT then
     -- ============================================================
     -- ЛИДЕР: ОТДЕЛЫ
     -- ============================================================
-    function updateLeaderDepartments(data)
+    updateLeaderDepartments = function(data)
         if not IsValid(ui.deptsScrollLeader) then return end
         local scroll = ui.deptsScrollLeader
         safeScrollClear(scroll)
@@ -2795,7 +2813,7 @@ if CLIENT then
     -- ============================================================
     -- ЛИДЕР: СПИСОК УЧАСТНИКОВ
     -- ============================================================
-    function updateLeaderMemberList(data)
+    updateLeaderMemberList = function(data)
         if not IsValid(ui.memberScrollLeader) then return end
         local scroll = ui.memberScrollLeader
         safeScrollClear(scroll)
@@ -2863,7 +2881,7 @@ if CLIENT then
     -- ============================================================
     -- АДМИНКА: РАНГИ
     -- ============================================================
-    function updateRanksList(factionName, data)
+    updateRanksList = function(factionName, data)
         if not IsValid(ui.ranksScroll) then return end
         local scroll = ui.ranksScroll
         safeScrollClear(scroll)
@@ -2958,7 +2976,7 @@ if CLIENT then
     -- ============================================================
     -- АДМИНКА: ОТДЕЛЫ
     -- ============================================================
-    function updateDepartmentsList(factionName, data)
+    updateDepartmentsList = function(factionName, data)
         if not IsValid(ui.deptsScroll) then return end
         local scroll = ui.deptsScroll
         safeScrollClear(scroll)
@@ -3029,7 +3047,7 @@ if CLIENT then
     -- ============================================================
     -- АДМИНКА: СПИСОК УЧАСТНИКОВ ФРАКЦИИ (FIX: lblDept:SetSize)
     -- ============================================================
-    function updateMemberListForFaction(factionName, data)
+    updateMemberListForFaction = function(factionName, data)
         if not IsValid(ui.memberScroll) then return end
         local scroll = ui.memberScroll
         safeScrollClear(scroll)
@@ -3085,7 +3103,7 @@ if CLIENT then
     -- ============================================================
     -- ВОЛНА ДЕПАРТАМЕНТА: ПАНЕЛЬ АДМИНКИ
     -- ============================================================
-    function updateDepWavePanel(data)
+    updateDepWavePanel = function(data)
         if not IsValid(ui.depWaveScroll) then return end
         local scroll = ui.depWaveScroll
         safeScrollClear(scroll)

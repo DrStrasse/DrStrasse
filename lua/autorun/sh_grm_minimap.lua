@@ -265,6 +265,14 @@ else
         return b
     end
     local frame
+    --[[ БАЗИС КАМЕРЫ СНИМКА КАРТЫ — ОБЪЯВЛЕН ЗДЕСЬ НАМЕРЕННО.
+         Значения задаёт renderMapSnapshot (ниже), а читает mapPos (выше
+         по файлу) — чтобы маркеры игроков считались тем же базисом, что
+         и сама картинка. Пока `local` стоял только рядом с
+         renderMapSnapshot, mapPos видела глобальный nil, всегда падала в
+         запасную ветку по границам мира и рисовала метки со сдвигом
+         относительно карты. ]]
+    local mapRenderCenter, mapRenderSpan
     local function worldBounds()
         local w = game.GetWorld()
         if not IsValid(w) then return Vector(-4096, -4096, -4096), Vector(4096, 4096, 4096) end
@@ -313,7 +321,8 @@ else
     })
     local nextMapRender = 0
     local mapSnapshotReady = false
-    local mapRenderCenter, mapRenderSpan
+    -- mapRenderCenter / mapRenderSpan объявлены выше — рядом с mapPos,
+    -- которая их читает. Здесь они только заполняются.
     local function renderMapSnapshot()
         if mapSnapshotReady and CurTime() < nextMapRender then return end
         -- Снимок создаётся один раз при загрузке карты. Больше не

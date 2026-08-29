@@ -120,8 +120,11 @@ if SERVER then
     hook.Add("EntityTakeDamage", "GRM_911_Damage", function(target, dmg)
         if not EM.Config or not EM.Config.enabled then return end
         if not (IsValid(target) and target:IsPlayer() and target:Alive()) then return end
+        -- Урон нужен и здесь, и ниже в журнале ран, поэтому берётся один
+        -- раз на весь обработчик: раньше `local amt` жил только внутри
+        -- ветки «раненый», а запись в журнал читала снаружи глобал nil.
+        local amt = dmg:GetDamage()
         if target:GetNWBool("GRM_911_Downed") then
-            local amt = dmg:GetDamage()
             local need = tonumber(cfg("executeDmg", 28)) or 28
             if amt >= need then
                 target._grm911ForceDeath = true
@@ -138,7 +141,7 @@ if SERVER then
         local att = dmg:GetAttacker()
         target._grm911Wounds = target._grm911Wounds or {}
         target._grm911Wounds[#target._grm911Wounds + 1] = {
-            at = os.time(), damage = math.floor(amt or dmg:GetDamage()),
+            at = os.time(), damage = math.floor(amt),
             dtype = dmg:GetDamageType(),
             attacker = IsValid(att) and (att:IsPlayer() and att:Nick() or att:GetClass()) or "мир",
         }

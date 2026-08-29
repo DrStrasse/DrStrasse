@@ -279,11 +279,19 @@ local function installInventoryWrapper()
             if count <= 0 then return 0 end
             local unitWeight = E.GetItemWeight(itemID)
             local allowed = count
+            --[[ СОСТОЯНИЕ ВЕСА НУЖНО И В ОТКАЗЕ, ПОЭТОМУ ОБЪЯВЛЕНО ЗДЕСЬ.
+                 Раньше `local state` жил внутри `if unitWeight > 0`, а
+                 сообщение об отказе ниже читало его снаружи — то есть
+                 глобальный nil. Вместо «Перегруз: 30.0 / 30.0 кг» игрок
+                 получал Lua-ошибку и не понимал, почему не берётся
+                 предмет. ]]
+            local state
             if unitWeight > 0 then
-                local state = E.GetPlayerState(ply)
+                state = E.GetPlayerState(ply)
                 allowed = math.Clamp(math.floor((state.hard - state.weight) / unitWeight), 0, count)
             end
             if allowed <= 0 then
+                state = state or E.GetPlayerState(ply)
                 if IsValid(ply) then notify(ply, string.format("Перегруз: %.1f / %.1f кг. Новый предмет поднять нельзя.", state.weight, state.hard)) end
                 return count
             end

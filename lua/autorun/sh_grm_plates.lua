@@ -243,6 +243,74 @@ PL.Render = PL.Render or {
     moveX = 0, moveY = 0,              -- вправо-влево и вверх-вниз по знаку
 }
 
+--[[ ПОЧЕМУ РАСПОЗНАВАНИЕ ТРАНСПОРТА СТОИТ ЗДЕСЬ, А НЕ НИЖЕ.
+     PL.LayoutFor и PL.ClassFor зовут vehicleBase. Раньше эта функция
+     объявлялась на 200 строк ниже, и Lua компилировал обращение к ней
+     как ЧТЕНИЕ ГЛОБАЛА: файл грузился без ошибок, а установка знака на
+     машину падала с 'attempt to call global vehicleBase (a nil value)'.
+     Держим объявление выше всех, кто им пользуется. ]]
+-----------------------------------------------------------------------
+-- РАСПОЗНАВАНИЕ ТРАНСПОРТА (общее для знака, крепления и проверок)
+-----------------------------------------------------------------------
+--- Похоже ли это на транспорт (включая simfphys / LVS / Glide).
+local function looksLikeVehicle(ent)
+    if not IsValid(ent) then return false end
+    if ent:IsVehicle() then return true end
+    local cls = string.lower(ent:GetClass() or "")
+    if cls:find("simfphys", 1, true) == 1 or cls:find("lvs_", 1, true) == 1
+        or cls:find("prop_vehicle", 1, true) == 1 or cls:find("gmod_sent_vehicle", 1, true) == 1 then
+        return true
+    end
+    return ent.IsSimfphysCar == true or ent.LVS ~= nil or ent.IsGlideVehicle == true
+end
+
+--- База машины: у simfphys/LVS сиденье — отдельная энтити.
+local function vehicleBase(ent)
+    if not IsValid(ent) then return nil end
+    local base = ent
+    if base.GetBase and IsValid(base:GetBase()) then base = base:GetBase() end
+    if base.base and IsValid(base.base) then base = base.base end
+    local parent = base:GetParent()
+    if IsValid(parent) and looksLikeVehicle(parent) then base = parent end
+    -- simfphys прячет реальную машину в списке passengers/spawnlist
+    if base.IsVehicle and base:GetClass() == "prop_vehicle_prisoner_pod" then
+        for _, key in ipairs({ "vehlist", "vehList", "passengers", "SeatArmor" }) do
+            local list = base[key]
+            if istable(list) then
+                for _, v in ipairs(list) do
+                    if IsValid(v) and looksLikeVehicle(v) and not v:IsVehicle() then
+                        return v
+                    end
+                end
+            end
+        end
+    end
+    return base
+end
+
+--- Истинный класс машины (а не сиденья). Для сохранения раскладки
+--  «для всех таких» должен возвращаться, например, simfphys_gta_sa_enforcer,
+--  а не gmod_sent_vehicle_fphysics_base.
+function PL.ClassFor(ent)
+    local base = vehicleBase(ent)
+    if not IsValid(base) then return "" end
+    local cls = base:GetClass() or ""
+    if cls == "prop_vehicle_prisoner_pod" or cls == "gmod_sent_vehicle_fphysics_base"
+        or cls == "prop_vehicle_jeep" or cls == "prop_vehicle_airboat" then
+        local vehList = isfunction(base.GetNW2String) and base:GetNW2String("veh_list_name", "") or ""
+        if vehList ~= "" then return tostring(vehList) end
+        -- simfphys/SimfPhys часто хранит SpawnList
+        local sl = base.SpawnList
+        if isstring(sl) and sl ~= "" then return sl end
+        -- последний шанс: имя сущности модели
+        local mdl = base:GetModel() or ""
+        if mdl ~= "" then local fn = string.GetFileFromFilename and string.GetFileFromFilename(mdl) or mdl return (fn or mdl):lower() end
+    end
+    return cls
+end
+PL.VehicleBase = vehicleBase
+PL.LooksLikeVehicle = looksLikeVehicle
+
 --- Полный набор ключей раскладки — общий для сервера, клиента и стендов.
 PL.RenderKeys = { "axis", "yaw", "flip", "scale", "offset",
     "tiltP", "tiltY", "tiltR", "moveX", "moveY" }
@@ -456,67 +524,6 @@ function PL.NudgeMount(mount, kind, axis, delta)
     return m, false
 end
 
------------------------------------------------------------------------
--- РАСПОЗНАВАНИЕ ТРАНСПОРТА (общее для знака, крепления и проверок)
------------------------------------------------------------------------
---- Похоже ли это на транспорт (включая simfphys / LVS / Glide).
-local function looksLikeVehicle(ent)
-    if not IsValid(ent) then return false end
-    if ent:IsVehicle() then return true end
-    local cls = string.lower(ent:GetClass() or "")
-    if cls:find("simfphys", 1, true) == 1 or cls:find("lvs_", 1, true) == 1
-        or cls:find("prop_vehicle", 1, true) == 1 or cls:find("gmod_sent_vehicle", 1, true) == 1 then
-        return true
-    end
-    return ent.IsSimfphysCar == true or ent.LVS ~= nil or ent.IsGlideVehicle == true
-end
-
---- База машины: у simfphys/LVS сиденье — отдельная энтити.
-local function vehicleBase(ent)
-    if not IsValid(ent) then return nil end
-    local base = ent
-    if base.GetBase and IsValid(base:GetBase()) then base = base:GetBase() end
-    if base.base and IsValid(base.base) then base = base.base end
-    local parent = base:GetParent()
-    if IsValid(parent) and looksLikeVehicle(parent) then base = parent end
-    -- simfphys прячет реальную машину в списке passengers/spawnlist
-    if base.IsVehicle and base:GetClass() == "prop_vehicle_prisoner_pod" then
-        for _, key in ipairs({ "vehlist", "vehList", "passengers", "SeatArmor" }) do
-            local list = base[key]
-            if istable(list) then
-                for _, v in ipairs(list) do
-                    if IsValid(v) and looksLikeVehicle(v) and not v:IsVehicle() then
-                        return v
-                    end
-                end
-            end
-        end
-    end
-    return base
-end
-
---- Истинный класс машины (а не сиденья). Для сохранения раскладки
---  «для всех таких» должен возвращаться, например, simfphys_gta_sa_enforcer,
---  а не gmod_sent_vehicle_fphysics_base.
-function PL.ClassFor(ent)
-    local base = vehicleBase(ent)
-    if not IsValid(base) then return "" end
-    local cls = base:GetClass() or ""
-    if cls == "prop_vehicle_prisoner_pod" or cls == "gmod_sent_vehicle_fphysics_base"
-        or cls == "prop_vehicle_jeep" or cls == "prop_vehicle_airboat" then
-        local vehList = isfunction(base.GetNW2String) and base:GetNW2String("veh_list_name", "") or ""
-        if vehList ~= "" then return tostring(vehList) end
-        -- simfphys/SimfPhys часто хранит SpawnList
-        local sl = base.SpawnList
-        if isstring(sl) and sl ~= "" then return sl end
-        -- последний шанс: имя сущности модели
-        local mdl = base:GetModel() or ""
-        if mdl ~= "" then local fn = string.GetFileFromFilename and string.GetFileFromFilename(mdl) or mdl return (fn or mdl):lower() end
-    end
-    return cls
-end
-PL.VehicleBase = vehicleBase
-PL.LooksLikeVehicle = looksLikeVehicle
 
 -----------------------------------------------------------------------
 -- ДОСТУП
@@ -1238,8 +1245,14 @@ if SERVER then
 
         local number = PL.NormalizeNumber(plate:GetNWString("GRM_Plate", ""))
         local rec = PL.Get(number)
+        --[[ ЛИЧНОСТЬ МАШИНЫ СЧИТАЕМ ЗАРАНЕЕ, А НЕ ВНУТРИ `if rec`.
+             vehID нужен ниже двум блокам — записи гаража и единице
+             автопарка, — которые лежат ЗА пределами этого if. Пока
+             объявление было внутри, снаружи читался глобал nil, и связь
+             «машина ↔ номер» в гараже терялась: после выдачи из гаража
+             знак возвращался без привязки. ]]
+        local vehID, vehName = PL.VehicleIdentity(veh)
         if rec then
-            local vehID, vehName = PL.VehicleIdentity(veh)
             local lp = veh:WorldToLocal(plate:GetPos())
             local la = veh:WorldToLocalAngles(plate:GetAngles())
             rec.mount = PL.NormalizeMount({

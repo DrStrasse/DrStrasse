@@ -1758,7 +1758,9 @@ end
 if CLIENT then
     FactionsExtData = FactionsExtData or {}
     CurfewState = CurfewState or { active = false, endTime = 0, faction = "" }
-    ui = ui or {}
+    -- Ссылки на открытые окна модуля. Локально: глобальное имя `ui`
+    -- пересекалось с таким же в sh_factions и в чужих аддонах.
+    local ui = {}
 
     surface.CreateFont("FactionsExt_Title", { font = "Roboto", size = 20, weight = 700, extended = true, antialias = true })
     surface.CreateFont("FactionsExt_Normal", { font = "Roboto", size = 14, weight = 500, extended = true, antialias = true })

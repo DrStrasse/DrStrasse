@@ -341,6 +341,12 @@ net.Receive("GRM_VD_Open", function()
         local capped = limit > 0 and owned >= limit
         local personal = v.ownershipType == "personal"
         local fac = tostring(v.factionName or v.faction or "")
+        --[[ ГОТОВНОСТЬ РЫНКА СЧИТАЕМ ДО СПИСКА СТРОК КАРТОЧКИ.
+             Подсказка «Машину нужно вручную добавить в Рынок автопарка»
+             читает marketReady, а объявление стояло ПОСЛЕ списка строк:
+             в подсказке был глобальный nil, и она показывалась на каждой
+             служебной машине — даже на уже добавленной в рынок. ]]
+        local marketReady = v.marketReady == true
 
         local lines = {
             { text = personal and money(v.price or 0) or tostring(v.ownershipName or "Служебный транспорт"),
@@ -353,7 +359,6 @@ net.Receive("GRM_VD_Open", function()
               color = capped and C.red or C.dim },
         }
 
-        local marketReady = v.marketReady == true
         local buyLabel = capped and "ЛИМИТ"
             or (personal and ("КУПИТЬ · " .. money(v.price or 0))
             or (marketReady and ("ЗАКУПИТЬ В АВТОПАРК · " .. money(v.price or 0))

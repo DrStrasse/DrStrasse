@@ -404,6 +404,15 @@ if SERVER then
         return CH.Data
     end
 
+    -- Проверка записи чтением обратно (стандарт GRM: сохранение считается
+    -- удачным только если файл реально перечитывается). Объявлена ДО
+    -- saveChars, которая её зовёт, и локально — раньше это была утечка
+    -- имени readbackCheck в общее пространство имён сервера.
+    local function readbackCheck()
+        local t = file.Read(CH.DataFile, "DATA")
+        return t ~= nil and #t > 2
+    end
+
     local function saveChars(reason)
         local ok, txt = pcall(util.TableToJSON, CH.Data or {}, true)
         if ok and txt then
@@ -413,10 +422,6 @@ if SERVER then
                 ErrorNoHalt("[GRM Char] SAVE FAIL (" .. tostring(reason) .. ")\n")
             end
         end
-    end
-    function readbackCheck()
-        local t = file.Read(CH.DataFile, "DATA")
-        return t ~= nil and #t > 2
     end
 
     loadChars()
@@ -1069,8 +1074,14 @@ if SERVER then
             local c = rec.slots[id]
             local slotFaction, slotMember = factionMembership(ply, sid64(ply) .. ":" .. id)
             local slotKey = sid64(ply) .. ":" .. id
-            local serverBanned, banRec = GRM.ServerBan and GRM.ServerBan.IsBanned and GRM.ServerBan.IsBanned(slotKey) or false, nil
-            if serverBanned and GRM.ServerBan and GRM.ServerBan.IsBanned then _, banRec = GRM.ServerBan.IsBanned(slotKey) end
+            -- Бан персонажа: одного вызова хватает на оба значения. Раньше
+            -- IsBanned дёргался дважды, а во втором разе первый результат
+            -- уходил в глобальную `_` — лишняя утечка имени на ровном месте.
+            local serverBanned, banRec = false, nil
+            if GRM.ServerBan and GRM.ServerBan.IsBanned then
+                serverBanned, banRec = GRM.ServerBan.IsBanned(slotKey)
+                serverBanned = serverBanned or false
+            end
             slots[#slots + 1] = { id = id, index = i, exists = istable(c), name = istable(c) and tostring(c.name or "") or "",
                 gender = istable(c) and CH.NormalizeGender(c.gender or CH.GenderFromModel(c.model)) or "",
                 model = istable(c) and tostring(c.model or "") or "", skin = istable(c) and tonumber(c.skin) or 0,

@@ -21,6 +21,11 @@ local NET_VIEW_STOP  = "GRM_CCTV_ViewStop"
 local NET_NOTIFY     = "GRM_CCTV_Notify"
 local NET_SHOT_OK    = "GRM_CCTV_ShotOk"
 
+-- HUD камеры. Форвард-декларация: функция определена ниже, а зовут её и
+-- съёмка скриншота, и обычная отрисовка — обе выше по файлу. Раньше имя
+-- было глобальным и утекало в общее пространство имён клиента.
+local drawCCTVChrome
+
 local ViewState = {
     active = false,
     cam = NULL,
@@ -755,7 +760,7 @@ end
 
 -- Единый HUD камеры: и на экране, и на скриншоте (рисуется в RT).
 -- w,h — размер поверхности; forShot — без «вспышки» после F.
-function drawCCTVChrome(w, h, forShot)
+drawCCTVChrome = function(w, h, forShot)
     w = w or ScrW()
     h = h or ScrH()
 

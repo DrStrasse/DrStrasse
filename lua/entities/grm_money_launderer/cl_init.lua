@@ -11,6 +11,12 @@ local function money(n)
     return GRM and GRM.Format and GRM.Format(tonumber(n) or 0) or (tostring(math.floor(tonumber(n) or 0)) .. " GRM")
 end
 
+--[[ ПОСЛЕДНИЕ ДАННЫЕ МЕНЮ — ОБЪЯВЛЕНЫ ДО ENT:Draw, КОТОРАЯ ИХ ЧИТАЕТ.
+     Табличка над отмывщиком показывает остаток кулдауна из этой таблицы.
+     Раньше объявление стояло ниже Draw, поэтому Draw обращалась к
+     глобалу nil: КД на табличке не появлялся никогда. ]]
+local lastMenuData = {}
+
 function ENT:Draw()
     self:DrawModel()
     local ply = LocalPlayer()
@@ -61,8 +67,10 @@ local C = {
     text = Color(245, 248, 255), dim = Color(160, 172, 190),
 }
 local menuFrame = nil
--- Находка 180c: последние данные меню — нужны 3D2D-табличке для КД
-local lastMenuData = {}
+-- Находка 180c: последние данные меню нужны 3D2D-табличке для КД.
+-- lastMenuData объявлена в начале файла (до ENT:Draw); второе `local`
+-- здесь создавало бы ВТОРУЮ переменную, и табличка продолжала бы читать
+-- пустую первую.
 
 local function act(ent, action, a, b, c, d, e)
     if not IsValid(ent) then return end

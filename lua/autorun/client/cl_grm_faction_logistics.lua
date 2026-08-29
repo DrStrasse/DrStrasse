@@ -318,7 +318,10 @@ net.Receive(N.admin,function()
     for _,name in ipairs(d.factions or{})do
         pending[name]=d.access and d.access[name] or false
         local row=vgui.Create("DPanel",scroll);row:Dock(TOP);row:SetTall(34);row:DockMargin(0,0,0,4);row.Paint=function(_,w,h)draw.RoundedBox(4,0,0,w,h,CUI.panel)end
-        local c=c or vgui.Create("DCheckBoxLabel",row);c:Dock(FILL);c:DockMargin(10,0,0,0);c:SetText(name);c:SetFont("GRML_Normal");c:SetTextColor(CUI.text);c:SetValue(pending[name] and 1 or 0)
+        -- `local c = c or vgui.Create(...)` читало ГЛОБАЛ c (локала ещё
+        -- нет), то есть всегда nil — «или» ничего не переиспользовало, а
+        -- имя утекало в чужое пространство имён. Создаём чекбокс прямо.
+        local c=vgui.Create("DCheckBoxLabel",row);c:Dock(FILL);c:DockMargin(10,0,0,0);c:SetText(name);c:SetFont("GRML_Normal");c:SetTextColor(CUI.text);c:SetValue(pending[name] and 1 or 0)
         c.OnChange=function(_,v) pending[name]=v and true or false end
     end
 
