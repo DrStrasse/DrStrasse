@@ -179,7 +179,7 @@ end)
      переподключения, и на любом аварийном выходе (смерть, ошибка,
      пропуск пробелом) тоже. Поэтому восстановление стоит здесь, в
      единственной точке выхода, а не рядом с каждым вызовом. ]]
-local function stopCutscene()local restore=Q.Cutscene and Q.Cutscene.restoreFrame;if Q.Cutscene and Q.Cutscene.active then net.Start("GRM_Quest_CutsceneStop");net.SendToServer()end;Q.Cutscene={active=false};gui.EnableScreenClicker(false);if Q.RestoreCutsceneHUD then Q.RestoreCutsceneHUD()end;if IsValid(restore)then restore:SetVisible(true);restore:MakePopup()end end
+local function stopCutscene()local restore=Q.Cutscene and Q.Cutscene.restoreFrame;if Q.Cutscene and Q.Cutscene.active then net.Start("GRM_Quest_CutsceneStop");net.SendToServer()end;Q.Cutscene={active=false};gui.EnableScreenClicker(false);if Q.StopCutsceneSound then Q.StopCutsceneSound()end;if Q.RestoreCutsceneHUD then Q.RestoreCutsceneHUD()end;if IsValid(restore)then restore:SetVisible(true);restore:MakePopup()end end
 local function linkedCutsceneNodes(nodes)
  local source=table.Copy(nodes or{});local byID={};for i,node in ipairs(source)do byID[tostring(node.id or"")]=i end
  local ordered,seen,index={}, {},1
@@ -206,6 +206,39 @@ net.Receive("GRM_Quest_Cutscene",function()startCutscene(net.ReadTable()or{},fal
 
      Отдаём функцию наружу — редактор запускает просмотр локально, без
      похода на сервер. ]]
+--[[ Проигрывание звука точки кат-сцены.
+
+     Держим ссылку на трек: сцену можно пропустить пробелом, и без
+     остановки звук играл бы поверх обычной игры. ]]
+function Q.PlayCutsceneSound(path)
+    path = string.Trim(tostring(path or ""))
+    if path == "" then return end
+    -- Пути пишут по-разному: «sound/x.wav» и «x.wav» — движку нужен второй.
+    path = path:gsub("^sound/", "")
+
+    Q.StopCutsceneSound()
+    local lp = LocalPlayer()
+    if IsValid(lp) and isfunction(CreateSound) then
+        local ok, patch = pcall(CreateSound, lp, path)
+        if ok and patch then
+            Q._cutSound = patch
+            --[[ SoundLevel 0 — слышно везде: камера сцены может стоять
+                 далеко от тела игрока, и обычный звук просто не долетит. ]]
+            pcall(function() patch:SetSoundLevel(0) patch:PlayEx(1, 100) end)
+            return
+        end
+    end
+    -- Запасной путь: хотя бы разово проиграть.
+    surface.PlaySound(path)
+end
+
+function Q.StopCutsceneSound()
+    if Q._cutSound then
+        pcall(function() Q._cutSound:Stop() end)
+        Q._cutSound = nil
+    end
+end
+
 Q.StartCutscene = startCutscene
 hook.Add("CalcView","GRM_Quest_CutsceneView",function(ply,pos,angles,fov)
  local s=Q.Cutscene;if not s.active then return end;local node=s.nodes[s.index];if not node then stopCutscene()return end
@@ -214,7 +247,21 @@ hook.Add("CalcView","GRM_Quest_CutsceneView",function(ply,pos,angles,fov)
   local moveDuration=math.max(.05,tonumber(node.moveDuration)or 1);local t=math.Clamp((CurTime()-s.phaseStart)/moveDuration,0,1);local eased=math.ease.InOutSine(t);origin=LerpVector(eased,s.fromPos,targetPos);viewAng=LerpAngle(eased,s.fromAng,targetAng);viewFov=Lerp(eased,s.fromFov or targetFov,targetFov)
   if t>=1 then s.phase="hold";s.phaseStart=CurTime();s.currentPos=targetPos;s.currentAng=targetAng;s.currentFov=targetFov end
  else
-  if s.soundNode~=s.index then s.soundNode=s.index;if node.sound and node.sound~=""then surface.PlaySound(node.sound)end end
+  --[[ ЗВУК ТОЧКИ (жалоба владельца 29.08: «проигрывание звука в
+       кат-сцене надо сделать нормально, чтобы работало»).
+
+       Было три беды:
+         • звук запускался ТОЛЬКО в фазе hold. Если у точки стоял
+           плавный пролёт, ветка move отрабатывала первой и звук
+           пропускался совсем;
+         • surface.PlaySound не умеет останавливаться: при пропуске
+           сцены пробелом трек продолжал играть поверх игры;
+         • путь не чистился — «sound/x.wav» с ведущей папкой молча не
+           находился, а игрок видел тишину без объяснений.
+
+       Теперь звук ставит Q.PlayCutsceneSound: одна точка входа, чистит
+       путь и запоминает трек, чтобы снять его при выходе. ]]
+  if s.soundNode~=s.index then s.soundNode=s.index;Q.PlayCutsceneSound(node.sound)end
   if CurTime()-s.phaseStart>=math.max(.05,tonumber(node.duration)or 3)then
    local oldPos,oldAng,oldFov=targetPos,targetAng,targetFov;s.index=s.index+1;local nextNode=s.nodes[s.index]
    if not nextNode then stopCutscene()return end

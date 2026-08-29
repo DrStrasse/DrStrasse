@@ -1065,6 +1065,40 @@ function Q.OpenGraphStudio(data)
                 end
 
                 local snd = field(right, "Звук в этой точке", cam.sound)
+                --[[ Поле пишется сразу: иначе выбранный в браузере путь
+                     терялся при клике на другую камеру. ]]
+                snd.OnChange = function(e) cam.sound = e:GetValue() end
+
+                --[[ КНОПКА ВЫБОРА ЗВУКА (заказ владельца 29.08).
+
+                     Раньше путь вписывали руками: ошибся в букве —
+                     тишина без объяснений, а какие звуки вообще есть на
+                     сервере, узнать было неоткуда. Браузер сканирует
+                     игру и аддоны и даёт послушать до выбора. ]]
+                local pickSnd = mkBtn(right, "Выбрать звук из списка", Color(58, 82, 112))
+                pickSnd:Dock(TOP) pickSnd:SetTall(26) pickSnd:DockMargin(10, 4, 10, 2)
+                pickSnd.DoClick = function()
+                    if not (GRM.SoundBrowser and GRM.SoundBrowser.Open) then
+                        notification.AddLegacy("Браузер звуков не загружен", NOTIFY_ERROR, 4)
+                        return
+                    end
+                    GRM.SoundBrowser.Open(function(path)
+                        cam.sound = path
+                        if IsValid(snd) then snd:SetText(path) end
+                        rebuildCards()
+                    end, cam.sound)
+                end
+
+                local testSnd = mkBtn(right, "▶ Прослушать звук точки", COL.card)
+                testSnd:Dock(TOP) testSnd:SetTall(24) testSnd:DockMargin(10, 0, 10, 4)
+                testSnd.DoClick = function()
+                    local path = string.Trim(tostring(cam.sound or ""))
+                    if path == "" then
+                        notification.AddLegacy("Звук не задан", NOTIFY_HINT, 3) return
+                    end
+                    surface.PlaySound((path:gsub("^sound/", "")))
+                end
+
                 local img = field(right, "Картинка (материал)", cam.image)
 
                 local applyCam = mkBtn(right, "Применить камеру", COL.green)
@@ -1150,6 +1184,21 @@ function Q.OpenGraphStudio(data)
 
             local snd = field(right, "Путь к звуку", d.sound)
             snd.OnChange = function(e) d.sound = e:GetValue() rebuildCards() end
+
+            -- Тот же браузер, что и у камер: руками пути не набирают.
+            local pickMusic = mkBtn(right, "Выбрать звук из списка", Color(58, 82, 112))
+            pickMusic:Dock(TOP) pickMusic:SetTall(26) pickMusic:DockMargin(10, 4, 10, 2)
+            pickMusic.DoClick = function()
+                if not (GRM.SoundBrowser and GRM.SoundBrowser.Open) then
+                    notification.AddLegacy("Браузер звуков не загружен", NOTIFY_ERROR, 4)
+                    return
+                end
+                GRM.SoundBrowser.Open(function(path)
+                    d.sound = path
+                    if IsValid(snd) then snd:SetText(path) end
+                    rebuildCards()
+                end, d.sound)
+            end
             local vol = field(right, "Громкость 0.1 - 1.0", tostring(d.volume or 1))
             vol.OnChange = function(e) d.volume = math.Clamp(tonumber(e:GetValue()) or 1, 0.1, 1) end
             local lp = vgui.Create("DCheckBoxLabel", right)
