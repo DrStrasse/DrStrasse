@@ -1,12 +1,12 @@
 --[[--------------------------------------------------------------------
     GRM Feco Admin — вкладка "Экономика" в /factions для суперадмина
-    
+
     Даёт доступ к:
     - Гос.бюджет (просмотр, пополнение, снятие)
     - Фракционные бюджеты (просмотр, изменение)
     - Налоги (просмотр, изменение ставки)
     - Штрафы (настройка)
-    
+
     Открывается через /factions → вкладка "Экономика" (только суперадмин)
     Или через !grmmenu / grm_adminmenu
 ----------------------------------------------------------------------]]
@@ -26,17 +26,17 @@ if SERVER then
     local NET_OPEN = "GRM_FecoAdmin_Open"
     local NET_DATA = "GRM_FecoAdmin_Data"
     local NET_ACTION = "GRM_FecoAdmin_Action"
-    
+
     util.AddNetworkString(NET_OPEN)
     util.AddNetworkString(NET_DATA)
     util.AddNetworkString(NET_ACTION)
-    
+
     -- Обработчик открытия меню
     net.Receive(NET_OPEN, function(_, ply)
         if not IsValid(ply) or not ply:IsSuperAdmin() then return end
-        
+
         local data = {}
-        
+
         data.stateBudget = (GRM.StateBudgetGet and GRM.StateBudgetGet())
             or (GRM.Economy and GRM.Economy.StateBudgetGet and GRM.Economy.StateBudgetGet())
             or 0
@@ -61,7 +61,7 @@ if SERVER then
         if GRM.Economy and GRM.Economy.Data and istable(GRM.Economy.Data.factions) then
             for name in pairs(GRM.Economy.Data.factions) do put(name) end
         end
-        
+
         -- Игроки онлайн с балансами
         data.players = {}
         if GRM.GetAllBalances then
@@ -77,12 +77,12 @@ if SERVER then
                 end
             end
         end
-        
+
         net.Start(NET_DATA)
             net.WriteTable(data)
         net.Send(ply)
     end)
-    
+
     -- Обработчик действий (управление только через банкомат/компьютер банка)
     net.Receive(NET_ACTION, function(_, ply)
         if not IsValid(ply) or not ply:IsSuperAdmin() then return end

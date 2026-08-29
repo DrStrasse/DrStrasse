@@ -178,7 +178,7 @@ if SERVER then
         local charKey = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or (sid64 .. ":char1")
         local steamT = mode == "edit" and data.EditSteam or data.ViewSteam
         if steamT[charKey] or steamT[sid64] or steamT[sid] then return true end
-        -- edit implies view lists also count for edit steam only; view can use edit lists too? 
+        -- edit implies view lists also count for edit steam only; view can use edit lists too?
         -- View: View* OR Edit* ; Edit: only Edit*
         if mode == "view" then
             if data.EditSteam[sid64] or data.EditSteam[sid] then return true end

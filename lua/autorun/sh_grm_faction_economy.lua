@@ -1,7 +1,7 @@
 --[[--------------------------------------------------------------------
     GRM Faction Economy Integration (Код 124)
     Интеграция системы доступов с /factions меню
-    
+
     Добавляет вкладку "Экономика" в админ-меню фракций
     Суперадмин может выдавать доступы фракциям/ролям/отделам
 ----------------------------------------------------------------------]]
@@ -15,15 +15,15 @@ local FE = GRM.FactionEconomy
 -- Проверка доступа к функции
 function FE.HasAccess(ply, permission)
     if not IsValid(ply) then return false end
-    
+
     -- Суперадмин имеет все доступы
     if ply:IsSuperAdmin() then return true end
-    
+
     -- Проверяем через систему разрешений
     if GRM.FactionPerms and GRM.FactionPerms.PlayerHasPermission then
         return GRM.FactionPerms.PlayerHasPermission(ply, permission)
     end
-    
+
     return false
 end
 

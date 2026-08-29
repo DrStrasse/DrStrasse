@@ -76,11 +76,11 @@ GRM.Search.AllowedFactions = {
 function SWEP:CanSearch(ply)
     -- Суперадмин всегда может
     if ply:IsSuperAdmin() then return true end
-    
+
     -- Проверяем через хук (другие модули могут переопределять)
     local canSearch = hook.Call("GRM_Search_CanSearch", nil, ply)
     if canSearch ~= nil then return canSearch end
-    
+
     -- Проверяем через список разрешённых фракций
     if Factions then
         for _, factionName in ipairs(GRM.Search.AllowedFactions) do
@@ -96,6 +96,6 @@ function SWEP:CanSearch(ply)
             end
         end
     end
-    
+
     return false
 end

@@ -3347,16 +3347,16 @@ if CLIENT then
                     notification.AddLegacy("Если меню не открылось — проверьте, что grm_phone_system установлен и загружен.", NOTIFY_HINT, 4)
                 end
             end
-            
+
             -- Законодательство ---------------------------------------------------
             sectionLabel(scroll, "Законодательство (законы)")
-            
+
             -- Проверяем доступы для текущей фракции
             local factionPerms = {}
             if GRM and GRM.FactionPerms and GRM.FactionPerms.GetFactionRoles then
                 factionPerms = GRM.FactionPerms.GetFactionRoles(factionName) or {}
             end
-            
+
             --[[ 21.08. Раздел настроек законов открывался всем, кто дошёл до
                  вкладки: любой видел галочки «Публикация/Удаление законов».
                  Менять их всё равно мог только суперадмин или лидер (сервер
@@ -3388,11 +3388,11 @@ if CLIENT then
                 and "Настройка доступов к публикации и удалению законов по ролям фракции."
                 or "Доступами к законам управляет лидер организации или суперадмин. Ниже — текущее состояние.",
                 THEME.textDim, 20)
-            
+
             -- Список ролей с чекбоксами для доступов
             for _, role in ipairs(f.Roles or {}) do
                 local rolePerms = factionPerms[role] or {}
-                
+
                 local rolePanel = vgui.Create("DPanel", scroll)
                 rolePanel:Dock(TOP)
                 rolePanel:SetTall(50)
@@ -3400,7 +3400,7 @@ if CLIENT then
                 rolePanel.Paint = function(self, w, h)
                     draw.RoundedBox(4, 0, 0, w, h, Color(40, 40, 40, 150))
                 end
-                
+
                 -- Название роли
                 local roleLabel = vgui.Create("DLabel", rolePanel)
                 roleLabel:SetPos(8, 4)
@@ -3408,7 +3408,7 @@ if CLIENT then
                 roleLabel:SetText("Роль: " .. role)
                 roleLabel:SetTextColor(Color(255, 200, 100))
                 roleLabel:SetFont("FactionsExt_Normal")
-                
+
                 -- В GMod нет goto: ветка «нет прав» и ветка с чекбоксами
                 -- разведены обычным if/else.
                 if not canManageLaws then
@@ -3440,7 +3440,7 @@ if CLIENT then
                             end
                         end
                     end
-                
+
                     -- Чекбокс law_remove
                     local remChk = vgui.Create("DCheckBoxLabel", rolePanel)
                     remChk:SetPos(170, 26)
@@ -3461,7 +3461,7 @@ if CLIENT then
                 end
 
             end
-            
+
             if #(f.Roles or {}) == 0 then
                 infoLine(scroll, "Ролей нет — создайте во вкладке «Роли».", THEME.textDim, 20)
             end

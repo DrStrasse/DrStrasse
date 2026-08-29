@@ -2059,7 +2059,7 @@ function UI.Open(requestedFaction, requestedTab)
 
         local exAdd = vgui.Create("DButton", exRow)
         exAdd:Dock(LEFT) exAdd:SetWide(170) exAdd:DockMargin(0, 6, 0, 6)
-        exAdd:SetText("") 
+        exAdd:SetText("")
         exAdd.Paint = function(self, w, h)
             draw.RoundedBox(6, 0, 0, w, h, self:IsHovered() and C.accentHover or C.accent)
             draw.SimpleText("ДОБАВИТЬ ИСКЛЮЧЕНИЕ", "GRMFac_Btn", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)

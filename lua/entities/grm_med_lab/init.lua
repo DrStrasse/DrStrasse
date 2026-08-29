@@ -9,13 +9,13 @@ function ENT:Initialize()
     self:SetSolid(SOLID_VPHYSICS)
     self:SetUseType(SIMPLE_USE)
     self:SetCollisionGroup(COLLISION_GROUP_WEAPON)
-    
+
     -- Устанавливаем тип если не установлен (по умолчанию med)
     if not self.LabType then
         self.LabType = "med"
     end
     self:SetNWString("LabType", self.LabType)
-    
+
     local phys = self:GetPhysicsObject()
     if IsValid(phys) then phys:Wake() end
 end

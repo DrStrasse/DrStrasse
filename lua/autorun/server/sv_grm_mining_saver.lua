@@ -29,11 +29,11 @@ local AUTO_SAVE_ON_CHANGE = false   -- не перезаписывать фай�
 local SAVE_ON_SHUTDOWN = false      -- не перезаписывать ручной сейв при выключении сервера
 
 local CLASSES_TO_SAVE = {
-    
+
     grm_ore_buyer = true, -- СКУПЩИК РУДЫ
     grm_ore_node = true,
-	
-	
+
+
 }
 
 local State = {

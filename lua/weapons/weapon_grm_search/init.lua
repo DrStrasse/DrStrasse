@@ -11,47 +11,47 @@ end
 
 function SWEP:PrimaryAttack()
     if not self.Owner:IsPlayer() then return end
-    
+
     local trace = self.Owner:GetEyeTrace()
     local target = trace.Entity
-    
+
     if not target:IsPlayer() or not target:Alive() then
         self.Owner:ChatPrint("[Обыск] Наведитесь на живого игрока")
         return
     end
-    
+
     -- Проверка дистанции
     if self.Owner:GetPos():Distance(target:GetPos()) > 100 then
         self.Owner:ChatPrint("[Обыск] Слишком далеко (макс. 100 единиц)")
         return
     end
-    
+
     -- Проверка прав (только полиция или админ)
     if not self:CanSearch(self.Owner) then
         self.Owner:ChatPrint("[Обыск] Только полиция может проводить обыск!")
         return
     end
-    
+
     -- Начинаем обыск
     self:PerformSearch(self.Owner, target)
 end
 
 function SWEP:SecondaryAttack()
     if not self.Owner:IsPlayer() then return end
-    
+
     local trace = self.Owner:GetEyeTrace()
     local target = trace.Entity
-    
+
     if not target:IsPlayer() or not target:Alive() then
         self.Owner:ChatPrint("[Обыск] Наведитесь на живого игрока")
         return
     end
-    
+
     if self.Owner:GetPos():Distance(target:GetPos()) > 100 then
         self.Owner:ChatPrint("[Обыск] Слишком далеко")
         return
     end
-    
+
     -- Проверка документов
     self:CheckDocuments(self.Owner, target)
 end
@@ -60,7 +60,7 @@ end
 
 function SWEP:PerformSearch(searcher, target)
     local found = {}
-    
+
     -- Проверяем инвентарь
     if GRM.Inventory and GRM.Inventory.GetPlayerInv then
         local inv = GRM.Inventory.GetPlayerInv(target)
@@ -77,7 +77,7 @@ function SWEP:PerformSearch(searcher, target)
             end
         end
     end
-    
+
     -- Проверяем оружие
     local weapons = target:GetWeapons()
     for _, wep in ipairs(weapons) do
@@ -88,7 +88,7 @@ function SWEP:PerformSearch(searcher, target)
             end
         end
     end
-    
+
     -- Отправляем результат обыскивающему (UI с чекбоксами)
     net.Start("GRM_Search_Result")
         net.WriteEntity(searcher)
@@ -100,12 +100,12 @@ function SWEP:PerformSearch(searcher, target)
             net.WriteUInt(item.count or 1, 8)
         end
     net.Send(searcher)
-    
+
     -- Уведомление цели
     if GRM.Notify then
         GRM.Notify(target, "У вас провели обыск.", 255, 200, 100)
     end
-    
+
     -- Логирование
     self:LogSearch(searcher, target, found)
 end
@@ -157,9 +157,9 @@ function SWEP:LogSearch(searcher, target, found)
         target:Nick(),
         #found
     )
-    
+
     print(log)
-    
+
     -- Отправляем в чат всем игрокам с доступом
     for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(ply) and self:CanSearch(ply) then
@@ -172,7 +172,7 @@ end
 net.Receive("GRM_Search_Confiscate", function(_, searcher)
     if not IsValid(searcher) then return end
     if not searcher:IsPlayer() then return end
-    
+
     -- Проверяем доступ
     local canSearch = false
     if searcher:IsSuperAdmin() then
@@ -192,16 +192,16 @@ net.Receive("GRM_Search_Confiscate", function(_, searcher)
             end
         end
     end
-    
+
     if not canSearch then return end
-    
+
     local target = net.ReadEntity()
     if not IsValid(target) or not target:IsPlayer() then return end
-    
+
     local itemType = net.ReadString()
     local itemID = net.ReadString()
     local count = net.ReadUInt(8)
-    
+
     if itemType == "item" then
         GRM.Inventory.RemoveItem(target, itemID, count)
         if GRM.Notify then
@@ -215,7 +215,7 @@ net.Receive("GRM_Search_Confiscate", function(_, searcher)
             GRM.Notify(target, "У вас изъяли оружие: " .. itemID, 255, 100, 100)
         end
     end
-    
+
     print("[ИЗЪЯТИЕ] " .. searcher:Nick() .. " изъял " .. itemID .. " у " .. target:Nick())
 end)
 

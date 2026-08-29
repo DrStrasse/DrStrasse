@@ -5,7 +5,7 @@ function SWEP:DrawHUD()
     local trace = self.Owner:GetEyeTrace()
     if trace.Entity:IsPlayer() and trace.Entity:Alive() then
         local ply = trace.Entity
-        
+
         draw.SimpleTextOutlined(
             "Игрок: " .. ply:Nick(),
             "DermaDefault",
@@ -16,7 +16,7 @@ function SWEP:DrawHUD()
             1,
             Color(0, 0, 0)
         )
-        
+
         draw.SimpleTextOutlined(
             "ЛКМ: Обыск",
             "DermaDefault",
@@ -27,7 +27,7 @@ function SWEP:DrawHUD()
             1,
             Color(0, 0, 0)
         )
-        
+
         draw.SimpleTextOutlined(
             "ПКМ: Документы",
             "DermaDefault",

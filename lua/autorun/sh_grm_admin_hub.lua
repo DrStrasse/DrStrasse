@@ -480,7 +480,7 @@ if SERVER then
         if not istable(datapack) then return end
         local text = datapack[1]
         if not isstring(text) then return end
-        
+
         local low = string.lower(string.Trim(text))
         if low == "/grm_admin" or low == "/admin" or low == "/админ" then
             if openHub(ply) then

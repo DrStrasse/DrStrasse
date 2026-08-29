@@ -1994,7 +1994,7 @@ if SERVER then
         if not istable(datapack) then return end
         local text = datapack[1]
         if not isstring(text) then return end
-        
+
         local lower = string.lower(string.Trim(text))
         if lower == "/factions" then
             if ply:IsSuperAdmin() then

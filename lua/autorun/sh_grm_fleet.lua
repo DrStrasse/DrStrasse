@@ -51,7 +51,7 @@ FL.UnitStatuses = {
     scrap  = "списана",
 }
 
-function FL.TierName(tier) 
+function FL.TierName(tier)
     local def = FL.Tiers[tostring(tier or "")]
     return def and def.name or "Гражданская техника"
 end

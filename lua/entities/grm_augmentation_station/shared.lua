@@ -7,6 +7,6 @@ ENT.Spawnable = true
 ENT.AdminOnly = true
 
 function ENT:SetupDataTables()
-	self:NetworkVar("String", 0, "StationName")
-	self:NetworkVar("Bool", 0, "Active")
+    self:NetworkVar("String", 0, "StationName")
+    self:NetworkVar("Bool", 0, "Active")
 end

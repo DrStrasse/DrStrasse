@@ -1223,7 +1223,7 @@ if SERVER then
     end)
 
     -- ── Чат-команды ──────────────────────────────────────────────
-    
+
     -- ── /drop — выбросить активное оружие на землю ───────────
     function GRM.Inventory.DropActiveWeapon(ply)
         if not IsValid(ply) or not ply:IsPlayer() then return false end
