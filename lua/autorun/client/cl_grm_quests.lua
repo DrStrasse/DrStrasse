@@ -179,7 +179,106 @@ end)
      переподключения, и на любом аварийном выходе (смерть, ошибка,
      пропуск пробелом) тоже. Поэтому восстановление стоит здесь, в
      единственной точке выхода, а не рядом с каждым вызовом. ]]
-local function stopCutscene()local restore=Q.Cutscene and Q.Cutscene.restoreFrame;if Q.Cutscene and Q.Cutscene.active then net.Start("GRM_Quest_CutsceneStop");net.SendToServer()end;Q.Cutscene={active=false};gui.EnableScreenClicker(false);if Q.StopCutsceneSound then Q.StopCutsceneSound()end;if Q.RestoreCutsceneHUD then Q.RestoreCutsceneHUD()end;if IsValid(restore)then restore:SetVisible(true);restore:MakePopup()end end
+local function stopCutscene()local restore=Q.Cutscene and Q.Cutscene.restoreFrame;if Q.Cutscene and Q.Cutscene.active then net.Start("GRM_Quest_CutsceneStop");net.SendToServer()end;Q.Cutscene={active=false};gui.EnableScreenClicker(false);if Q.StopCutsceneSound then Q.StopCutsceneSound()end;if Q.RestoreCutsceneHUD then Q.RestoreCutsceneHUD()end;if Q.ClearCutsceneViewPos then Q.ClearCutsceneViewPos()end;if IsValid(restore)then restore:SetVisible(true);restore:MakePopup()end end
+--[[--------------------------------------------------------------------
+    МИР ГЛАЗАМИ КАМЕРЫ СЦЕНЫ (жалоба владельца 30.08: «кат-сцене надо
+    пофиксить рендер 3d2d textscreen, надписей, сущностей»).
+
+    ЧТО ПРОИСХОДИЛО. CalcView двигает камеру, но ТЕЛО игрока остаётся
+    там, где стояло. А почти весь мировой 3D2D решает «рисовать или нет»
+    по расстоянию до тела:
+
+        if lp:GetPos():DistToSqr(self:GetPos()) > 400*400 then return end
+        if self:GetPos():DistToSqr(ply:GetShootPos()) < render_range then
+
+    Таких проверок 95 в 53 файлах — наши энтити, вывески, таблички
+    недвижимости, метки работ и сторонний Textscreens. Камера улетает к
+    точке съёмки, тело далеко, и в кадре остаётся голая геометрия без
+    единой подписи.
+
+    ПОЧЕМУ НЕ ПРАВИМ КАЖДОЕ МЕСТО. Девяносто пять правок в полусотне
+    файлов, один из которых — чужой аддон, сверяемый с апстримом. И
+    любой новый модуль завтра снова напишет lp:GetPos(). Чиним один раз
+    в точке причины.
+
+    КАК. На время ОТРИСОВКИ кадра подменяем у ЛОКАЛЬНОГО игрока методы
+    позиции так, чтобы они возвращали точку камеры. Весь мировой код без
+    единой правки начинает считать расстояние от камеры — ровно то, что
+    ему и нужно было.
+
+    ГРАНИЦЫ. Только клиент. Только LocalPlayer (у других игроков позиция
+    настоящая, иначе их таблички уехали бы к камере). Только между
+    PreDrawOpaqueRenderables и PostDrawTranslucentRenderables, плюс на
+    время HUDPaint. Игровая логика, Think, движение и сервер не видят
+    подмены вообще.
+----------------------------------------------------------------------]]
+local viewPosPatched, savedPlayerPos = false, nil
+local PATCHED_METHODS = { "GetPos", "GetShootPos", "EyePos" }
+
+local function applyCutsceneViewPos()
+    if viewPosPatched then return end
+    local scene = Q.Cutscene
+    if not (scene and scene.active and scene.currentPos) then return end
+    local lp = LocalPlayer()
+    if not IsValid(lp) then return end
+    local meta = FindMetaTable("Player")
+    if not meta then return end
+
+    savedPlayerPos = {}
+    for _, name in ipairs(PATCHED_METHODS) do
+        local original = meta[name]
+        if isfunction(original) then
+            savedPlayerPos[name] = original
+            meta[name] = function(self, ...)
+                --[[ Подменяем только у себя и только пока сцена активна:
+                     проверка внутри, потому что кадр может отрисоваться
+                     уже после остановки сцены. ]]
+                local st = Q.Cutscene
+                if self == lp and st and st.active and st.currentPos then
+                    return st.currentPos
+                end
+                return original(self, ...)
+            end
+        end
+    end
+    viewPosPatched = true
+end
+
+local function clearCutsceneViewPos()
+    if not viewPosPatched then return end
+    viewPosPatched = false
+    local meta = FindMetaTable("Player")
+    if meta and istable(savedPlayerPos) then
+        --[[ Возвращаем ИСХОДНЫЕ функции, а не «снимаем обёртку»: так
+             метод становится побайтово прежним, и повторные
+             включения-выключения не оставляют слоёв. ]]
+        for name, fn in pairs(savedPlayerPos) do meta[name] = fn end
+    end
+    savedPlayerPos = nil
+end
+
+-- Наружу: остановка сцены обязана снять подмену при ЛЮБОМ выходе.
+Q.ClearCutsceneViewPos = clearCutsceneViewPos
+
+--[[ Кадр мира. Opaque идёт раньше translucent, поэтому включаем на
+     первом и снимаем на последнем: между ними рисуется всё, включая
+     ENT:Draw с их cam.Start3D2D. ]]
+hook.Add("PreDrawOpaqueRenderables", "GRM_Quest_CutsceneViewPos", function()
+    if Q.Cutscene and Q.Cutscene.active then applyCutsceneViewPos() end
+end)
+hook.Add("PostDrawTranslucentRenderables", "GRM_Quest_CutsceneViewPos", function()
+    clearCutsceneViewPos()
+end)
+
+--[[ HUDPaint рисует мировые подписи через ToScreen — им тоже нужна
+     позиция камеры, иначе метки над объектами исчезнут или уедут. ]]
+hook.Add("PreDrawHUD", "GRM_Quest_CutsceneViewPos", function()
+    if Q.Cutscene and Q.Cutscene.active then applyCutsceneViewPos() end
+end)
+hook.Add("PostDrawHUD", "GRM_Quest_CutsceneViewPos", function()
+    clearCutsceneViewPos()
+end)
+
 local function linkedCutsceneNodes(nodes)
  local source=table.Copy(nodes or{});local byID={};for i,node in ipairs(source)do byID[tostring(node.id or"")]=i end
  local ordered,seen,index={}, {},1
