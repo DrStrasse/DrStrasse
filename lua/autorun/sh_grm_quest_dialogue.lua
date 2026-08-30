@@ -213,41 +213,48 @@ if SERVER then
          отложенный ролик (Q.FlushCutscene). Ролик «При принятии» ставится
          в очередь из Q.Start, потому что принятие происходит ВНУТРИ
          диалога — иначе титр лезет поверх открытой реплики. ]]
+    --[[ КОНЕЦ РАЗГОВОРА: сначала эффекты, ПОТОМ выпуск очереди роликов.
+
+         ПОРЯДОК ЗДЕСЬ КРИТИЧЕН, и на нём уже обожглись дважды.
+
+         Гейт в cutscene() откладывает ролик, пока жив ply.GRMQuestDlg.
+         На момент прогона отложенных эффектов сессия ЕЩЁ существует —
+         её снимают строкой ниже, уже после выхода отсюда. Значит эффект
+         «показать ролик» не рисует его сразу, а кладёт в очередь.
+
+         Если выпустить очередь ПЕРВОЙ, она окажется пустой: ролик
+         попадёт в неё шагом позже и останется там навсегда. Владелец:
+         «кат-сцена не показывается при выборе верного диалога».
+
+         Поэтому: прогоняем всё отложенное, а очередь выпускаем
+         ПОСЛЕДНЕЙ — тогда в неё успевает попасть и то, что добавили
+         сами эффекты.
+
+         Выпуск стоит ВНЕ проверок на пустоту списков: ролик мог лечь в
+         очередь из Q.Start (принятие квеста), где связей графа нет
+         вообще. Ранний выход по пустому списку съел бы его. ]]
     local function flushPending(ply)
         if not IsValid(ply) then return end
-        --[[ Ролик выпускаем ПЕРВЫМ и БЕЗУСЛОВНО.
-
-             Ниже стоит выход по пустому sess.pending — список отложенных
-             эффектов графа. У квеста со скриншота владельца линий к
-             ролику нет вообще: ролик кладёт в очередь Q.Start. Если
-             сначала проверить pending, функция вернётся раньше, и
-             отложенный ролик не сыграет НИКОГДА — это хуже, чем показать
-             его не вовремя. ]]
-        if Q.FlushCutscene then Q.FlushCutscene(ply) end
         local sess = ply.GRMQuestDlg
-        if not istable(sess) then return end
-        --[[ Выходим, только если пусты ОБА списка.
-
-             Раньше здесь стояла проверка одного sess.pending. Связи
-             выбранного ответа копятся в отдельный pendingChoice, и при
-             пустом pending функция возвращалась раньше — эффект ответа
-             (в том числе ролик) не срабатывал вообще. Ровно тот же класс
-             ошибки, что уже ловили с отложенным роликом. ]]
-        if not (istable(sess.pending) or istable(sess.pendingChoice)) then return end
-        local list = istable(sess.pending) and sess.pending or {}
-        local picks = sess.pendingChoice
-        local def = Q.Definitions and Q.Definitions[tostring(sess.questID or "")]
-        sess.pending = nil
-        sess.pendingChoice = nil
-        if not (def and Q.RunGraphFrom) then return end
-        for _, uid in ipairs(list) do
-            Q.RunGraphFrom(ply, def, uid, nil, "after")
+        if istable(sess) and (istable(sess.pending) or istable(sess.pendingChoice)) then
+            local list = istable(sess.pending) and sess.pending or {}
+            local picks = sess.pendingChoice
+            local def = Q.Definitions and Q.Definitions[tostring(sess.questID or "")]
+            sess.pending = nil
+            sess.pendingChoice = nil
+            if def and Q.RunGraphFrom then
+                for _, uid in ipairs(list) do
+                    Q.RunGraphFrom(ply, def, uid, nil, "after")
+                end
+                -- Связи выбранных ответов: у каждой свой порт, иначе
+                -- сработали бы варианты, которые игрок не выбирал.
+                for _, rec in ipairs(istable(picks) and picks or {}) do
+                    Q.RunGraphFrom(ply, def, rec.uid, nil, "after", rec.port)
+                end
+            end
         end
-        -- Связи выбранных ответов: у каждой свой порт, иначе сработали бы
-        -- варианты, которые игрок не выбирал.
-        for _, rec in ipairs(istable(picks) and picks or {}) do
-            Q.RunGraphFrom(ply, def, rec.uid, nil, "after", rec.port)
-        end
+        -- ПОСЛЕДНИМ шагом: показываем всё, что накопилось в очереди.
+        if Q.FlushCutscene then Q.FlushCutscene(ply) end
     end
     Q.FlushDialogueGraph = flushPending
 

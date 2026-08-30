@@ -89,23 +89,38 @@ ok(quests:find("function Q.FlushCutscene", 1, true) ~= nil, "есть выпус
 local flushCount = select(2, dialogue:gsub("FlushCutscene", ""))
 ok(flushCount >= 3, "очередь выпускается во всех точках выхода (>=3)", flushCount)
 
---[[ САМАЯ КОВАРНАЯ ОШИБКА ПОРЯДКА. В flushPending есть ранний выход по
-     пустому sess.pending (список отложенных эффектов ГРАФА). У квеста со
-     скриншота владельца линий к ролику нет вообще — ролик кладёт в
-     очередь Q.Start. Если выпуск ролика стоит ПОСЛЕ этой проверки,
-     функция вернётся раньше и ролик не сыграет НИКОГДА: хуже, чем
-     показать его не вовремя.
-     Поэтому проверяем не «есть ли вызов», а что он идёт ДО выхода. ]]
+--[[ ДВА ТРЕБОВАНИЯ К ПОРЯДКУ, И ОНИ НЕ ПРОТИВОРЕЧАТ ДРУГ ДРУГУ.
+
+     1) Выпуск не должен быть заперт за ранним выходом: у квеста без
+        линий к ролику список эффектов пуст, ролик кладёт Q.Start.
+
+     2) Выпуск обязан идти ПОСЛЕ прогона отложенных эффектов. Гейт
+        откладывает ролик, пока жива сессия диалога, а её снимают уже
+        после выхода отсюда — эффект кладёт ролик в очередь именно во
+        время прогона. Выпустишь раньше — очередь пуста, ролик
+        застрянет: «кат-сцена не показывается при выборе верного
+        диалога».
+
+     Оба условия выполняются, если выпуск стоит последним, вне if. ]]
 local fp = dialogue:match("local function flushPending%(ply%).-\n    end") or ""
 ok(fp ~= "", "тело flushPending найдено")
 local atFlush = fp:find("FlushCutscene", 1, true)
--- Условие выхода теперь учитывает ОБА списка (связи реплики и связи
--- выбранных ответов), поэтому ищем его по началу, а не по старой форме.
-local atGuard = fp:find("istable(sess.pending) or istable(sess.pendingChoice)", 1, true)
-             or fp:find("istable(sess.pending)) then return", 1, true)
-ok(atFlush ~= nil and atGuard ~= nil and atFlush < atGuard,
-    "ролик выпускается ДО выхода по пустому списку эффектов графа",
-    ("flush=%s guard=%s"):format(tostring(atFlush), tostring(atGuard)))
+local atAfter = fp:find('RunGraphFrom(ply, def, uid, nil, "after")', 1, true)
+ok(atFlush and atAfter and atFlush > atAfter,
+    "выпуск очереди идёт ПОСЛЕ прогона отложенных эффектов",
+    ("flush=%s after=%s"):format(tostring(atFlush), tostring(atAfter)))
+--[[ Проверяем ОТСТУП строки выпуска: 8 пробелов = верхний уровень тела
+     функции. Если выпуск утащили внутрь `if ... then` (12+ пробелов),
+     он выполнится не всегда — ролик, положенный в очередь из Q.Start
+     при принятии квеста, пропадёт. Проверка «нет return после» такую
+     ошибку не видит, поэтому смотрим именно уровень вложенности. ]]
+local flushLine = ""
+for line in fp:gmatch("[^\n]+") do
+    if line:find("FlushCutscene", 1, true) then flushLine = line break end
+end
+local indent = #(flushLine:match("^(%s*)") or "")
+ok(indent == 8, "выпуск стоит на верхнем уровне функции, а не внутри if",
+    ("отступ=%d: %s"):format(indent, flushLine:gsub("^%s+", "")))
 
 print("\n=== 4. ЖИВОЙ ПРОГОН ===")
 -- Мини-модель: проверяем поведение, а не текст.
