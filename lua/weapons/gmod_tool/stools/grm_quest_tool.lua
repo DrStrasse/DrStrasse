@@ -1,5 +1,5 @@
 TOOL.Category = "GRM";TOOL.Name = "#tool.grm_quest_tool.name";TOOL.Command=nil;TOOL.ConfigName=""
-TOOL.ClientConVar={mode="npc",npc_id="guide",npc_name="Проводник",npc_model="models/Humans/Group01/Male_07.mdl",quest_id="intro",step="1",phase="accept"}
+TOOL.ClientConVar={mode="npc",npc_id="guide",npc_name="Проводник",npc_model="models/Humans/Group01/Male_07.mdl",quest_id="intro",step="1",phase="accept",checkpoint_id=""}
 if CLIENT then
  language.Add("tool.grm_quest_tool.name", "GRM Квесты — конструктор");language.Add("tool.grm_quest_tool.desc","NPC, зоны целей и точки кат-сцен");language.Add("tool.grm_quest_tool.0","ЛКМ / ПКМ по режиму · панель инструмента слева")
  local preview={id="",nextBuild=0,zones={},nodes={}}
@@ -22,6 +22,13 @@ function TOOL:LeftClick(tr)
  if mode=="npc"then local e=GRM.Quests.SpawnNPC(self:GetClientInfo("npc_id"),self:GetClientInfo("npc_name"),self:GetClientInfo("npc_model"),tr.HitPos+tr.HitNormal,Angle(0,p:EyeAngles().y+180,0));if IsValid(e)then GRM.Notify(p,"Квестовый NPC создан",100,220,130)return true end
  elseif mode=="zone"then self.ZoneFirst=tr.HitPos;self:SetStage(1);GRM.Notify(p,"Первый угол зоны задан. ПКМ — второй.",100,190,255)return true
  elseif mode=="cutscene"then local ok,why=GRM.Quests.AddCutsceneNode(self:GetClientInfo("quest_id"),self:GetClientInfo("phase"),p);GRM.Notify(p,ok and"Точка кат-сцены добавлена"or why,ok and 100 or 255,ok and 220 or 120,100);return ok end
+ --[[ ЧЕКПОИНТ. Ставим точку туда, куда смотрит админ: вписывать
+      координаты руками в студии — гарантированная ошибка. ID точки
+      подставляет сама студия кнопкой «Поставить точку тулом». ]]
+ if mode=="checkpoint"then
+  local ok,why=GRM.Quests.SetCheckpointPos(self:GetClientInfo("quest_id"),self:GetClientInfo("checkpoint_id"),tr.HitPos+tr.HitNormal*2)
+  GRM.Notify(p,ok and"Чекпоинт поставлен"or why,ok and 100 or 255,ok and 220 or 120,100);return ok
+ end
  return false
 end
 function TOOL:RightClick(tr)
@@ -47,7 +54,7 @@ function TOOL:Reload(tr)if CLIENT then return true end;local p=self:GetOwner();i
      Оставлено ровно то, что нужно в конкретном режиме. ]]
 if CLIENT then function TOOL.BuildCPanel(p)
  p:AddControl("Header",{Description="Расстановка в мире: NPC, зоны целей и камеры. Сам квест собирается в Quest Studio (ПКМ по NPC)."})
- local combo=p:ComboBox("Режим","grm_quest_tool_mode");combo:AddChoice("Квестовый NPC","npc");combo:AddChoice("Зона этапа visit","zone");combo:AddChoice("Точка кат-сцены","cutscene")
+ local combo=p:ComboBox("Режим","grm_quest_tool_mode");combo:AddChoice("Квестовый NPC","npc");combo:AddChoice("Зона этапа visit","zone");combo:AddChoice("Точка кат-сцены","cutscene");combo:AddChoice("Чекпоинт квеста","checkpoint")
 
  --[[ Показываем поля по режиму. GMod не пересобирает панель при смене
       конвара, поэтому прячем через Think — иначе пришлось бы заставлять
@@ -58,6 +65,7 @@ if CLIENT then function TOOL.BuildCPanel(p)
                   p:TextEntry("Модель NPC","grm_quest_tool_npc_model")}
  local questField=p:TextEntry("ID квеста","grm_quest_tool_quest_id")
  local phase=p:ComboBox("Фаза кат-сцены","grm_quest_tool_phase");phase:AddChoice("При принятии","accept");phase:AddChoice("При завершении","complete")
+ local cpField=p:TextEntry("ID чекпоинта","grm_quest_tool_checkpoint_id")
  local help=p:Help("")
 
  p.Think=function()
@@ -65,11 +73,13 @@ if CLIENT then function TOOL.BuildCPanel(p)
   for _,f in ipairs(npcFields)do if IsValid(f)then f:SetVisible(m=="npc")end end
   if IsValid(questField)then questField:SetVisible(m~="npc")end
   if IsValid(phase)then phase:SetVisible(m=="cutscene")end
+  if IsValid(cpField)then cpField:SetVisible(m=="checkpoint")end
   if IsValid(help)then
    help:SetText(({
     npc="ЛКМ — создать NPC.\nПКМ по NPC — открыть Quest Studio.\nR по NPC — удалить.",
     zone="Номер этапа выставляет Studio: нажмите там «Задать зону тулом».\nЛКМ — первый угол, ПКМ — второй.",
     cutscene="Встаньте в позицию камеры и нажмите ЛКМ.\nПервая точка станет стартовой, следующие свяжутся автоматически.",
+    checkpoint="ID точки подставляет Studio кнопкой «Поставить точку тулом».\nЛКМ по земле — поставить красный маркер.",
    })[m] or "")
   end
  end

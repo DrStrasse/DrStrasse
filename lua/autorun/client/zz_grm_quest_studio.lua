@@ -61,6 +61,7 @@ Q.BlockTypes = {
     { id = "music",    name = "МУЗЫКА",    color = Color(240, 140, 190), hint = "Звук или трек в этой точке сюжета." },
     { id = "reward",   name = "НАГРАДА",   color = Color(70, 185, 110),  hint = "Деньги и предметы." },
     { id = "achieve",  name = "АЧИВКА",    color = Color(250, 160, 80),  hint = "Достижение со своей выплатой." },
+    { id = "checkpoint", name = "ЧЕКПОИНТ", color = Color(235, 90, 90),  hint = "Точка на карте. Дошёл — сработали связанные блоки." },
     { id = "finish",   name = "ФИНИШ",     color = Color(210, 75, 75),   hint = "Конец квеста.", once = true },
 }
 
@@ -271,6 +272,16 @@ function Q.QuestToBlocks(work)
             tonumber(a._gy) ~= 0 and a._gy or ay, "achieve")
     end
 
+    --[[ Чекпоинты. UID = "cp_<id>" ровно как в ядре (Q.CheckpointUID):
+         связи графа хранятся по этому имени, и разойтись они не должны. ]]
+    for i, cp in ipairs(work.checkpoints or {}) do
+        local cx, cy = place(4)
+        local cpID = tostring(cp.id or ("cp" .. i))
+        add("checkpoint", table.Copy(cp),
+            tonumber(cp._gx) ~= 0 and cp._gx or cx,
+            tonumber(cp._gy) ~= 0 and cp._gy or cy, "cp_" .. cpID)
+    end
+
     local fx, fy = place(5)
     add("finish", {}, fx, fy, "finish")
 
@@ -320,6 +331,9 @@ function Q.BlocksToQuest(work, blocks)
          Пересоздание таблицы с нуля стирало acceptAfterDialogue при
          первом же сохранении: автор включал «ждать конца диалога», жал
          сохранить — и настройка молча пропадала. ]]
+    --[[ Список пересобираем с нуля: удалённый в студии блок обязан
+         исчезнуть и из квеста, иначе маркер остался бы на карте. ]]
+    out.checkpoints = {}
     out.cutscene = {
         accept = {}, complete = {},
         acceptAfterDialogue = (work and work.cutscene and work.cutscene.acceptAfterDialogue) == true,
@@ -360,6 +374,15 @@ function Q.BlocksToQuest(work, blocks)
             out.achievement = table.Copy(d)
             out.achievement.enabled = true
             out.achievement._gx, out.achievement._gy = math.floor(b.x or 0), math.floor(b.y or 0)
+        elseif b.kind == "checkpoint" then
+            --[[ Чекпоинтов может быть много, поэтому это СПИСОК, а не
+                 одиночное поле. id блока = id точки: по нему граф ищет
+                 связи, а прогресс помнит, что точка пройдена. ]]
+            out.checkpoints = out.checkpoints or {}
+            local cp = table.Copy(d)
+            cp.id = tostring(d.id or b.uid):gsub("^cp_", "")
+            cp._gx, cp._gy = math.floor(b.x or 0), math.floor(b.y or 0)
+            out.checkpoints[#out.checkpoints + 1] = cp
         end
     end
 
@@ -1490,6 +1513,64 @@ function Q.OpenGraphStudio(data)
             note:Dock(TOP) note:SetTall(46) note:DockMargin(10, 4, 10, 6)
             note:SetWrap(true) note:SetFont("GRMQS_Small") note:SetTextColor(COL.dim)
             note:SetText("Выдаётся сразу после награды квеста. Её деньги — отдельная сумма.\n\nID пишите латиницей: кириллица в нём заменяется подчёркиваниями.")
+
+        elseif b.kind == "checkpoint" then
+            --[[ ПАНЕЛЬ ЧЕКПОИНТА (заказ владельца 30.08).
+
+                 Точку на карте ставят тулом: вписывать координаты руками
+                 в поля — гарантированная ошибка. Кнопка ниже переключает
+                 тул в нужный режим и подставляет ID точки, чтобы клик в
+                 мире попал именно в этот блок. ]]
+            local cpID = tostring(d.id or ""):gsub("^cp_", "")
+            if cpID == "" then cpID = tostring(b.uid or "cp"):gsub("^cp_", "") d.id = cpID end
+
+            local lb = field(right, "Подпись над маркером", d.label or "")
+            lb.OnChange = function(e) d.label = e:GetValue() rebuildCards() end
+
+            local rd = field(right, "Радиус срабатывания", tostring(d.radius or 96))
+            rd.OnChange = function(e)
+                d.radius = math.Clamp(math.floor(tonumber(e:GetValue()) or 96), 16, 2048)
+            end
+
+            local pos = istable(d.pos) and d.pos or nil
+            local placed = pos and not (pos.x == 0 and pos.y == 0 and pos.z == 0)
+            local posLbl = vgui.Create("DLabel", right)
+            posLbl:Dock(TOP) posLbl:SetTall(20) posLbl:DockMargin(10, 8, 10, 0)
+            posLbl:SetFont("GRMQS_Small")
+            posLbl:SetTextColor(placed and COL.green or COL.red)
+            posLbl:SetText(placed
+                and ("Точка на карте: %d, %d, %d"):format(pos.x, pos.y, pos.z)
+                or "Точка НЕ поставлена — маркера в мире не будет")
+
+            local tool = mkBtn(right, "Поставить точку тулом в мире", Color(58, 82, 112))
+            tool:Dock(TOP) tool:SetTall(30) tool:DockMargin(10, 6, 10, 4)
+            tool.DoClick = function()
+                RunConsoleCommand("grm_quest_tool_mode", "checkpoint")
+                RunConsoleCommand("grm_quest_tool_quest_id", work.id or "")
+                RunConsoleCommand("grm_quest_tool_checkpoint_id", cpID)
+                RunConsoleCommand("gmod_tool", "grm_quest_tool")
+                notification.AddLegacy("Тул квестов: ЛКМ по земле ставит чекпоинт", NOTIFY_HINT, 5)
+            end
+
+            local adv = vgui.Create("DCheckBoxLabel", right)
+            adv:Dock(TOP) adv:SetTall(22) adv:DockMargin(10, 8, 10, 0)
+            adv:SetText("Считать этап пройденным") adv:SetTextColor(COL.text)
+            adv:SetValue(d.advanceStep == true)
+            adv.OnChange = function(_, v) d.advanceStep = v end
+
+            local once = vgui.Create("DCheckBoxLabel", right)
+            once:Dock(TOP) once:SetTall(22) once:DockMargin(10, 4, 10, 0)
+            once:SetText("Срабатывает один раз") once:SetTextColor(COL.text)
+            once:SetValue(d.once ~= false)
+            once.OnChange = function(_, v) d.once = v end
+
+            local note = vgui.Create("DLabel", right)
+            note:Dock(TOP) note:SetTall(92) note:DockMargin(10, 8, 10, 6)
+            note:SetWrap(true) note:SetFont("GRMQS_Small") note:SetTextColor(COL.dim)
+            note:SetText("Красный полупрозрачный круг, вращается на месте.\n\n" ..
+                "Протяните линию от этого блока к НАГРАДЕ, АЧИВКЕ, КАТ-СЦЕНЕ или " ..
+                "ЭТАПУ — сработает, когда игрок дойдёт до точки.\n\n" ..
+                "«Считать этап пройденным» включайте, если точка и есть цель этапа.")
 
         elseif b.kind == "start" then
             local note = vgui.Create("DLabel", right)

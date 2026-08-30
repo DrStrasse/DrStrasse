@@ -381,6 +381,40 @@ if SERVER then
         out._gy=math.Clamp(math.floor(tonumber(step._gy)or 0),0,20000)
         return out
     end
+    --[[ ЧЕКПОИНТЫ КВЕСТА (заказ владельца 30.08).
+
+         Точка на карте, до которой игрок должен дойти. В графе это блок
+         ЧЕКПОИНТ, который можно связать линией с наградой, ачивкой,
+         кат-сценой или следующим этапом.
+
+         id обязателен и уникален: по нему граф находит связи, и по нему
+         же прогресс помнит, что точка уже пройдена. Без него две точки
+         слились бы в одну. ]]
+    local function normalizeCheckpoints(list)
+        local out,seen={},{}
+        for index,rec in ipairs(istable(list) and list or {})do
+            if #out>=32 then break end
+            rec=istable(rec) and rec or {}
+            local id=trim(rec.id,64)
+            if id=="" then id="cp"..index end
+            if not seen[id] then
+                seen[id]=true
+                out[#out+1]={
+                    id=id,
+                    label=trim(rec.label,64),
+                    pos=vectorData(rec.pos),
+                    radius=math.Clamp(math.floor(tonumber(rec.radius) or 96),16,2048),
+                    -- Точка может как двигать этап, так и просто дёргать
+                    -- связанные блоки: решает автор квеста.
+                    advanceStep=rec.advanceStep==true,
+                    once=rec.once~=false,
+                    _gx=math.Clamp(math.floor(tonumber(rec._gx) or 0),0,20000),
+                    _gy=math.Clamp(math.floor(tonumber(rec._gy) or 0),0,20000),
+                }
+            end
+        end
+        return out
+    end
     local function normalizeCutscene(nodes)
         local out={}
         for index,node in ipairs(istable(nodes)and nodes or {})do
@@ -495,7 +529,7 @@ if SERVER then
              Пустое значение = «карта не указана»: так открываются
              старые квесты, созданные до этой правки. ]]
         local questMap=string.lower(trim(raw.map,64))
-        return {id=id,map=questMap,copyNotes=normalizeCopyNotes(raw.copyNotes),title=title,draft=draft,summary=summary,category=trim(raw.category,48),npc=trim(raw.npc,64),repeatable=raw.repeatable==true,autoStart=raw.autoStart==true,enabled=raw.enabled~=false,requireFaction=trim(raw.requireFaction,64),requireFlag=trim(raw.requireFlag,64),requireMoney=math.Clamp(math.floor(tonumber(raw.requireMoney)or 0),0,100000000),prerequisites=prerequisites,steps=steps,rewards=rewards,achievement=normalizeAchievement(raw.achievement,id,title,summary),notifications={start=normalizeNotification(notifications.start,"Получен квест: {title}",false),step=normalizeNotification(notifications.step,"Этап выполнен: {step}",false),complete=normalizeNotification(notifications.complete,"Квест завершён: {title}",true)},dialogue=normalizeDialogue(raw.dialogue),music=normalizeMusic(raw.music),graph=normalizeGraph(raw.graph),cutscene={accept=normalizeCutscene(raw.cutscene and raw.cutscene.accept),complete=normalizeCutscene(raw.cutscene and raw.cutscene.complete),acceptAfterDialogue=raw.cutscene and raw.cutscene.acceptAfterDialogue==true,completeAfterDialogue=raw.cutscene and raw.cutscene.completeAfterDialogue==true}}
+        return {id=id,map=questMap,copyNotes=normalizeCopyNotes(raw.copyNotes),title=title,draft=draft,summary=summary,category=trim(raw.category,48),npc=trim(raw.npc,64),repeatable=raw.repeatable==true,autoStart=raw.autoStart==true,enabled=raw.enabled~=false,requireFaction=trim(raw.requireFaction,64),requireFlag=trim(raw.requireFlag,64),requireMoney=math.Clamp(math.floor(tonumber(raw.requireMoney)or 0),0,100000000),prerequisites=prerequisites,steps=steps,rewards=rewards,achievement=normalizeAchievement(raw.achievement,id,title,summary),notifications={start=normalizeNotification(notifications.start,"Получен квест: {title}",false),step=normalizeNotification(notifications.step,"Этап выполнен: {step}",false),complete=normalizeNotification(notifications.complete,"Квест завершён: {title}",true)},dialogue=normalizeDialogue(raw.dialogue),music=normalizeMusic(raw.music),graph=normalizeGraph(raw.graph),checkpoints=normalizeCheckpoints(raw.checkpoints),cutscene={accept=normalizeCutscene(raw.cutscene and raw.cutscene.accept),complete=normalizeCutscene(raw.cutscene and raw.cutscene.complete),acceptAfterDialogue=raw.cutscene and raw.cutscene.acceptAfterDialogue==true,completeAfterDialogue=raw.cutscene and raw.cutscene.completeAfterDialogue==true}}
     end
 
     function Q.SaveDefinitions()
@@ -754,7 +788,12 @@ if SERVER then
         дважды. Поэтому эффект, у которого есть входящая связь,
         считается «управляемым графом» и из штатных точек пропускается.
     ----------------------------------------------------------------]]
-    local EFFECT_UIDS = {cut_accept=true,cut_complete=true,music=true,reward=true,achieve=true}
+    --[[ finish тоже эффект: линия «этап → ФИНИШ» обязана завершать квест.
+         Раньше finish был ТОЛЬКО именем триггера, от которого расходятся
+         связи в конце квеста, а целью связи быть не мог — владелец
+         соединял блоки, линия рисовалась и сохранялась, но не делала
+         ничего («не срабатывает блок финиша»). ]]
+    local EFFECT_UIDS = {cut_accept=true,cut_complete=true,music=true,reward=true,achieve=true,finish=true}
 
     --- Есть ли у эффекта входящая связь: значит им управляет граф.
     function Q.GraphDrives(def,uid)
@@ -836,6 +875,14 @@ if SERVER then
         end
         if uid=="reward" then reward(ply,def) return true end
         if uid=="achieve" then unlockQuestAchievement(ply,def) return true end
+        --[[ ФИНИШ КАК ЦЕЛЬ СВЯЗИ. Автор ведёт линию «этап → ФИНИШ» и
+             ожидает, что квест на этом закончится. Завершаем через
+             Q.ForceFinish: там же снимается защита от повторного вызова,
+             иначе связь от финиша к финишу зациклила бы завершение. ]]
+        if uid=="finish" then
+            if Q.ForceFinish then Q.ForceFinish(ply,def,p) end
+            return true
+        end
         return false
     end
 
@@ -878,6 +925,13 @@ if SERVER then
     end
 
     local function finishQuest(ply,def,p)
+        --[[ ЗАЩИТА ОТ ПОВТОРНОГО ЗАВЕРШЕНИЯ.
+
+             Квест может прийти сюда двумя путями сразу: обычным (кончились
+             этапы) и по линии «этап → ФИНИШ» из графа. Без этой проверки
+             награда выдалась бы дважды, а связь «финиш → финиш»
+             зациклила бы завершение. ]]
+        if not istable(p) or p.status=="completed" then return end
         p.status="completed";p.completedAt=os.time()
         --[[ Блоки, подключённые линией, запускает граф — здесь их
              пропускаем, иначе награда выдастся дважды, а ролик
@@ -893,10 +947,96 @@ if SERVER then
         Q.RunGraphFrom(ply,def,"finish",p)
         hook.Run("GRM_QuestCompleted",ply,def.id);Q.SaveProgress();sync(ply)
     end
+    --[[ Завершение квеста ПО ЛИНИИ ГРАФА (блок ФИНИШ как цель связи).
+
+         Отдельная точка входа нужна, потому что finishQuest локальная, а
+         зовёт её runEffect, объявленный выше по файлу. Прогресс берём из
+         текущего, если его не передали: связь может прийти из места, где
+         таблицы прогресса под рукой нет. ]]
+    function Q.ForceFinish(ply,def,p)
+        if not (IsValid(ply) and istable(def)) then return false end
+        if not istable(p) then
+            local all=progressFor(ply)
+            p=all and all[def.id]
+        end
+        if not istable(p) or p.status=="completed" then return false end
+        finishQuest(ply,def,p)
+        return true
+    end
+
+    --[[--------------------------------------------------------------
+        ЧЕКПОИНТЫ: ДОСТИЖЕНИЕ ТОЧКИ НА КАРТЕ
+
+        Заказ владельца 30.08: маркер, который можно связать с выплатой
+        или ачивкой. Логика намеренно простая — точка сама ничего не
+        решает, она лишь ДЁРГАЕТ ГРАФ. Что произойдёт дальше (награда,
+        ачивка, ролик, следующий этап), задаёт автор квеста линиями.
+
+        UID блока в графе — "cp_<id>": так связь от конкретной точки не
+        путается со связями других точек того же квеста.
+    ----------------------------------------------------------------]]
+    --[[ checkCurrent объявлена ниже по файлу, а нужна нам здесь. Прямое
+         обращение по имени скомпилировалось бы как чтение ГЛОБАЛА и
+         вернуло nil — тот самый класс багов, что чинили стендом
+         sim_global_hygiene. Держим явную ссылку. ]]
+    local checkCurrentRef
+
+    function Q.CheckpointUID(cpID) return "cp_"..tostring(cpID or "") end
+
+    --- Дошёл ли игрок до этой точки в текущем прохождении.
+    function Q.CheckpointDone(p,cpID)
+        return istable(p) and istable(p.checkpoints) and p.checkpoints[tostring(cpID or "")]==true
+    end
+
+    function Q.ReachCheckpoint(ply,questID,cpID,ent)
+        if not IsValid(ply) then return false end
+        local def=Q.Definitions[tostring(questID or "")]
+        if not (istable(def) and istable(def.checkpoints)) then return false end
+        cpID=tostring(cpID or "")
+
+        local rec
+        for _,c in ipairs(def.checkpoints) do if c.id==cpID then rec=c break end end
+        if not rec then return false end
+
+        -- Точка работает только во время квеста: иначе прохожий дёргал бы
+        -- награду просто гуляя по карте.
+        local all=progressFor(ply)
+        local p=all and all[def.id]
+        if not (istable(p) and p.status=="active") then return false end
+
+        p.checkpoints=istable(p.checkpoints) and p.checkpoints or {}
+        if rec.once~=false and p.checkpoints[cpID] then return false end
+        p.checkpoints[cpID]=true
+
+        if IsValid(ent) then ent:SetReached(true) end
+        questNotice(ply,"step",def,{title=rec.label~="" and rec.label or "Точка достигнута"})
+
+        --[[ Главное: запускаем всё, что автор подключил линией к этой
+             точке. Режим nil — «выполнить всё»: у чекпоинта нет диалога,
+             которого стоило бы дожидаться. ]]
+        Q.RunGraphFrom(ply,def,Q.CheckpointUID(cpID),p)
+
+        --[[ Если автор пометил точку как «двигает этап», засчитываем шаг.
+             По умолчанию НЕ двигаем: чаще чекпоинт — это просто выплата
+             по дороге, а не цель этапа. ]]
+        if rec.advanceStep then
+            p.step=(tonumber(p.step) or 1)+1
+            p.count=0
+            checkCurrentRef(ply,def,p)
+        end
+
+        Q.SaveProgress();sync(ply)
+        hook.Run("GRM_QuestCheckpoint",ply,def.id,cpID)
+        return true
+    end
+
     local function checkCurrent(ply,def,p)
         local step=def.steps[p.step or 1];if not step then finishQuest(ply,def,p)return end
         if step.type=="item"then p.count=itemCount(ply,step.item);if p.count>=step.count then if step.consume and GRM.Inventory and GRM.Inventory.RemoveItem then GRM.Inventory.RemoveItem(ply,step.item,step.count)end;p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);if not Q.GraphDrives(def,"music") then questMusic(ply,"step",def) end;Q.RunGraphFrom(ply,def,"step_"..tostring((tonumber(p.step) or 1)-1),p);checkCurrent(ply,def,p)end end
     end
+    -- Ссылка для Q.ReachCheckpoint, объявленной выше по файлу.
+    checkCurrentRef=checkCurrent
+
     function Q.Start(ply,questID)
         local def=Q.Definitions[tostring(questID or "")];local ok,why=canStart(ply,def);if not ok then return false,why end
         local all=progressFor(ply);all[def.id]={status="active",step=1,count=0,startedAt=os.time()};questNotice(ply,"start",def)
@@ -973,7 +1113,11 @@ if SERVER then
                  метку при сохранении, а не при создании: так её получат
                  и старые квесты, которые просто открыли и сохранили. ]]
             if tostring(def.map or "")=="" then def.map=string.lower(game.GetMap() or "") end
-            Q.Definitions[def.id]=def;Q.SaveDefinitions();Q.RegisterAchievements();adminOpen(ply);notice(ply,true,"Квест сохранён: "..def.id)
+            Q.Definitions[def.id]=def;Q.SaveDefinitions();Q.RegisterAchievements()
+            -- Точки могли добавить, сдвинуть или удалить в студии —
+            -- переставляем маркеры сразу, без перезапуска карты.
+            Q.RefreshCheckpointMarkers()
+            adminOpen(ply);notice(ply,true,"Квест сохранён: "..def.id)
         elseif op=="reset_progress"then local id=trim(net.ReadString(),64);local target=trim(net.ReadString(),96);if target=="@self"then target=characterKey(ply)elseif target~="*"and target:match("^%d+$")then target=target..":char1"end;local count=Q.ResetProgress(id,target);notice(ply,true,"Сброшен прогресс: "..count.." записей")
         elseif op=="delete"then local id=trim(net.ReadString(),64);local old=Q.Definitions[id];if old and old.achievement and GRM.Ach and GRM.Ach.Unregister then GRM.Ach.Unregister(old.achievement.id)end;Q.Definitions[id]=nil;Q.SaveDefinitions();adminOpen(ply);notice(ply,true,"Квест удалён")
         elseif op=="request"then adminOpen(ply)end
@@ -982,12 +1126,72 @@ if SERVER then
     function Q.SpawnNPC(id,name,model,pos,angles)
         local ent=ents.Create("grm_quest_npc");if not IsValid(ent)then return nil end;ent:SetPos(pos);ent:SetAngles(angles);ent:SetQuestNPCID(trim(id,64));ent:SetQuestNPCName(trim(name,80));if util.IsValidModel(model)then ent:SetModel(model)end;ent:Spawn();ent:Activate();Q.SaveDefinitions();return ent
     end
+    --[[ МАРКЕРЫ ЧЕКПОИНТОВ НА КАРТЕ.
+
+         Пересоздаём их целиком при каждом обновлении квестов: точек
+         немного, а попытка «обновить существующие» дала бы рассинхрон
+         после правки квеста в студии (удалённые точки остались бы
+         висеть). Проще и надёжнее снести и расставить заново. ]]
+    function Q.RefreshCheckpointMarkers()
+        for _,ent in ipairs(ents.FindByClass("grm_quest_checkpoint"))do
+            if IsValid(ent) then ent:Remove() end
+        end
+        local made=0
+        for _,def in pairs(Q.Definitions or {})do
+            -- Черновики и чужие карты не расставляем: маркер посреди
+            -- города от невключённого квеста только путает игроков.
+            if def.enabled and not def.draft and Q.FitsMap(def) then
+                for _,cp in ipairs(istable(def.checkpoints) and def.checkpoints or {})do
+                    local pos=cp.pos
+                    if istable(pos) and not (pos.x==0 and pos.y==0 and pos.z==0) then
+                        local ent=ents.Create("grm_quest_checkpoint")
+                        if IsValid(ent) then
+                            ent:SetPos(vec(pos))
+                            ent:SetQuestID(def.id)
+                            ent:SetCheckpointID(cp.id)
+                            ent:SetLabel(cp.label)
+                            ent:SetRadius(cp.radius or 96)
+                            ent:Spawn();ent:Activate()
+                            made=made+1
+                        end
+                    end
+                end
+            end
+        end
+        return made
+    end
+
     function Q.SaveAll()local a=Q.SaveDefinitions();local b=Q.SaveProgress();return a and b,"квесты и прогресс сохранены"end
     function Q.LoadAll()
         Q.LoadData();for _,ent in ipairs(ents.FindByClass("grm_quest_npc"))do if IsValid(ent)then ent:Remove()end end
         for _,r in ipairs(Q._NPCRecords or {})do Q.SpawnNPC(r.id,r.name,r.model,vec(r.pos),ang(r.ang))end
+        Q.RefreshCheckpointMarkers()
         return true,"квесты, прогресс и NPC загружены"
     end
+    --[[ Постановка чекпоинта тулом. Точку ставит админ кликом по земле:
+         координаты руками в студии — гарантированная опечатка.
+         Если точки с таким id ещё нет, создаём: автор мог добавить блок
+         в графе и сразу пойти ставить маркер, не сохраняя квест. ]]
+    function Q.SetCheckpointPos(questID,cpID,pos)
+        local def=Q.Definitions[tostring(questID or "")]
+        if not istable(def) then return false,"Квест не найден" end
+        cpID=trim(cpID,64)
+        if cpID=="" then return false,"Не задан ID чекпоинта. Нажмите кнопку в Quest Studio." end
+
+        def.checkpoints=istable(def.checkpoints) and def.checkpoints or {}
+        local rec
+        for _,c in ipairs(def.checkpoints) do if c.id==cpID then rec=c break end end
+        if not rec then
+            if #def.checkpoints>=32 then return false,"Слишком много чекпоинтов в квесте" end
+            rec={id=cpID,label="",radius=96,once=true}
+            def.checkpoints[#def.checkpoints+1]=rec
+        end
+        rec.pos=vectorData(pos)
+        Q.SaveDefinitions()
+        Q.RefreshCheckpointMarkers()
+        return true
+    end
+
     function Q.SetVisitZone(questID,stepIndex,first,second)
         local def=Q.Definitions[questID];local step=def and def.steps[math.floor(tonumber(stepIndex)or 0)];if not step then return false,"Квест или этап не найден"end;step.type="visit";step.min=vectorData(first);step.max=vectorData(second);Q.SaveDefinitions();return true
     end
