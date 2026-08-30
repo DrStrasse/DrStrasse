@@ -37,6 +37,9 @@ function ENT:Initialize()
 
     if self:GetRadius() <= 0 then self:SetRadius(96) end
     if self:GetLabel() == "" then self:SetLabel("Чекпоинт") end
+
+    -- Прячем сразу: до первого Think маркер иначе успеет мелькнуть у всех.
+    self:UpdateTransmit()
 end
 
 --[[ ПРОВЕРКА ЗАХОДА В ЗОНУ.
@@ -48,6 +51,13 @@ end
 function ENT:Think()
     self:NextThink(CurTime() + 0.25)
 
+    --[[ Пересчёт видимости раз в секунду: список игроков и их квесты
+         меняются редко, а точек на карте бывает много. ]]
+    if (self._grmNextTransmit or 0) <= CurTime() then
+        self._grmNextTransmit = CurTime() + 1
+        self:UpdateTransmit()
+    end
+
     local radius = math.max(16, tonumber(self:GetRadius()) or 96)
     for _, ply in ipairs(player.GetAll()) do
         if IsValid(ply) and ply:Alive()
@@ -56,6 +66,36 @@ function ENT:Think()
         end
     end
     return true
+end
+
+--[[ СЕТЕВАЯ ПРИВАТНОСТЬ (заказ владельца 30.08).
+
+     Клиентская проверка в ENT:Draw уже не рисует чужой маркер, но сама
+     энтити всё равно приходила бы всем: её видно чит-клиентом и
+     инструментами вроде «показать все entity». Для квестовой точки это
+     подсказка «здесь дают деньги», которую посторонним знать незачем.
+
+     SetPreventTransmit прячет энтити на уровне СЕТИ: чужой клиент про
+     неё просто не узнаёт. Пересчитываем раз в секунду, а не каждый тик —
+     список игроков меняется редко, а точек на карте бывает много.
+
+     Право «видеть» = квест активен у этого игрока. Ту же проверку
+     делает сервер при срабатывании, так что расхождения между
+     «вижу» и «сработает» не будет. ]]
+function ENT:MaySee(ply)
+    if not (IsValid(ply) and ply:IsPlayer()) then return false end
+    local Q = GRM and GRM.Quests
+    if not (Q and Q.CheckpointVisibleFor) then return true end
+    return Q.CheckpointVisibleFor(ply, self:GetQuestID(), self:GetCheckpointID())
+end
+
+function ENT:UpdateTransmit()
+    for _, ply in ipairs(player.GetAll()) do
+        if IsValid(ply) then
+            -- true = НЕ передавать этому игроку
+            self:SetPreventTransmit(ply, not self:MaySee(ply))
+        end
+    end
 end
 
 --- Игрок вошёл в зону: сообщаем ядру квестов.

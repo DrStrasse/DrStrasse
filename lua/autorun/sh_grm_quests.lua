@@ -1016,6 +1016,38 @@ if SERVER then
         return istable(p) and istable(p.checkpoints) and p.checkpoints[tostring(cpID or "")]==true
     end
 
+    --[[ ЕДИНОЕ ПРАВИЛО ВИДИМОСТИ ЧЕКПОИНТА.
+
+         Заказ владельца 30.08: «надо чтобы было видно только тем, кто
+         взял квест, чтобы любой рандом не забрал награду чужого».
+
+         Одна функция на два вопроса — «показывать ли маркер» и «пускать
+         ли к срабатыванию». Если развести их по разным местам, они
+         рано или поздно разойдутся: игрок видит точку, а она не
+         работает (или наоборот).
+
+         Живёт на сервере: он и прячет энтити по сети, и решает выдачу
+         награды. Клиент дублирует то же правило по своему прогрессу —
+         но клиентская проверка это удобство, а НЕ защита. ]]
+    function Q.CheckpointVisibleFor(ply,questID,cpID)
+        if not IsValid(ply) then return false end
+        local def=Q.Definitions[tostring(questID or "")]
+        if not (istable(def) and istable(def.checkpoints)) then return false end
+        cpID=tostring(cpID or "")
+
+        local rec
+        for _,c in ipairs(def.checkpoints) do if c.id==cpID then rec=c break end end
+        if not rec then return false end
+
+        local all=progressFor(ply)
+        local p=all and all[def.id]
+        if not (istable(p) and p.status=="active") then return false end
+
+        -- Пройденную одноразовую точку прятать: она больше не сработает.
+        if rec.once~=false and istable(p.checkpoints) and p.checkpoints[cpID] then return false end
+        return true
+    end
+
     function Q.ReachCheckpoint(ply,questID,cpID,ent)
         if not IsValid(ply) then return false end
         local def=Q.Definitions[tostring(questID or "")]
@@ -1036,7 +1068,10 @@ if SERVER then
         if rec.once~=false and p.checkpoints[cpID] then return false end
         p.checkpoints[cpID]=true
 
-        if IsValid(ent) then ent:SetReached(true) end
+        --[[ Общий флаг на энтити НЕ ставим: сетевая переменная одна на
+             всех, и первый прошедший спрятал бы маркер остальным. Факт
+             прохождения уже записан в ЛИЧНЫЙ прогресс выше — клиент
+             читает его оттуда. ]]
         questNotice(ply,"step",def,{title=rec.label~="" and rec.label or "Точка достигнута"})
 
         --[[ Главное: запускаем всё, что автор подключил линией к этой
@@ -1054,6 +1089,8 @@ if SERVER then
         end
 
         Q.SaveProgress();sync(ply)
+        -- Точка пройдена: у одноразовой маркер должен исчезнуть сразу.
+        if Q.RefreshCheckpointVisibility then Q.RefreshCheckpointVisibility() end
         hook.Run("GRM_QuestCheckpoint",ply,def.id,cpID)
         return true
     end
@@ -1077,7 +1114,10 @@ if SERVER then
         end
         -- Триггер «start»: линии от блока СТАРТ.
         Q.RunGraphFrom(ply,def,"start",all[def.id])
-        checkCurrent(ply,def,all[def.id]);Q.SaveProgress();sync(ply);hook.Run("GRM_QuestStarted",ply,def.id);return true
+        checkCurrent(ply,def,all[def.id]);Q.SaveProgress();sync(ply)
+        -- Квест взят: показываем его точки владельцу без задержки.
+        if Q.RefreshCheckpointVisibility then Q.RefreshCheckpointVisibility() end
+        hook.Run("GRM_QuestStarted",ply,def.id);return true
     end
     function Q.Event(ply,eventName,target,amount,meta)
         if not IsValid(ply)then return end;eventName=trim(eventName,64);target=trim(target,96);amount=math.max(1,math.floor(tonumber(amount)or 1));local all=progressFor(ply)
@@ -1160,6 +1200,15 @@ if SERVER then
          немного, а попытка «обновить существующие» дала бы рассинхрон
          после правки квеста в студии (удалённые точки остались бы
          висеть). Проще и надёжнее снести и расставить заново. ]]
+    --[[ Пересчитать, кому видны маркеры. Зовём по СОБЫТИЮ (взял квест,
+         прошёл точку, завершил), а не только по таймеру энтити: иначе
+         игрок берёт квест и до секунды стоит перед пустым местом. ]]
+    function Q.RefreshCheckpointVisibility()
+        for _,ent in ipairs(ents.FindByClass("grm_quest_checkpoint"))do
+            if IsValid(ent) and ent.UpdateTransmit then ent:UpdateTransmit() end
+        end
+    end
+
     function Q.RefreshCheckpointMarkers()
         for _,ent in ipairs(ents.FindByClass("grm_quest_checkpoint"))do
             if IsValid(ent) then ent:Remove() end
