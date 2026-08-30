@@ -1302,9 +1302,32 @@ function Q.OpenGraphStudio(data)
                         local after = (l.when == "after")
                         draw.RoundedBox(5, 0, 0, w, h, sp:IsHovered() and Color(34, 46, 62) or COL.card)
                         draw.RoundedBox(0, 0, 0, 4, h, after and COL.accent or COL.gold)
-                        draw.SimpleText("от: " .. tostring(fromBlock.uid), "GRMQS_Small", 10, 10, COL.text)
+                        --[[ Показываем, от какого ОТВЕТА идёт линия. Без
+                             этого автор не видел разницы между «связь
+                             реплики» (сработает всегда) и «связь ответа»
+                             (только при выборе этого варианта) — и ролик
+                             казался привязанным к обоим ответам сразу. ]]
+                        local port = tonumber(l.port) or 0
+                        local src = "от: " .. tostring(fromBlock.uid)
+                        if port > 0 then
+                            local answers = (fromBlock.data or {}).choices or {}
+                            local a = answers[port]
+                            local text = a and tostring(a.text or "") or ""
+                            if text ~= "" then
+                                if #text > 34 then text = string.sub(text, 1, 34) .. "…" end
+                                src = ("ответ %d: %s"):format(port, text)
+                            else
+                                src = ("ответ %d"):format(port)
+                            end
+                        end
+                        draw.SimpleText(src, "GRMQS_Small", 10, 10, port > 0 and COL.gold or COL.text)
                         if isDialogue then
-                            draw.SimpleText(after and "ПОСЛЕ диалога" or "СРАЗУ при показе реплики",
+                            local moment = after and "ПОСЛЕ диалога" or "СРАЗУ при показе реплики"
+                            if port > 0 then
+                                moment = after and "ПОСЛЕ диалога, только при этом ответе"
+                                                or "при выборе этого ответа"
+                            end
+                            draw.SimpleText(moment,
                                 "GRMQS_Small", 10, 26, after and COL.accent or COL.dim)
                         else
                             draw.SimpleText("сразу (у этого блока нет диалога)",

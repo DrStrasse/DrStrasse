@@ -772,14 +772,36 @@ if SERVER then
            nil     — все связи (для эффектов внутри цепочки);
            "now"   — только те, что срабатывают сразу;
            "after" — только отложенные до конца разговора. ]]
-    local function graphTargets(def,uid,mode)
+    --[[ port — НОМЕР ОТВЕТА ИГРОКА, от которого идёт линия.
+
+         0 (или поля нет) — связь самой реплики: срабатывает при показе.
+         N               — связь N-го варианта ответа: срабатывает,
+                           только если игрок выбрал именно его.
+
+         Заказ владельца 29.08: «там два варианта ответа, и нужно ставить,
+         на какой вариант делать запуск кат-сцены, чтобы не просто ткнул
+         1-й ответ — кат-сцена, ткнул 2-й — кат-сцена».
+
+         Порты в студии были и раньше, port доезжал до сервера, но здесь
+         не читался — поэтому срабатывали ВСЕ связи реплики сразу,
+         независимо от выбора.
+
+         Аргумент port:
+           nil — берём только общие связи (port 0). Так зовут показ
+                 реплики и не-диалоговые триггеры;
+           N   — берём ТОЛЬКО связи N-го ответа, общие не трогаем: они
+                 уже отработали при показе, второй раз не нужно. ]]
+    local function graphTargets(def,uid,mode,port)
         local out={}
         if not (istable(def) and istable(def.graph) and istable(def.graph.links)) then return out end
         uid=tostring(uid or "")
         for _,l in ipairs(def.graph.links)do
             if tostring(l.from or "")==uid then
                 local w=(l.when=="after")and"after"or"now"
-                if not mode or w==mode then out[#out+1]=tostring(l.to or "") end
+                local lp=math.floor(tonumber(l.port)or 0)
+                local matchMode=(not mode)or w==mode
+                local matchPort=(port==nil and lp==0)or(port~=nil and lp==port)
+                if matchMode and matchPort then out[#out+1]=tostring(l.to or "") end
             end
         end
         return out
@@ -829,7 +851,7 @@ if SERVER then
          который надо дождаться, и если бы они уважали пометку «после
          диалога», связь от этапа не сработала бы НИКОГДА — эффект
          молча пропал бы. Фильтр применяют только реплики. ]]
-    function Q.RunGraphFrom(ply,def,fromUID,p,mode)
+    function Q.RunGraphFrom(ply,def,fromUID,p,mode,port)
         if not (IsValid(ply) and istable(def)) then return 0 end
         local seen,queue,fired={},{tostring(fromUID or "")},0
         local guard=0
@@ -837,12 +859,13 @@ if SERVER then
         while #queue>0 do
             guard=guard+1;if guard>64 then break end
             local cur=table.remove(queue,1)
-            --[[ Режим касается только связей ОТ ТРИГГЕРА. Внутри цепочки
-                 эффектов фильтр не нужен: раз цепочка уже запущена,
-                 она отрабатывает целиком. ]]
+            --[[ Режим и порт касаются только связей ОТ ТРИГГЕРА. Внутри
+                 цепочки эффектов фильтр не нужен: раз цепочка уже
+                 запущена, она отрабатывает целиком. ]]
             local useMode=first and mode or nil
+            local usePort=first and port or nil
             first=false
-            for _,nxt in ipairs(graphTargets(def,cur,useMode))do
+            for _,nxt in ipairs(graphTargets(def,cur,useMode,usePort))do
                 if not seen[nxt] then
                     seen[nxt]=true
                     if runEffect(ply,def,nxt,p) then fired=fired+1 end

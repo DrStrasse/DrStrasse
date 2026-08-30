@@ -225,12 +225,28 @@ if SERVER then
              его не вовремя. ]]
         if Q.FlushCutscene then Q.FlushCutscene(ply) end
         local sess = ply.GRMQuestDlg
-        if not (istable(sess) and istable(sess.pending)) then return end
-        local list, def = sess.pending, Q.Definitions and Q.Definitions[tostring(sess.questID or "")]
+        if not istable(sess) then return end
+        --[[ Выходим, только если пусты ОБА списка.
+
+             Раньше здесь стояла проверка одного sess.pending. Связи
+             выбранного ответа копятся в отдельный pendingChoice, и при
+             пустом pending функция возвращалась раньше — эффект ответа
+             (в том числе ролик) не срабатывал вообще. Ровно тот же класс
+             ошибки, что уже ловили с отложенным роликом. ]]
+        if not (istable(sess.pending) or istable(sess.pendingChoice)) then return end
+        local list = istable(sess.pending) and sess.pending or {}
+        local picks = sess.pendingChoice
+        local def = Q.Definitions and Q.Definitions[tostring(sess.questID or "")]
         sess.pending = nil
+        sess.pendingChoice = nil
         if not (def and Q.RunGraphFrom) then return end
         for _, uid in ipairs(list) do
             Q.RunGraphFrom(ply, def, uid, nil, "after")
+        end
+        -- Связи выбранных ответов: у каждой свой порт, иначе сработали бы
+        -- варианты, которые игрок не выбирал.
+        for _, rec in ipairs(istable(picks) and picks or {}) do
+            Q.RunGraphFrom(ply, def, rec.uid, nil, "after", rec.port)
         end
     end
     Q.FlushDialogueGraph = flushPending
@@ -295,6 +311,31 @@ if SERVER then
         else
             ch = (node.choices or {})[choiceIndex]
             if not istable(ch) or not Q.EvalCondition(ply, ch.cond) then return end
+        end
+
+        --[[ СВЯЗИ ВЫБРАННОГО ОТВЕТА (заказ владельца 29.08).
+
+             У последней реплики два варианта, и ролик должен идти
+             только на один из них. Линия в студии тянется от порта
+             конкретного ответа, номер приезжает в связи как port.
+
+             Запускаем ЗДЕСЬ, а не при показе реплики: до выбора мы не
+             знаем, что игрок ответит. Связи самой реплики (port 0)
+             отработали раньше в sendNode и повторно не трогаются. ]]
+        if Q.RunGraphFrom and choiceIndex > 0 then
+            local uid = tostring(node.id or "")
+            if uid ~= "" then
+                Q.RunGraphFrom(ply, def, uid, nil, "now", choiceIndex)
+                local sess2 = ply.GRMQuestDlg
+                if istable(sess2) then
+                    --[[ Отложенные связи ответа копим отдельно от связей
+                         реплики: у них свой порт, и при выпуске он нужен,
+                         иначе сработают варианты, которые игрок не
+                         выбирал. ]]
+                    sess2.pendingChoice = istable(sess2.pendingChoice) and sess2.pendingChoice or {}
+                    sess2.pendingChoice[#sess2.pendingChoice + 1] = { uid = uid, port = choiceIndex }
+                end
+            end
         end
 
         local result = runAction(ply, def, ch.action, ch.actionArg)

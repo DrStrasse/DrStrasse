@@ -99,7 +99,10 @@ ok(flushCount >= 3, "очередь выпускается во всех точ�
 local fp = dialogue:match("local function flushPending%(ply%).-\n    end") or ""
 ok(fp ~= "", "тело flushPending найдено")
 local atFlush = fp:find("FlushCutscene", 1, true)
-local atGuard = fp:find("istable(sess.pending)) then return", 1, true)
+-- Условие выхода теперь учитывает ОБА списка (связи реплики и связи
+-- выбранных ответов), поэтому ищем его по началу, а не по старой форме.
+local atGuard = fp:find("istable(sess.pending) or istable(sess.pendingChoice)", 1, true)
+             or fp:find("istable(sess.pending)) then return", 1, true)
 ok(atFlush ~= nil and atGuard ~= nil and atFlush < atGuard,
     "ролик выпускается ДО выхода по пустому списку эффектов графа",
     ("flush=%s guard=%s"):format(tostring(atFlush), tostring(atGuard)))
