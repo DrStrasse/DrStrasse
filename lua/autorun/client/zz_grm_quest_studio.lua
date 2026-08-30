@@ -173,7 +173,25 @@ function Q.QuestToBlocks(work)
         return 40 + (col - 1) * 300, y
     end
 
-    local startX, startY = place(1)
+    --[[ ПОЗИЦИИ КАРКАСА. Сохранённая раскладка приоритетнее, иначе блок
+         прыгал бы обратно при каждом открытии.
+
+         Значения по умолчанию подобраны так, чтобы оба блока попадали в
+         ВИДИМУЮ часть холста (окно студии ~874px по ширине). Раньше
+         ФИНИШ ставился в колонку 5 — это x=1240, то есть за краем: блок
+         существовал, но добраться до него было нельзя. ]]
+    local savedFrame = (istable(work.graph) and istable(work.graph.frame)) and work.graph.frame or {}
+    local FRAME_START_X, FRAME_START_Y = 40, 40
+    local FRAME_FINISH_X, FRAME_FINISH_Y = 620, 40
+    local function framePos(name, defX, defY)
+        local rec = savedFrame[name]
+        if istable(rec) and (tonumber(rec.x) or 0) > 0 then
+            return math.floor(rec.x), math.floor(tonumber(rec.y) or 0)
+        end
+        return defX, defY
+    end
+
+    local startX, startY = framePos("start", FRAME_START_X, FRAME_START_Y)
     local startBlock = add("start", {}, startX, startY, "start")
 
     --[[ Диалоги. Фазу храним в самом блоке: в едином графе иначе
@@ -282,7 +300,7 @@ function Q.QuestToBlocks(work)
             tonumber(cp._gy) ~= 0 and cp._gy or cy, "cp_" .. cpID)
     end
 
-    local fx, fy = place(5)
+    local fx, fy = framePos("finish", FRAME_FINISH_X, FRAME_FINISH_Y)
     add("finish", {}, fx, fy, "finish")
 
     --[[ ВОССТАНОВЛЕНИЕ СВЯЗЕЙ ГРАФА.
@@ -395,7 +413,16 @@ function Q.BlocksToQuest(work, blocks)
          нет. Складываем всю раскладку связей отдельным полем.
 
          Пишем по uid: блоки можно двигать и удалять, порядок не важен. ]]
-    out.graph = { links = {} }
+    out.graph = { links = {}, frame = {} }
+    --[[ КАРКАС (СТАРТ и ФИНИШ). У них нет своих данных в квесте, поэтому
+         позицию храним в графе. Без этого редактор при каждом открытии
+         ставил их заново по умолчанию, и ФИНИШ уезжал за правый край
+         холста — владелец видел это как «блок нельзя вынести в граф». ]]
+    for _, b in ipairs(blocks or {}) do
+        if b.kind == "start" or b.kind == "finish" then
+            out.graph.frame[b.kind] = { x = math.floor(b.x or 0), y = math.floor(b.y or 0) }
+        end
+    end
     for _, b in ipairs(blocks or {}) do
         for _, l in ipairs(b.links or {}) do
             out.graph.links[#out.graph.links + 1] = {
