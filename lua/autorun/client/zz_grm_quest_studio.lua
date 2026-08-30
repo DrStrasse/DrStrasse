@@ -398,7 +398,13 @@ function Q.BlocksToQuest(work, blocks)
                  связи, а прогресс помнит, что точка пройдена. ]]
             out.checkpoints = out.checkpoints or {}
             local cp = table.Copy(d)
-            cp.id = tostring(d.id or b.uid):gsub("^cp_", "")
+            --[[ Пустая строка это НЕ nil: `d.id or b.uid` её не заменит,
+                 и точка сохранилась бы с пустым id — связи графа тут же
+                 потеряли бы источник. Проверяем явно. ]]
+            local rawID = tostring(d.id or "")
+            if rawID == "" then rawID = tostring(b.uid or "") end
+            cp.id = rawID:gsub("^cp_", "")
+            if cp.id == "" then cp.id = "cp" .. (#(out.checkpoints) + 1) end
             cp._gx, cp._gy = math.floor(b.x or 0), math.floor(b.y or 0)
             out.checkpoints[#out.checkpoints + 1] = cp
         end
@@ -797,6 +803,23 @@ function Q.OpenGraphStudio(data)
         elseif kind == "achieve" then
             data = { enabled = true, id = "quest_" .. tostring(work.id or ""),
                 name = work.title or "Достижение", description = work.summary or "", reward = 0 }
+        elseif kind == "checkpoint" then
+            --[[ Свой id ОБЯЗАТЕЛЕН и должен быть уникален: по нему
+                 строится uid блока, по нему же граф ищет связи, а
+                 прогресс помнит пройденные точки. Без него две точки
+                 схлопнулись бы в одну.
+
+                 Ищем первый свободный номер, а не берём os.time(): две
+                 точки, созданные в одну секунду, получили бы одинаковый
+                 id — на этом уже обжигались с репликами. ]]
+            local used = {}
+            for _, ob in ipairs(blocks) do
+                if ob.kind == "checkpoint" then used[tostring((ob.data or {}).id or "")] = true end
+            end
+            local n = 1
+            while used["cp" .. n] do n = n + 1 end
+            data = { id = "cp" .. n, label = "Чекпоинт " .. n, radius = 96,
+                once = true, advanceStep = false }
         end
         --[[ UID НОВОГО БЛОКА (исправлено 29.08).
 
@@ -815,6 +838,14 @@ function Q.OpenGraphStudio(data)
             uid = data.id
         elseif kind == "cutscene" then
             uid = "cut_" .. (data.phase == "complete" and "complete" or "accept")
+        elseif kind == "checkpoint" then
+            --[[ Ровно то имя, каким блок соберёт загрузка (Q.CheckpointUID
+                 в ядре и QuestToBlocks здесь же). Раньше uid был просто
+                 "checkpoint", а после переоткрытия становился
+                 "cp_checkpoint" — связь теряла источник и линия
+                 пропадала. Владелец видел это как «чекпоинт нельзя
+                 связать с наградой и ачивкой». ]]
+            uid = "cp_" .. tostring(data.id)
         else
             uid = kind == "achieve" and "achieve" or kind
         end
