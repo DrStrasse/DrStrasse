@@ -561,8 +561,29 @@ end)
 -- Клавиша E: удержание открывает кольцо, отпускание применяет.
 -----------------------------------------------------------------------
 local holdStart, holdEnt, holdKind, armed = 0, nil, nil, false
+local passUse = 0        -- сколько тиков пропустить обычный E наружу
 I.HoldTime = 0.22        -- сколько держать, чтобы вместо обычного E пришло кольцо
 
+--[[ ПОЧЕМУ E ПЕРЕХВАТЫВАЕТСЯ СРАЗУ (жалоба владельца 31.08: «и меню
+     вылазит интерактивное и двери сразу открываются»).
+
+     БЫЛО. IN_USE снимался только в StartCommand и только когда кольцо
+     УЖЕ открыто. Но кольцо появляется через 0.22 с удержания, а всё
+     это время нажатие уходило на сервер как обычное «использовать» —
+     дверь успевала открыться. Игрок получал и распахнутую дверь, и
+     кольцо поверх неё.
+
+     СТАЛО. IN_USE снимается с ПЕРВОГО тика нажатия, пока мы решаем,
+     что это — клик или удержание. Дверь не трогается.
+
+     А чтобы короткий клик не пропал, мы проигрываем его сами: на
+     отпускании раньше порога поднимаем флаг passUse, и следующие
+     несколько тиков IN_USE наоборот ПРИНУДИТЕЛЬНО выставляется. Для
+     сервера это выглядит как обычное короткое нажатие — двери,
+     посадка в транспорт и подбор предметов работают как раньше.
+
+     Несколько тиков, а не один: сервер должен увидеть и нажатие, и
+     отпускание, иначе «использование» не засчитается. ]]
 hook.Add("PlayerButtonDown", "GRM_Interact_Use", function(ply, key)
     if ply ~= LocalPlayer() then return end
     if key ~= KEY_E then return end
@@ -576,13 +597,8 @@ hook.Add("PlayerButtonDown", "GRM_Interact_Use", function(ply, key)
     holdStart, holdEnt, holdKind, armed = RealTime(), ent, kind, true
 end)
 
---[[ Кольцо появляется по УДЕРЖАНИЮ, а короткое нажатие остаётся
-     обычным E.
-
-     Иначе мы сломали бы всю привычную игру: E открывает двери, садит в
-     машину, поднимает предметы. Порог небольшой — за 0.22 с обычное
-     нажатие успевает отработать, а осознанное удержание чувствуется
-     мгновенным. ]]
+--[[ Кольцо появляется по УДЕРЖАНИЮ. Короткое нажатие остаётся обычным
+     E — его проигрывает passUse (см. StartCommand ниже). ]]
 hook.Add("Think", "GRM_Interact_Hold", function()
     if not armed or R.open then return end
     if RealTime() - holdStart < I.HoldTime then return end
@@ -596,21 +612,46 @@ end)
 hook.Add("PlayerButtonUp", "GRM_Interact_UseUp", function(ply, key)
     if ply ~= LocalPlayer() then return end
     if key ~= KEY_E then return end
+
+    if R.open then
+        armed = false
+        I.Apply()
+        return
+    end
+
+    --[[ Отпустили раньше порога — это был обычный клик. Возвращаем его
+         игре: мы же его только что съели, чтобы дверь не открылась
+         раньше времени. ]]
+    if armed and (RealTime() - holdStart) < I.HoldTime then
+        passUse = 3
+    end
     armed = false
-    if R.open then I.Apply() end
 end)
 
---[[ Пока кольцо открыто, мышь не должна крутить игрока: курсором в нём
-     выбирают действие. Та же беда была у радиального меню анимаций. ]]
 hook.Add("StartCommand", "GRM_Interact_Freeze", function(ply, cmd)
-    if not R.open then return end
     if ply ~= LocalPlayer() then return end
+
+    -- Проигрываем «съеденный» короткий клик.
+    if passUse > 0 then
+        passUse = passUse - 1
+        cmd:SetButtons(bit.bor(cmd:GetButtons(), IN_USE))
+        return
+    end
+
+    --[[ Пока клавиша зажата и мы ещё не решили, клик это или удержание,
+         обычное «использовать» наружу не пускаем. Это и есть фикс:
+         раньше дверь открывалась в эти 0.22 с. ]]
+    if armed then
+        cmd:RemoveKey(IN_USE)
+        return
+    end
+
+    if not R.open then return end
+
+    -- Кольцо открыто: мышь выбирает действие, а не крутит игрока.
     cmd:ClearMovement()
     cmd:RemoveKey(IN_ATTACK)
     cmd:RemoveKey(IN_ATTACK2)
-    --[[ E тоже снимаем: пока выбираем действие в кольце, обычное
-         «использовать» срабатывать не должно — иначе дверь откроется
-         сама ещё до выбора пункта. ]]
     cmd:RemoveKey(IN_USE)
     cmd:SetViewAngles(ply:EyeAngles())
     cmd:SetMouseX(0)
