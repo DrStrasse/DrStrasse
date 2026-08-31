@@ -50,6 +50,20 @@ function UI.Fonts()
     surface.CreateFont("GRMInd_Big",    { font = "Roboto", size = 46, weight = 900, extended = true })
 end
 
+--[[ ШРИФТЫ СОЗДАЁМ СРАЗУ, ПРИ ЗАГРУЗКЕ ФАЙЛА, а не при первом окне.
+
+     Подписи над узлами в мире (PostDrawTranslucentRenderables)
+     рисуются БЕЗ открытого окна: игрок просто подошёл к станку.
+     Раньше шрифты появлялись только из UI.Window, поэтому в мире
+     сыпалось две ошибки на каждый кадр:
+
+       'GRMInd_Head' isn't a valid font
+       draw.lua:69: attempt to perform arithmetic on local 'w'
+
+     Вторая — следствие первой: без шрифта surface.GetTextSize
+     возвращает nil, и рамка считается от nil. ]]
+UI.Fonts()
+
 -- ================================================================
 --  БАЗОВЫЕ ЭЛЕМЕНТЫ
 -- ================================================================

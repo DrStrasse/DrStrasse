@@ -89,6 +89,35 @@ _G.net.Receive = function(name, fn) RECEIVED[name] = fn or true end
 _G.net.Start = function(name) SENT[#SENT + 1] = name end
 
 -- ================================================================
+--  СЕМАНТИКА ШРИФТОВ (как в GMod)
+-- ================================================================
+--[[ Пустая заглушка surface всё принимает молча, а настоящий GMod
+     отвечает «'GRMInd_Head' isn't a valid font» и возвращает nil из
+     GetTextSize — отсюда и «arithmetic on local 'w' (a nil value)»
+     в draw.SimpleText. Поэтому шрифты учитываем, а обе ошибки
+     воспроизводим: иначе стенд пропустит обращение к шрифту,
+     которого нет. ]]
+local FONTS = {}
+_G.surface.CreateFont = function(name, data) FONTS[name] = data or {} end
+_G.surface.SetFont = function(name)
+    if not FONTS[name] then
+        error("'" .. tostring(name) .. "' isn't a valid font", 2)
+    end
+end
+_G.surface.GetTextSize = function(text)
+    local len = tostring(text or ""):len()
+    return len * 6, 14
+end
+_G.draw.SimpleText = function(text, font, x, y)
+    _G.surface.SetFont(font)               -- так делает draw.lua
+    local w = _G.surface.GetTextSize(text)
+    if w == nil then                       -- draw.lua:69
+        error("attempt to perform arithmetic on local 'w' (a nil value)", 2)
+    end
+    return w
+end
+
+-- ================================================================
 --  ЗАГРУЗЧИК, ПОВТОРЯЮЩИЙ ПОРЯДОК GMOD
 -- ================================================================
 --[[ GMod берёт файлы из lua/autorun по алфавиту, а подпапки client и
@@ -107,7 +136,13 @@ end
      в GMod так и будет. Берём их, потому что UI.Window вызывает
      GRM.UI.Track из lua/autorun/sh_00_grm_ui.lua. Подставлять вместо
      него заглушку нельзя: тогда прогон окна проверял бы сам себя. ]]
-local ROOT_FILES   = sorted("lua/autorun/sh_00_grm_*.lua lua/autorun/sh_grm_industry*.lua")
+--[[ ТОЛЬКО НУЖНЫЕ КОРНЕВЫЕ ФАЙЛЫ, а не все подряд. В репозитории
+     есть файлы с glua-синтаксисом, который обычный LuaJIT не читает
+     (например goto/::label:: в cl_grm_admin_panel.lua), — их штатный
+     sim_gmod_syntax и так отмечает. Здесь берём ровно то, от чего
+     зависят клиентские файлы индустрии: фреймворк, производительность
+     и само ядро. Порядок по-прежнему алфавитный, как у GMod. ]]
+local ROOT_FILES   = sorted("lua/autorun/sh_00_grm_*.lua lua/autorun/sh_06_grm_performance.lua lua/autorun/sh_grm_industry*.lua")
 local CLIENT_FILES = sorted("lua/autorun/client/cl_grm_industry*.lua")
 
 local function loadFile(path)
@@ -123,7 +158,8 @@ local function loadAll(clientOrder)
     GRM = nil
     package.loaded = {}
     stub.reset()
-    RECEIVED, SENT = {}, {}
+    RECEIVED, SENT, FONTS_CLEARED = {}, {}, nil
+    for k in pairs(FONTS) do FONTS[k] = nil end
     local errors = {}
     for _, path in ipairs(ROOT_FILES) do
         local good, err = loadFile(path)
@@ -269,6 +305,57 @@ ok(receiver ~= nil, "обработчик открытия окна зареги
 if receiver then
     local good, err = pcall(receiver)
     ok(good, "ОКНО СТАНКА ОТКРЫЛОСЬ БЕЗ ОШИБКИ", err)
+end
+
+-- ================================================================
+print("\n=== 7. ПОДПИСИ В МИРЕ — БЕЗ ОТКРЫТОГО ОКНА ===")
+-- ================================================================
+--[[ Шрифты создавались только в UI.Window: пока игрок не открыл ни
+     одного окна индустрии, шрифтов нет. А подписи над узлами
+     рисуются в хуке PostDrawTranslucentRenderables — игрок просто
+     подошёл к станку, ничего не открывая. На живом сервере это
+     давало две ошибки на каждый кадр подряд. ]]
+loadAll(CLIENT_FILES)
+ok(FONTS["GRMInd_Head"] ~= nil, "ШРИФТЫ ГОТОВЫ ДО ОТКРЫТИЯ ПЕРВОГО ОКНА")
+ok(FONTS["GRMInd_Small"] ~= nil, "шрифт подписи тоже готов")
+ok(FONTS["GRMInd_Title"] ~= nil, "шрифт заголовка готов")
+
+--[[ СЕТЕВЫЕ ПЕРЕМЕННЫЕ УЗЛА. В живом GMod их создаёт
+     self:NetworkVar(...) в sh_grm_industry_entities.lua, и методов
+     GetNodeLabel/GetJobStage на сущности не было бы вовсе без него.
+     Вычитываем имена из исходника: если переменную переименуют,
+     стенд скажет об этом, а не будет верить выдуманной заглушке. ]]
+local NODE_VARS = {}
+do
+    local src = read("lua/autorun/sh_grm_industry_entities.lua")
+    for vType, name in src:gmatch('NetworkVar%(%s*"(%w+)"%s*,%s*%d+%s*,%s*"(%w+)"%s*%)') do
+        NODE_VARS[name] = vType
+    end
+end
+ok(NODE_VARS.NodeLabel ~= nil, "у узла объявлена сетевая переменная NodeLabel")
+ok(NODE_VARS.JobStage ~= nil, "у узла объявлена сетевая переменная JobStage")
+ok(NODE_VARS.Progress ~= nil, "у узла объявлена сетевая переменная Progress")
+
+local VAR_DEFAULT = { String = "", Int = 0, Float = 0, Bool = false }
+
+local labelHook = stub.hooks["PostDrawTranslucentRenderables"]
+    and stub.hooks["PostDrawTranslucentRenderables"]["GRM_IndustryNodeLabels"]
+ok(labelHook ~= nil, "обработчик подписей над узлами зарегистрирован")
+if labelHook then
+    ok(GRM and GRM.Perf ~= nil, "GRM.Perf доступен (иначе подписи молча не рисуются)")
+    -- Узел рядом с игроком: попадает в радиус подписей (900).
+    local node = stub.makeEntity({ class = "grm_ind_station", pos = Vector(60, 0, 0) })
+    for name, vType in pairs(NODE_VARS) do
+        node["Get" .. name] = function() return VAR_DEFAULT[vType] end
+    end
+    node.GetNodeLabel = function() return "Печь №1" end
+    local ply = stub.makeEntity({ class = "player", isPlayer = true, pos = Vector(0, 0, 0) })
+    ply.EyePos = function() return Vector(0, 0, 64) end
+    ply.EyeAngles = function() return Angle(0, 0, 0) end
+    _G.LocalPlayer = function() return ply end
+
+    local good, err = pcall(labelHook)
+    ok(good, "ПОДПИСИ НАД УЗЛАМИ РИСУЮТСЯ БЕЗ ОШИБКИ", err)
 end
 
 -- ================================================================
