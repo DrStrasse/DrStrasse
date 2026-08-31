@@ -1121,50 +1121,30 @@ function S.OpenRadialMenu()
         local cx, cy = w * 0.5, h * 0.5
         local mx, my = gui.MousePos()
         local count = #R.items
-        R.sel = R.Pick(mx, my, cx, cy, count)
+        --[[ Отрисовка кольца — общий модуль GRM.Radial (31.08, заказ
+             владельца «во всех радиальных меню дизайн поправь»).
 
-        --[[ Затемняем ТОЛЬКО круг под меню, а не весь экран: 31.08
-             владелец уже ловил меня на подложке во весь экран в студии
-             («чё за потемнение?»). Игру должно быть видно. ]]
-        surface.SetDrawColor(8, 11, 16, 170)
-        draw.NoTexture()
-        local segs = 64
-        local poly = {}
-        for i = 0, segs do
-            local a = math.rad(i / segs * 360)
-            poly[#poly + 1] = { x = cx + math.cos(a) * R.OuterR, y = cy + math.sin(a) * R.OuterR }
+             Свой набор полигонов здесь давал сплошное кольцо без
+             разделения секторов: куда ведёт мышь, было понятно только
+             по подсветке. Теперь секторы с зазорами, как в биндере, и
+             правится это в одном месте на все меню.
+
+             Центр по-прежнему не заливаем: там модель персонажа. ]]
+        local RD = GRM.Radial
+        R.sel = RD.Pick(mx, my, cx, cy, count, R.InnerR)
+
+        local items = {}
+        for i, def in ipairs(R.items) do
+            local n = #S.Frames(def)
+            items[i] = {
+                name = def.name or def.id,
+                sub = n > 1 and (n .. " кадр.") or nil,
+                active = LocalPlayer():GetNWString("GRM_SocAnim", "") == def.id,
+            }
         end
-        surface.DrawPoly(poly)
-
-        --[[ ПОДСВЕТКА ВЫБРАННОГО СЕКТОРА.
-
-             Была залита от ЦЕНТРА до внешнего радиуса — то есть прямо
-             поверх модели персонажа. При одном пункте в категории
-             сектор к тому же занимал все 360° и круг становился
-             сплошным синим пятном: ровно то, что на скриншоте
-             владельца от 31.08.
-
-             Теперь это КОЛЬЦЕВОЙ сегмент от InnerR до OuterR: центр с
-             моделью остаётся чистым. И угол ограничен, чтобы
-             единственный пункт подсвечивал сектор, а не весь круг. ]]
-        if R.sel and count > 0 then
-            local step = math.min(360 / count, 120)
-            local from = (R.sel - 1) * (360 / count) - 90 - step * 0.5
-            local ring = {}
-            local N = 20
-            -- Внешняя дуга вперёд, внутренняя назад — получается лента.
-            for i = 0, N do
-                local a = math.rad(from + step * (i / N))
-                ring[#ring + 1] = { x = cx + math.cos(a) * R.OuterR, y = cy + math.sin(a) * R.OuterR }
-            end
-            for i = N, 0, -1 do
-                local a = math.rad(from + step * (i / N))
-                ring[#ring + 1] = { x = cx + math.cos(a) * R.InnerR, y = cy + math.sin(a) * R.InnerR }
-            end
-            surface.SetDrawColor(62, 132, 220, 105)
-            draw.NoTexture()
-            surface.DrawPoly(ring)
-        end
+        -- hub=false: центральную площадку не рисуем, её занимает модель.
+        RD.Draw(cx, cy, items, R.sel, R.InnerR, R.OuterR,
+            { labelR = R.LabelR, hub = false })
 
         ------------------------------------------------------------
         -- Модель персонажа в центре.
@@ -1241,25 +1221,9 @@ function S.OpenRadialMenu()
         end
 
         ------------------------------------------------------------
-        -- Подписи по кольцу.
+        -- Подписи по кольцу рисует общий модуль (RD.Draw выше):
+        -- своя копия здесь давала второй слой текста поверх первого.
         ------------------------------------------------------------
-        for i = 1, count do
-            local def = R.items[i]
-            local lx, ly = R.SlotPos(i, count, cx, cy, R.LabelR)
-            local on = R.sel == i
-            local active = LocalPlayer():GetNWString("GRM_SocAnim", "") == def.id
-            local col = MC.dim
-            if on then col = Color(255, 255, 255)
-            elseif active then col = Color(120, 220, 150) end
-            draw.SimpleTextOutlined(def.name or def.id, on and "GRMSoc_RingBig" or "GRMSoc_Ring",
-                lx, ly, col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 220))
-            -- Значок движения: сразу понятно, поза это или анимация.
-            if #S.Frames(def) > 1 then
-                draw.SimpleTextOutlined("▶", "GRMSoc_Sm", lx, ly + (on and 17 or 14),
-                    on and Color(240, 200, 90) or Color(150, 140, 110),
-                    TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 200))
-            end
-        end
 
         if count == 0 then
             draw.SimpleTextOutlined("В этой категории пусто", "GRMSoc_Ring", cx, cy - R.LabelR,

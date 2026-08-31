@@ -417,69 +417,42 @@ function I.OpenRadial(ent, kind)
         local cx, cy = w * 0.5, h * 0.5
         local mx, my = gui.MousePos()
         local count = #R.items
-        R.sel = R.Pick(mx, my, cx, cy, count)
 
-        -- Затемняем ТОЛЬКО круг под меню: мир должно быть видно.
-        surface.SetDrawColor(C.ring)
-        draw.NoTexture()
-        local poly = {}
-        for i = 0, 64 do
-            local a = math.rad(i / 64 * 360)
-            poly[#poly + 1] = { x = cx + math.cos(a) * R.OuterR, y = cy + math.sin(a) * R.OuterR }
-        end
-        surface.DrawPoly(poly)
+        --[[ Отрисовка — общий модуль GRM.Radial (31.08, заказ владельца
+             «во всех радиальных меню дизайн поправь»). Свой набор
+             полигонов здесь был четвёртой копией одного и того же кода
+             и выглядел иначе, чем биндер. ]]
+        local RD = GRM.Radial
+        R.sel = RD.Pick(mx, my, cx, cy, count, R.InnerR)
 
-        -- Подсветка сектора: КОЛЬЦЕВАЯ, чтобы не заливать центр.
-        if R.sel then
-            local full = 360 / count
-            local step = math.min(full, 120)
-            local from = (R.sel - 1) * full - 90 - step * 0.5
-            local ring = {}
-            for i = 0, 20 do
-                local a = math.rad(from + step * (i / 20))
-                ring[#ring + 1] = { x = cx + math.cos(a) * R.OuterR, y = cy + math.sin(a) * R.OuterR }
-            end
-            for i = 20, 0, -1 do
-                local a = math.rad(from + step * (i / 20))
-                ring[#ring + 1] = { x = cx + math.cos(a) * R.InnerR, y = cy + math.sin(a) * R.InnerR }
-            end
-            surface.SetDrawColor(C.sector)
-            draw.NoTexture()
-            surface.DrawPoly(ring)
-        end
-
-        -- Центр: что это за объект и заперт ли он.
         local name = I.TargetName(R.ent, R.kind)
         local owner, locked = I.TargetSub(R.ent, R.kind)
-        draw.SimpleText(name, "GRMInt_Name", cx, cy - 16, C.text,
-            TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        draw.SimpleText(locked and "ЗАПЕРТО" or "ОТКРЫТО", "GRMInt_Small", cx, cy + 6,
-            locked and C.bad or C.good, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        if owner ~= "" then
-            draw.SimpleText(owner, "GRMInt_Small", cx, cy + 26, C.dim,
-                TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        end
 
-        -- Пункты по кольцу.
+        -- Пункты: подпись + причина отказа прямо под ней.
+        local items = {}
         for i, act in ipairs(R.items) do
-            local lx, ly = R.SlotPos(i, count, cx, cy, R.LabelR)
-            local on = (R.sel == i)
-            local col = C.text
-            if act.enabled == false then col = Color(150, 120, 120)
-            elseif on then col = Color(255, 255, 255)
-            elseif act.accent == "good" then col = C.good
-            elseif act.accent == "warn" then col = C.warn end
-            draw.SimpleTextOutlined(act.name, "GRMInt_Ring", lx, ly, col,
-                TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, C.shadow)
-            -- Почему пункт недоступен — видно сразу, без гадания.
-            if act.enabled == false and on and act.why then
-                draw.SimpleTextOutlined(act.why, "GRMInt_Small", cx, cy + R.OuterR + 18,
-                    C.bad, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, C.shadow)
-            end
+            items[i] = {
+                name = act.name,
+                sub = (act.enabled == false) and act.why or nil,
+                enabled = act.enabled,
+                accent = act.accent == "good" and "good" or nil,
+            }
+        end
+        RD.Draw(cx, cy, items, R.sel, R.InnerR, R.OuterR, { labelR = R.LabelR })
+
+        -- Центр: что за объект и заперт ли он.
+        draw.SimpleText(name, "GRMInt_Name", cx, cy - 14, RD.Col.text,
+            TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText(locked and "ЗАПЕРТО" or "ОТКРЫТО", "GRMInt_Small", cx, cy + 8,
+            locked and RD.Col.bad or RD.Col.good, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        if owner ~= "" then
+            draw.SimpleText(GRM.Utf8Ellipsis(owner, 22), "GRMInt_Small", cx, cy + 28,
+                RD.Col.dimText, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
 
         draw.SimpleTextOutlined("отпустите E — применить  ·  ПКМ — отмена", "GRMInt_Small",
-            cx, cy + R.OuterR + 40, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, C.shadow)
+            cx, cy + R.OuterR + 26, RD.Col.dimText,
+            TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, RD.Col.shadow)
     end
 
     f.OnMousePressed = function(_, key)

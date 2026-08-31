@@ -278,8 +278,22 @@ do
     --[[ 31.08 владелец уже ловил меня на подложке во весь экран в
          студии («чё за потемнение?»). Здесь затемняться должен ТОЛЬКО
          круг под меню. ]]
-    ok(paint and paint:find("surface.DrawPoly", 1, true) ~= nil,
-        "затемнение рисуется многоугольником — только круг под меню")
+    --[[ Отрисовка кольца 31.08 переехала в общий модуль GRM.Radial
+         (заказ владельца «во всех радиальных меню дизайн поправь»), и
+         своей DrawPoly здесь больше нет. Проверяем то же по сути:
+         затемнение идёт КОЛЬЦОМ через общий модуль, а не заливкой
+         всего экрана. ]]
+    ok(paint and paint:find("RD.Draw", 1, true) ~= nil,
+        "кольцо рисуется общим модулем")
+    ok(src:find("function RD.Backdrop", 1, true) == nil,
+        "своей реализации подложки в модуле анимаций нет")
+    local rad = io.open("lua/autorun/client/cl_grm_radial.lua", "rb")
+    local radSrc = rad and rad:read("*a") or ""
+    if rad then rad:close() end
+    ok(radSrc:find("function RD.Backdrop", 1, true) ~= nil,
+        "затемнение — кольцом под секторами, а не на весь экран")
+    ok(radSrc:find("RD.Sector(cx, cy, 0, 360, r0, r1", 1, true) ~= nil,
+        "подложка построена как кольцо: центр остаётся чистым")
     local fullFill = paint and paint:match("draw%.RoundedBox%(%s*%d+%s*,%s*0%s*,%s*0%s*,%s*w%s*,%s*h")
     ok(fullFill == nil, "НЕТ заливки во весь экран — игру видно",
         fullFill)
