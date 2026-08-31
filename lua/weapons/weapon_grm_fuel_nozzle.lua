@@ -32,25 +32,49 @@ local function pumpOf(wep)
     return IsValid(wep) and wep.GetNWEntity and wep:GetNWEntity("GRM_Pump") or NULL
 end
 
+--[[ ГОРЛОВИНА БЕРЁТСЯ У МАШИНЫ (жалоба владельца 31.08).
+
+     Раньше здесь была своя копия формулы из ядра: 12 юнитов от края
+     габарита, 8 от правого борта, 35% высоты. simfphys отдаёт настоящую
+     точку — ent:GetFuelPos(). Подсказка «поднеси к горловине бака (зад
+     крыла)» ориентировала на точку, которой у половины машин нет. ]]
 local function tankPos(veh)
     if not IsValid(veh) then return vector_origin end
+    if GRM.Fuel and GRM.Fuel.FillPort then
+        local pos = GRM.Fuel.FillPort(veh)
+        if isvector(pos) then return pos end
+    end
     local mn, mx = veh:OBBMins(), veh:OBBMaxs()
     return veh:LocalToWorld(Vector(mn.x + 12, mx.y - 8, (mn.z + mx.z) * 0.35))
+end
+
+--[[ РАДИУС ПОДХОДА СЧИТАЕМ ОТ ВЫСОТЫ МАШИНЫ.
+     Была константа 90/110/130 юнитов. У грузовика горловина высоко —
+     игрок до неё физически не дотянется, и «вставить пистолет» не
+     срабатывало ни с земли, ни с подножки. ]]
+local function reach(veh)
+    if not IsValid(veh) then return 90 end
+    local mn, mx = veh:OBBMins(), veh:OBBMaxs()
+    return math.Clamp((mx.z - mn.z) * 0.9 + 60, 90, 220)
 end
 
 function SWEP:FindVehicle()
     local ply = self:GetOwner()
     if not IsValid(ply) then return end
-    local tr = ply:GetEyeTrace()
-    local e = tr.Entity
     local VK = GRM.VehicleKeys or _G.VK
-    if IsValid(e) and VK and VK.IsVehicle and VK.IsVehicle(e) then
-        if tr.HitPos:DistToSqr(tankPos(e)) < 90 * 90 then return e end
-        if ply:GetPos():DistToSqr(tankPos(e)) < 110 * 110 then return e end
+    local function isVeh(e) return IsValid(e) and VK and VK.IsVehicle and VK.IsVehicle(e) end
+
+    -- 1) смотрим на машину, и цель рядом с горловиной
+    local tr = ply:GetEyeTrace()
+    if isVeh(tr.Entity) then
+        local r = reach(tr.Entity)
+        if tr.HitPos:DistToSqr(tankPos(tr.Entity)) < r * r then return tr.Entity end
     end
-    for _, ent in ipairs(ents.FindInSphere(ply:GetPos(), 140)) do
-        if IsValid(ent) and VK and VK.IsVehicle and VK.IsVehicle(ent) then
-            if ply:GetPos():DistToSqr(tankPos(ent)) < 130 * 130 then return ent end
+    -- 2) стоим у горловины вплотную
+    for _, ent in ipairs(ents.FindInSphere(ply:GetPos(), 220)) do
+        if isVeh(ent) then
+            local r = reach(ent) + 30
+            if ply:GetPos():DistToSqr(tankPos(ent)) < r * r then return ent end
         end
     end
 end
@@ -70,10 +94,11 @@ function SWEP:PrimaryAttack()
     end
     local veh = self:FindVehicle()
     if not IsValid(veh) then
-        if GRM.Notify then GRM.Notify(ply, "Поднеси пистолет к горловине бака (зад крыла).", 255, 180, 80) end
+        if GRM.Notify then GRM.Notify(ply, "Поднеси пистолет к горловине бака — она подсвечивается.", 255, 180, 80) end
         return
     end
-    if ply:GetPos():DistToSqr(pump:GetPos()) > 420 * 420 then
+    local hoseLen = (GRM.Fuel and GRM.Fuel.HoseLength) or 360
+    if ply:GetPos():DistToSqr(pump:GetPos()) > hoseLen * hoseLen then
         if GRM.Notify then GRM.Notify(ply, "Шланг не дотягивается.", 255, 160, 80) end
         return
     end

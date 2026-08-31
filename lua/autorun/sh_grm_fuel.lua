@@ -10,6 +10,10 @@ F.PumpFile = "grm_fuel_pumps_" .. string.lower(game.GetMap() or "unknown") .. ".
 F.PricePerLiter = 8
 F.PumpPrice = 15000
 F.StationRadius = 700
+--[[ ДЛИНА ШЛАНГА (решение владельца 31.08: одна на все колонки).
+     Раньше радиус был зашит числами 420 и 430 в двух местах, и шланг
+     «не дотягивался» сообщением, а не физически. ]]
+F.HoseLength = 360
 F.Types = { petrol = "Бензин", diesel = "Дизель", electric = "Заряд" }
 
 function F.UID(ent)
@@ -75,8 +79,109 @@ function F.RootVehicle(ent)
     return nil
 end
 
+--[[ ТИПЫ ТОПЛИВА SIMFPHYS.
+     Константы определяет база simfphys (simfphys/base_functions.lua).
+     Дублируем числами: база может быть не загружена, а сравнивать
+     всё равно надо. ]]
+F.FUELTYPE = { NONE = 0, PETROL = 1, DIESEL = 2, ELECTRIC = 3 }
+
+--- Есть ли у машины собственный бак (simfphys/LVS отдают его сами).
+function F.HasOwnTank(ent)
+    return IsValid(ent) and isfunction(ent.GetMaxFuel) and isfunction(ent.SetFuel)
+end
+
+--[[ ГОРЛОВИНА БАКА (жалоба владельца 31.08: шланг крепится непонятно куда).
+
+     Раньше точка считалась по габариту: 12 юнитов от края, 8 от правого
+     борта, 35% высоты. У настоящих машин горловина задана автором
+     конверсии и разбросана по всем трём осям, включая знак Y:
+
+         Vector(17.64, -14.55, 30.06)
+         Vector(32.82, -78.31, 81.89)
+         Vector(-61.39,  49.54, 15.79)   -- дизель
+
+     Догадкой по габариту в неё не попасть: отсюда «пистолет не находит
+     машину» и шланг, тянущийся в пустоту. simfphys отдаёт точку сам:
+     ent:GetFuelPos() = LocalToWorld(GetFuelPortPosition()).
+
+     known=false — когда машина горловины не знает: база в этом случае
+     ставит Vector(0,0,0), то есть origin. Тогда считаем по габариту,
+     как раньше, но помечаем, что это догадка. ]]
+function F.FillPort(ent)
+    if not IsValid(ent) then return vector_origin, Vector(0, 0, 1), false end
+    ent = F.RootVehicle(ent) or ent
+    local mn, mx = ent:OBBMins(), ent:OBBMaxs()
+    local pos, known = nil, false
+
+    if isfunction(ent.GetFuelPos) then
+        local ok, got = pcall(function() return ent:GetFuelPos() end)
+        if ok and isvector(got) then
+            local lp = ent:WorldToLocal(got)
+            local hollow = math.abs(lp.x) < 0.5 and math.abs(lp.y) < 0.5 and math.abs(lp.z) < 0.5
+            local inside = lp.x > mn.x - 24 and lp.x < mx.x + 24
+                       and lp.y > mn.y - 24 and lp.y < mx.y + 24
+                       and lp.z > mn.z - 24 and lp.z < mx.z + 24
+            if not hollow and inside then pos, known = got, true end
+        end
+    end
+
+    if not known then
+        pos = ent:LocalToWorld(Vector(mn.x + 12, mx.y - 8, (mn.z + mx.z) * 0.35))
+    end
+
+    -- Нормаль: наружу от корпуса. Считаем трассировкой, а не «вектором
+    -- от центра», чтобы знак/шланг не уплывал внутрь кузова на машинах
+    -- со смещённым origin.
+    local center = ent:LocalToWorld((mn + mx) * 0.5)
+    local dir = Vector(pos.x - center.x, pos.y - center.y, 0)
+    if dir:Length() < 1 then dir = Vector(ent:GetForward().x, ent:GetForward().y, 0) end
+    dir.z = 0
+    if dir:Length() < 0.05 then dir = Vector(1, 0, 0) end
+    dir:Normalize()
+
+    local normal = dir
+    if util and isfunction(util.TraceLine) then
+        local ok, tr = pcall(function()
+            return util.TraceLine({
+                start = pos + dir * 48,
+                endpos = pos - dir * 24,
+                filter = function(e) return e ~= ent end,
+                mask = MASK_SOLID,
+            })
+        end)
+        -- Луч идёт ВДОЛЬ -dir, наружная нормаль — ВДОЛЬ dir.
+        if ok and istable(tr) and tr.Hit and isvector(tr.HitNormal)
+            and tr.HitNormal:Length() > 0.2 then
+            local n = Vector(tr.HitNormal.x, tr.HitNormal.y, tr.HitNormal.z)
+            n:Normalize()
+            if n:Dot(dir) > 0.2 then normal = n end
+        end
+    end
+    return pos, normal, known
+end
+
+--- Точка горловины (оставлено для совместимости: раньше так называлась).
+function F.TankWorld(ent)
+    local pos = F.FillPort(ent)
+    return pos
+end
+
 function F.GuessType(ent)
     if not IsValid(ent) then return "petrol" end
+    --[[ ТИП БЕРЁМ У МАШИНЫ. Раньше угадывали по подстрокам в имени
+         класса и модели (truck, kamaz, tesla...): у simfphys тип задан
+         числом и проставлен в сеть. Угадывание давало ложные отказы
+         «Не тот тип» на машине, которая по данным — бензин. ]]
+    if isfunction(ent.GetFuelType) then
+        local ok, got = pcall(function() return ent:GetFuelType() end)
+        if ok then
+            local n = tonumber(got)
+            local T = F.FUELTYPE or {}
+            if n == T.DIESEL then return "diesel" end
+            if n == T.ELECTRIC then return "electric" end
+            if n == T.PETROL then return "petrol" end
+        end
+    end
     local cls = string.lower(ent:GetClass() or "")
     local mdl = string.lower(ent:GetModel() or "")
     if string.find(cls, "electric") or string.find(mdl, "tesla") then return "electric" end
@@ -85,7 +190,16 @@ function F.GuessType(ent)
     return "petrol"
 end
 
-function F.TankSize()
+--[[ ОБЪЁМ БАКА БЕРЁМ У МАШИНЫ.
+     Была константа 100 литров на всё: у simfphys свой FuelTankSize на
+     модель (65 по умолчанию), и GRM заливал больше, чем влезает.
+     Фолбэк 100 остаётся для ванили, у которой своего бака нет. ]]
+function F.TankSize(ent)
+    if IsValid(ent) and isfunction(ent.GetMaxFuel) then
+        local ok, got = pcall(function() return ent:GetMaxFuel() end)
+        local n = tonumber(got)
+        if ok and n and n > 0 then return n end
+    end
     return 100
 end
 
@@ -204,6 +318,31 @@ if SERVER then
         return F.Data[uid]
     end
 
+    --[[ НАЛОЖЕНИЕ НА БАК SIMFPHYS (решение владельца 31.08: «свой учёт
+         поверх»).
+
+         Значение храним САМИ — администрация может поправить литраж
+         руками, и бак переживает рестарт и выдачу из гаража. Но у живой
+         машины оно обязано совпадать с её собственным баком: пока
+         учёт вёлся раздельно, HUD показывал одно, а simfphys считал
+         другое — машина не ехала на полном GRM-баке и не глохла
+         на пустом.
+
+         Правило: один раз при первом обращении отдаём сохранённое
+         значение машине; дальше ЗЕРКАЛИМ её бак к себе, чтобы расход
+         на ходу попадал в учёт. ]]
+    local function mirrorTank(ent, rec, max)
+        if not F.HasOwnTank(ent) then return end
+        if not ent.GRMFuelRestored then
+            pcall(function() ent:SetFuel(math.Clamp(tonumber(rec.liters) or 0, 0, max)) end)
+            ent.GRMFuelRestored = true
+            return
+        end
+        local ok, got = pcall(function() return ent:GetFuel() end)
+        local n = tonumber(got)
+        if ok and n then rec.liters = math.Clamp(n, 0, max) end
+    end
+
     function F.ApplyNW(ent)
         if not IsValid(ent) then return end
         ent = F.RootVehicle(ent) or ent
@@ -211,10 +350,13 @@ if SERVER then
         local uid = F.UID(ent)
         if uid == "" then return end
         local rec = F.Get(uid)
+        local max = F.TankSize(ent)
         rec.typ = rec.typ or F.GuessType(ent)
-        rec.liters = math.Clamp(tonumber(rec.liters) or 40, 0, F.TankSize())
+        rec.liters = math.Clamp(tonumber(rec.liters) or 40, 0, max)
+        mirrorTank(ent, rec, max)
+        rec.liters = math.Clamp(tonumber(rec.liters) or 0, 0, max)
         ent:SetNWFloat("GRM_Fuel", rec.liters)
-        ent:SetNWFloat("GRM_FuelMax", F.TankSize())
+        ent:SetNWFloat("GRM_FuelMax", max)
         ent:SetNWString("GRM_FuelType", rec.typ)
         ent:SetNWBool("GRM_OutOfFuel", rec.liters <= 0.05)
     end
@@ -225,9 +367,13 @@ if SERVER then
         F.ApplyNW(ent)
         local rec = F.Get(F.UID(ent))
         if typ and rec.typ ~= typ then return 0, "wrong" end
-        local max = F.TankSize()
+        local max = F.TankSize(ent)
         local add = math.min(max - rec.liters, math.max(0, tonumber(amount) or 0))
         rec.liters = rec.liters + add
+        -- залитое сразу отдаём и собственному баку машины
+        if F.HasOwnTank(ent) then
+            pcall(function() ent:SetFuel(rec.liters) end)
+        end
         F.ApplyNW(ent)
         F.Save()
         return add
@@ -256,12 +402,43 @@ if SERVER then
         pump.GRMHoseDummy = nil
     end
 
-    function F.AttachHose(pump)
+    --[[ ШЛАНГ (жалоба владельца 31.08: «нормальное крепление шлангов
+         к баку»).
+
+         Обе функции были ЗАГЛУШКАМИ: и AttachHose, и HoseToTank только
+         удаляли веревку. Никакой привязки не существовало — весь
+         «шланг с провисом» из шапки файла был клиентским
+         render.DrawBeam, который не знал ни про длину, ни про
+         препятствия, ни про то, где у машины горловина.
+
+         Теперь шланг — настоящая веревка от колонки к машине, с
+         заранее заданной длиной. Провес рисуется на клиенте поверх,
+         но конец берётся у веревки, а не вычисляется заново. ]]
+    function F.AttachHose(pump, target, lpos)
+        if not (IsValid(pump) and IsValid(target)) then return false end
         F.ClearHose(pump)
+        if not (constraint and isfunction(constraint.Rope)) then return false end
+        local from = Vector(14, -10, 22)
+        lpos = isvector(lpos) and lpos or vector_origin
+        local span = pump:LocalToWorld(from):Distance(target:LocalToWorld(lpos))
+        local slack = math.max(24, (F.HoseLength or 360) - span)
+        if slack <= 0 then return false end   -- шланг физически не дотягивается
+        pcall(function()
+            constraint.Rope(pump, target, 0, 0, from, lpos,
+                span, slack, 0, 1.6, "cable/cable2", false)
+        end)
+        pump.GRMHoseTarget = target
+        return true
     end
 
-    function F.HoseToTank(pump)
-        F.ClearHose(pump)
+    --- Дотянуться шлангом от колонки до горловины бака машины.
+    function F.HoseToTank(pump, veh)
+        if not (IsValid(pump) and IsValid(veh)) then return false end
+        local pos = F.FillPort(veh)
+        local lpos = veh:WorldToLocal(pos)
+        local span = pump:LocalToWorld(Vector(14, -10, 22)):Distance(pos)
+        if span > (F.HoseLength or 360) then return false end
+        return F.AttachHose(pump, veh, lpos)
     end
 
     function F.StopNozzle(wep, msg)
@@ -327,8 +504,9 @@ if SERVER then
         pump:SetSessionL(0)
         pump:SetSessionPay(0)
         pump:SetTankNow(veh:GetNWFloat("GRM_Fuel", 0))
-        pump:SetTankMax(veh:GetNWFloat("GRM_FuelMax", F.TankSize()))
-        F.ClearHose(pump)
+        pump:SetTankMax(veh:GetNWFloat("GRM_FuelMax", F.TankSize(veh)))
+        -- Шланг крепим к горловине бака, а не «куда-то в машину».
+        F.HoseToTank(pump, veh)
         pump:EmitSound("ambient/water/leak_1.wav", 50, 95)
         local key = "GRM_Nozzle_" .. wep:EntIndex()
         timer.Create(key, 0.35, 0, function()
@@ -337,11 +515,12 @@ if SERVER then
                 return
             end
             if not wep:GetNWBool("Inserted") then return end
-            if ply:GetPos():DistToSqr(pump:GetPos()) > 430 * 430 then
+            if ply:GetPos():DistToSqr(pump:GetPos()) > (F.HoseLength or 360) * (F.HoseLength or 360) then
                 F.StopNozzle(wep, "Шланг натянулся — пистолет вырвало.")
                 return
             end
-            if ply:GetPos():DistToSqr(F.TankWorld(veh)) > 150 * 150 then
+            local portPos = F.FillPort(veh)
+            if ply:GetPos():DistToSqr(portPos) > 190 * 190 then
                 F.StopNozzle(wep, "Отошёл от бака.")
                 return
             end
