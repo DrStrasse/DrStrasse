@@ -23,7 +23,9 @@ local src = read("lua/autorun/sh_grm_doors.lua")
 -- админ» проверяем и там.
 local menu = read("lua/autorun/client/cl_grm_doors_menu.lua")
 local acc = read("lua/autorun/sh_grm_doors_access.lua")
-local key = read("lua/weapons/ds_key_swep/shared.lua")
+-- Свеп ds_key_swep удалён 31.08; меню двери открывает пункт
+-- «Управление» в модуле взаимодействия.
+local key = read("lua/autorun/sh_grm_interact.lua")
 
 local fails = 0
 local function check(name, cond, extra)
@@ -45,7 +47,7 @@ check("set_faction_owner режет не-админа", has(src, "Только �
 check("toggle_ownable режет не-админа", has(src, "Только суперадмин может менять статус приватизации."))
 check("вкладка Администрирование только админу",
     has(menu, "local isAdmin = (d.is_admin == true) or (canAdmin == true)") and has(menu, 'if isAdmin then'))
-check("R ключей открывает OpenDoorMenu", has(key, "GRM.Doors.OpenDoorMenu"))
+check("пункт «Управление» открывает OpenDoorMenu", has(key, "D.OpenDoorMenu"))
 check("AM.CanManage остался для /door_access", has(acc, "function AM.CanManage"))
 
 print("\n=== РАНТАЙМ CanAdminDoors ===")

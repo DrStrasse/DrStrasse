@@ -796,7 +796,6 @@ local function weaponAllows(ply)
     if not IsValid(wep) then return true end
     local cls = wep:GetClass()
     return cls == "weapon_fists" or cls == "grm_keyring"
-        or cls == "ds_key_swep" or cls == "vehicle_keys_swep"
 end
 
 hook.Add("StartCommand", "GRM_Interact_Use", function(ply, cmd)

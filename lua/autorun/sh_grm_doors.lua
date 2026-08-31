@@ -2609,7 +2609,7 @@ if CLIENT then
         if not IsValid(ply) or not ply:Alive() then return end
         local active = ply:GetActiveWeapon()
         local acls = IsValid(active) and active:GetClass() or ""
-        if acls == "ds_key_swep" or acls == "grm_keyring" then return end
+        if acls == "grm_keyring" then return end
         -- Общий трейс из глаз (GRM.Perf): один на кадр на все HUD-модули,
         -- вместо собственного GetEyeTrace 60 раз в секунду в каждом.
         local tr = (GRM.Perf and GRM.Perf.EyeTrace) and GRM.Perf.EyeTrace(ply, 0.05) or ply:GetEyeTrace()

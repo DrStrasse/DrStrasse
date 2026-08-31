@@ -23,7 +23,9 @@ VK.SND = VK.SND or {
 }
 
 VK.KEY_CONFIG = VK.KEY_CONFIG or {
-    SWEP_CLASS = "vehicle_keys_swep",
+    -- Единая связка: старые ds_key_swep / vehicle_keys_swep удалены
+    -- 31.08 по заказу владельца.
+    SWEP_CLASS = "grm_keyring",
     AUTO_GIVE_SWEP = true,
     AUTO_STRIP_SWEP = true,
     DEFAULT_COLOR = { r = 100, g = 200, b = 255 },

@@ -10,7 +10,6 @@ if CLIENT then return end
 
 AddCSLuaFile("autorun/sh_vehicle_keys.lua")
 AddCSLuaFile("autorun/client/cl_vehicle_hud.lua")
-AddCSLuaFile("weapons/vehicle_keys_swep.lua")
 include("autorun/sh_vehicle_keys.lua")
 
 VK = VK or {}
@@ -285,14 +284,34 @@ function VK.PlayerHasFactionVehicleAccess(ply)
     return false
 end
 
+--[[ СНЯТИЕ УДАЛЁННЫХ СВЕПОВ (31.08, заказ владельца «удали старые
+     свепы ключей»).
+
+     Файлы ds_key_swep и vehicle_keys_swep удалены, но у игроков они
+     уже лежат в слотах с прошлых заходов. Класса больше нет — движок
+     оставит «фантомное» оружие, которое нельзя ни достать, ни
+     выбросить, и оно будет висеть в инвентаре вечно.
+
+     Поэтому снимаем их при первом же обновлении ключей: взамен игрок
+     тут же получит новую связку, ниже по этой функции. ]]
+local LEGACY_KEY_SWEPS = { "ds_key_swep", "vehicle_keys_swep" }
+
+function VK.StripLegacySweps(ply)
+    if not IsValid(ply) then return end
+    for _, cls in ipairs(LEGACY_KEY_SWEPS) do
+        if ply:HasWeapon(cls) then ply:StripWeapon(cls) end
+    end
+end
+
 function VK.UpdateKeySwep(ply)
     if not IsValid(ply) then return end
     migrateLegacyRing(ply)
+    VK.StripLegacySweps(ply)
 
     local config = VK.KEY_CONFIG or {}
     local ring = VK.Cache.rings[playerSteamID(ply)] or {}
     local shouldHaveSWEP = #ring > 0 or VK.PlayerHasFactionVehicleAccess(ply)
-    local swepClass = config.SWEP_CLASS or "vehicle_keys_swep"
+    local swepClass = config.SWEP_CLASS or "grm_keyring"
 
     if shouldHaveSWEP then
         if config.AUTO_GIVE_SWEP ~= false and not ply:HasWeapon(swepClass) then

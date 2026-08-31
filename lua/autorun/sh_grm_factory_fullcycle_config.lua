@@ -131,7 +131,7 @@ FC.Config = FC.Config or {
             weapon_gravgun = true,
             gmod_tool = true,
             gmod_camera = true,
-            vehicle_keys_swep = true,
+            grm_keyring = true,
         },
     },
 

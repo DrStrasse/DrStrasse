@@ -10,7 +10,10 @@ end
 local function read(p) local f = assert(io.open(p, "rb")) local s = f:read("*a") f:close() return s end
 local core = read("lua/autorun/sh_grm_doors.lua")
 local access = read("lua/autorun/sh_grm_doors_access.lua")
-local keys = read("lua/weapons/ds_key_swep/shared.lua")
+--[[ Свеп ds_key_swep удалён 31.08: двери и транспорт обслуживает
+     единый модуль взаимодействия (плюс связка grm_keyring как предмет).
+     Право на замок спрашивается там же, поэтому и проверяем его. ]]
+local keys = read("lua/autorun/sh_grm_interact.lua")
 local function has(s, n) return s:find(n, 1, true) ~= nil end
 
 print("\n=== 1. КАТЕГОРИИ ВИДЯТ ФРАКЦИЮ ИГРОКА ===")
@@ -25,7 +28,7 @@ ok(has(core, "local isCat = rec.owner_type == \"category\" and fac and actor.cat
     "категорийная дверь даёт ключ своим")
 
 print("\n=== 2. КЛЮЧИ РАБОТАЮТ С КАТЕГОРИЯМИ ===")
-ok(has(keys, "GRM.Doors.CanToggleLock"), "ключи спрашивают право именно на замок")
+ok(has(keys, "D.CanToggleLock"), "ключи спрашивают право именно на замок")
 ok(has(core, "function D.CanToggleLock"), "право на замок считается в ядре")
 ok(has(core, 'if istable(cat) and cat.lockAdminOnly == true then'),
     "флаг «замком управляет только администрация» учитывается")

@@ -412,6 +412,39 @@ do
     ok(swep:find("GetAimedVehicle", 1, true) == nil,
         "своего поиска цели в свепе нет")
 
+    --[[ СТАРЫЕ СВЕПЫ УДАЛЕНЫ (31.08). Проверяем, что файлов правда нет:
+         пока они лежат в lua/weapons, движок их регистрирует, и в
+         спавнлисте остаются два лишних предмета с той же ролью. ]]
+    local function exists(path)
+        local fh = io.open(path, "rb")
+        if fh then fh:close() return true end
+        return false
+    end
+    ok(not exists("lua/weapons/ds_key_swep/shared.lua"),
+        "файл дверных ключей удалён")
+    ok(not exists("lua/weapons/vehicle_keys_swep.lua"),
+        "файл ключей транспорта удалён")
+
+    --[[ Ссылок на удалённые классы в рабочем коде быть не должно:
+         AddCSLuaFile на несуществующий файл — ошибка при старте, а
+         Give удалённого класса молча ничего не даёт. ]]
+    local vkSv = readf("lua/autorun/server/sv_vehicle_keys.lua")
+    ok(vkSv:find('AddCSLuaFile("weapons/vehicle_keys_swep.lua")', 1, true) == nil,
+        "нет AddCSLuaFile на удалённый файл")
+    ok(vkSv:find('config.SWEP_CLASS or "grm_keyring"', 1, true) ~= nil,
+        "автовыдача даёт новую связку")
+
+    -- Уже выданные старые свепы снимаются с рук.
+    ok(vkSv:find("function VK.StripLegacySweps", 1, true) ~= nil,
+        "старые свепы снимаются у игроков, а не висят фантомами")
+    local upd = vkSv:match("function VK%.UpdateKeySwep%(ply%).-\nend")
+    ok(upd and upd:find("VK.StripLegacySweps(ply)", 1, true) ~= nil,
+        "снятие вызывается при обновлении ключей")
+
+    local vkSh = readf("lua/autorun/sh_vehicle_keys.lua")
+    ok(vkSh:find('SWEP_CLASS = "grm_keyring"', 1, true) ~= nil,
+        "конфиг ключей указывает на связку")
+
     -- В продаже новый предмет, старый убран.
     local vend = readf("lua/autorun/sh_grm_vendor.lua")
     ok(vend:find('["grm_keyring"]', 1, true) ~= nil, "связка продаётся")
