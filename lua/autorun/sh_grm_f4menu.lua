@@ -73,6 +73,64 @@ local function block(parent, h, title)
     return b
 end
 
+--[[ ЕДИНАЯ СТРОКА БИНДА (заказ владельца 31.08: «само F4 приведи в
+     порядок в плане биндов кнопок, единообразия размеров и т.д.»).
+
+     Было: каждый бинд верстался вручную своими координатами. Замок
+     транспорта — подпись шириной 220, поле на X=240; соц.анимации —
+     подпись 180, поле на X=160. Размеры и отступы не совпадали, при
+     добавлении третьего бинда рассинхрон стал бы только заметнее.
+
+     Стало: одна функция на все бинды. Подпись, поле выбора клавиши и
+     кнопка сброса — всегда одной ширины и на одной сетке. Новый бинд
+     добавляется одной строкой и автоматически выглядит как остальные.
+
+     Возвращает саму строку, чтобы вызывающий мог дописать пояснение. ]]
+local BIND_ROW_H = 34
+local BIND_LABEL_W = 250
+local BIND_FIELD_W = 150
+local BIND_RESET_W = 92
+
+local function bindRow(parent, y, label, cvar, default, hint)
+    default = math.floor(tonumber(default) or 0)
+
+    local row = vgui.Create("DPanel", parent)
+    row:SetPos(14, y)
+    row:SetSize(BIND_LABEL_W + BIND_FIELD_W + BIND_RESET_W + 16, BIND_ROW_H)
+    row:SetPaintBackground(false)
+    --[[ Ширина считается от содержимого, а не от размера блока. Блок
+         докается (Dock(TOP)), и на момент создания строки его ширина
+         ещё не посчитана — вышло бы 0 или значение по умолчанию. ]]
+
+    local lbl = vgui.Create("DLabel", row)
+    lbl:SetPos(0, 0) lbl:SetSize(BIND_LABEL_W, BIND_ROW_H)
+    lbl:SetFont("GRMF4_Normal") lbl:SetTextColor(C.text)
+    lbl:SetText(label)
+    lbl:SetContentAlignment(4)
+    if hint then lbl:SetTooltip(hint) end
+
+    local binder = vgui.Create("DBinder", row)
+    binder:SetPos(BIND_LABEL_W, 3)
+    binder:SetSize(BIND_FIELD_W, BIND_ROW_H - 6)
+    binder:SetValue(math.Clamp(math.floor(GetConVarNumber(cvar) or default), 0, 159))
+    binder.OnChange = function(_, num)
+        RunConsoleCommand(cvar, tostring(math.floor(tonumber(num) or default)))
+    end
+
+    --[[ Сброс нужен потому, что DBinder не умеет снимать назначение:
+         поле ждёт нажатия клавиши, а «никакой клавиши» с него не
+         снять. Без кнопки игрок не мог бы отключить бинд обратно. ]]
+    local reset = mkBtn(row, "Сбросить", Color(70, 78, 96))
+    reset:SetPos(BIND_LABEL_W + BIND_FIELD_W + 8, 3)
+    reset:SetSize(BIND_RESET_W, BIND_ROW_H - 6)
+    reset.DoClick = function()
+        RunConsoleCommand(cvar, tostring(default))
+        if IsValid(binder) then binder:SetValue(default) end
+    end
+
+    return row
+end
+
 local function infoRow(parent, label, value, col)
     local r = vgui.Create("DPanel", parent)
     r:Dock(TOP) r:SetTall(24) r:DockMargin(10, 2, 10, 0)
@@ -560,36 +618,33 @@ local function buildSettingsTab(sc)
     note:SetText("Стандарт RPDesc — 200 юнитов (~5 метров). Настройки хранятся на вашем ПК (garrysmod/cfg).")
     note:SetWrap(true) note:SetAutoStretchVertical(true)
 
-    local bv = block(sc, 110, "Замок транспорта:")
-    local hintV = vgui.Create("DLabel", bv)
-    hintV:SetPos(14, 28) hintV:SetSize(720, 20)
-    hintV:SetFont("GRMF4_Normal") hintV:SetTextColor(C.dim)
-    hintV:SetText("Для личного и фракционного авто. В салоне не работает. Смотрите на машину снаружи.")
-    local bindVL = vgui.Create("DLabel", bv)
-    bindVL:SetPos(14, 62) bindVL:SetSize(220, 22)
-    bindVL:SetFont("GRMF4_Normal") bindVL:SetTextColor(C.text)
-    bindVL:SetText("Клавиша замок / открыть:")
-    local bindV = vgui.Create("DBinder", bv)
-    bindV:SetPos(240, 58) bindV:SetSize(140, 28)
-    bindV:SetValue(math.Clamp(math.floor(GetConVarNumber("grm_cl_vehlock_key") or 0), 0, 159))
-    bindV.OnChange = function(_, num)
-        RunConsoleCommand("grm_cl_vehlock_key", tostring(math.floor(tonumber(num) or 0)))
-    end
+    --[[ ВСЕ КЛАВИШИ В ОДНОМ БЛОКЕ.
 
-    local ba = block(sc, 110, "Социальные анимации:")
-    local hintA = vgui.Create("DLabel", ba)
-    hintA:SetPos(14, 28) hintA:SetSize(700, 20)
-    hintA:SetFont("GRMF4_Normal") hintA:SetTextColor(C.dim)
-    hintA:SetText("Удерживайте клавишу — круг выбора. Повтор позы снимает её.")
-    local bindL = vgui.Create("DLabel", ba)
-    bindL:SetPos(14, 62) bindL:SetSize(180, 22)
-    bindL:SetFont("GRMF4_Normal") bindL:SetTextColor(C.text)
-    bindL:SetText("Клавиша меню:")
-    local binder = vgui.Create("DBinder", ba)
-    binder:SetPos(160, 58) binder:SetSize(140, 28)
-    binder:SetValue(math.Clamp(math.floor(GetConVarNumber("grm_cl_social_key") or 18), 0, 159))
-    binder.OnChange = function(_, num)
-        RunConsoleCommand("grm_cl_social_key", tostring(math.floor(tonumber(num) or 18)))
+         Раньше бинды были раскиданы по отдельным блокам («Замок
+         транспорта», «Социальные анимации») с разной вёрсткой. Игрок
+         искал, где какая клавиша настраивается. Теперь один список:
+         добавить новую клавишу — одна строка bindRow.
+
+         Высота блока считается по числу строк, а не забита числом:
+         добавили бинд — блок вырос сам, без правки константы. ]]
+    local BINDS = {
+        { "Открыть инвентарь", "grm_cl_inv_key", 0,
+          "Повторное нажатие закрывает окно" },
+        { "Меню соц. анимаций", "grm_cl_social_key", 18,
+          "Удерживайте клавишу — круг выбора. Повтор анимации снимает её" },
+        { "Замок транспорта", "grm_cl_vehlock_key", 0,
+          "Для личного и фракционного авто. В салоне не работает — смотрите на машину снаружи" },
+    }
+
+    local HEAD, PAD = 30, 12
+    local bk = block(sc, HEAD + #BINDS * BIND_ROW_H + PAD + 24, "Клавиши:")
+    local hintK = vgui.Create("DLabel", bk)
+    hintK:SetPos(14, 26) hintK:SetSize(760, 20)
+    hintK:SetFont("GRMF4_Normal") hintK:SetTextColor(C.dim)
+    hintK:SetText("Нажмите поле и выберите клавишу. «Сбросить» — вернуть значение по умолчанию.")
+
+    for i, b in ipairs(BINDS) do
+        bindRow(bk, HEAD + 18 + (i - 1) * BIND_ROW_H, b[1], b[2], b[3], b[4])
     end
 end
 

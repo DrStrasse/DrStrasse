@@ -1430,9 +1430,40 @@ if CLIENT then
         net.SendToServer()
     end
 
-    -- Бинд на клавишу (по умолчанию I)
-    hook.Add("PlayerBindPress", "GRM_Inv_Bind", function(ply, bind, pressed)
-        -- Можно добавить бинд на кнопку
+    --[[ КЛАВИША ОТКРЫТИЯ (заказ владельца 31.08: «в F4 в настройки
+         нужна позиция для бинда кнопки открытия инвентаря»).
+
+         Здесь была ПУСТАЯ заглушка: хук висел, тело — комментарий
+         «можно добавить бинд». Инвентарь открывался только командой
+         /inv или из C-меню.
+
+         Значение по умолчанию 0 — выключено. Ставить сюда I нельзя:
+         в GMod эта клавиша занята под другое, и молча перехватывать
+         её у игрока неправильно. Клавишу назначает сам игрок в
+         F4 → Настройки. ]]
+    CreateClientConVar("grm_cl_inv_key", "0", true, false,
+        "Клавиша открытия инвентаря (KEY_*, 0 = выключено)")
+
+    local invKeyLock = 0
+    hook.Add("PlayerButtonDown", "GRM_Inv_Bind", function(ply, key)
+        if ply ~= LocalPlayer() then return end
+        local want = math.floor(GetConVarNumber("grm_cl_inv_key") or 0)
+        if want <= 0 or key ~= want then return end
+        -- Не мешаем набору текста и открытому игровому меню.
+        if gui.IsGameUIVisible() or gui.IsConsoleVisible() then return end
+        if IsValid(ply) and ply.IsTyping and ply:IsTyping() then return end
+        -- Защита от дребезга: удержание клавиши шлёт событие пачкой.
+        local now = RealTime()
+        if now < invKeyLock then return end
+        invKeyLock = now + 0.3
+        --[[ Повторное нажатие ЗАКРЫВАЕТ окно: клавиша работает
+             переключателем, как и ожидается от инвентаря. Без этого
+             игрок жал бы клавишу и лез мышью к крестику. ]]
+        if GRM.Inventory.IsOpen and GRM.Inventory.IsOpen() then
+            if GRM.Inventory.CloseGUI then GRM.Inventory.CloseGUI() end
+            return
+        end
+        GRM.Inventory.RequestOpen()
     end)
 
     concommand.Add("grm_inventory", function()

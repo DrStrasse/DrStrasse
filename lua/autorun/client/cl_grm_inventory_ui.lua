@@ -443,54 +443,283 @@ local function rebuildEquipment()
     end
 end
 
+-----------------------------------------------------------------------
+-- ОКНО ИНВЕНТАРЯ (переделано 31.08 по заказу владельца).
+--
+-- Было: одно окно 1020x620 появлялось мгновенно, целиком, посреди
+-- экрана. Слева в нём — узкая колонка экипировки, справа — слоты.
+--
+-- Стало (по образцу, который показал владелец): две половины
+-- РАЗЪЕЗЖАЮТСЯ из центра. Левая — карточка персонажа: 3D-модель,
+-- имя, фракция и полосы состояния. Правая — сетка предметов с
+-- деталями. Обе выезжают со своей стороны и гаснут обратно при
+-- закрытии.
+--
+-- Почему две отдельные панели, а не одна с анимацией ширины: половины
+-- едут НАВСТРЕЧУ друг другу из-за краёв экрана, у каждой своя
+-- траектория. Одной панелью такое движение не получить, а тянуть
+-- содержимое resize'ом каждый кадр — дорого и дёргано.
+-----------------------------------------------------------------------
+INV.Anim = INV.Anim or {}
+local A = INV.Anim
+A.Time = 0.28           -- длительность выезда, секунды
+A.Gap = 14              -- зазор между половинами
+A.LeftW = 330
+A.RightW = 690
+A.Height = 620
+
+--[[ Плавность. Обычная линейная подача выглядит механически: панель
+     едет с одинаковой скоростью и резко встаёт. Здесь замедление к
+     концу (ease-out) — движение «догоняет» место и мягко
+     останавливается. ]]
+function A.Ease(t)
+    t = math.Clamp(t, 0, 1)
+    local inv = 1 - t
+    return 1 - inv * inv * inv
+end
+
+--[[ Положение половины окна на момент времени.
+
+     progress 0 — панель за краем экрана, 1 — на месте. Возвращает X.
+     Вынесено отдельной функцией, чтобы стенд мог проверить траекторию
+     без запуска VGUI: именно здесь легко ошибиться со знаком и
+     отправить панель не в ту сторону. ]]
+function A.SlideX(progress, targetX, fromLeft, panelW, screenW)
+    local e = A.Ease(progress)
+    local off = fromLeft and -(panelW + 40) or (screenW + 40)
+    return math.floor(off + (targetX - off) * e)
+end
+
+local charPanel, invPanel, animStart, animClosing
+
+local function layoutMetrics()
+    local sw, sh = ScrW(), ScrH()
+    local total = A.LeftW + A.Gap + A.RightW
+    local x0 = math.floor((sw - total) * 0.5)
+    local y = math.floor((sh - A.Height) * 0.5)
+    return sw, sh, x0, y
+end
+
+--[[ Карточка персонажа. Модель, имя, фракция и полосы состояния —
+     те же, что в HUD: берём их из общего реестра GRM.HUD.BarList,
+     а не переписываем расчёты заново. Если модуль добавит новую
+     полосу (жажда, дыхание), она появится и здесь сама. ]]
+local function buildCharPanel(parent)
+    local lp = LocalPlayer()
+
+    local mdl = vgui.Create("DModelPanel", parent)
+    mdl:SetPos(0, 44)
+    mdl:SetSize(A.LeftW, 360)
+    mdl:SetFOV(34)
+    mdl:SetModel(IsValid(lp) and lp:GetModel() or "models/player/kleiner.mdl")
+    mdl:SetAnimated(true)
+    local ent = mdl:GetEntity()
+    if IsValid(ent) and IsValid(lp) then
+        -- Скин и bodygroups: без них форма превращается в базовую модель.
+        ent:SetSkin(lp:GetSkin() or 0)
+        for i = 0, (lp:GetNumBodyGroups() or 1) - 1 do
+            ent:SetBodygroup(i, lp:GetBodygroup(i) or 0)
+        end
+        local seq = ent:LookupSequence("idle_all_01")
+        if not seq or seq < 0 then seq = ent:LookupSequence("idle_subtle") end
+        if seq and seq >= 0 then ent:ResetSequence(seq) end
+    end
+    mdl:SetCamPos(Vector(58, 0, 40))
+    mdl:SetLookAt(Vector(0, 0, 38))
+    mdl:SetAmbientLight(Color(140, 148, 162))
+    mdl:SetDirectionalLight(BOX_TOP, Color(255, 255, 255))
+    mdl:SetDirectionalLight(BOX_FRONT, Color(190, 205, 230))
+    mdl.LayoutEntity = function(_, e)
+        if not IsValid(e) then return end
+        e:SetAngles(Angle(0, 32, 0))
+        e:FrameAdvance(FrameTime())
+    end
+
+    --[[ Полосы состояния. Рисуем в Paint, а не панелями: значения
+         меняются каждый кадр, плодить и обновлять VGUI-элементы ради
+         этого незачем. ]]
+    local bars = vgui.Create("DPanel", parent)
+    bars:SetPos(16, 414)
+    bars:SetSize(A.LeftW - 32, A.Height - 414 - 16)
+    bars:SetPaintBackground(false)
+    bars.Paint = function(_, w, h)
+        local list = (GRM.HUD and GRM.HUD.BarList) and GRM.HUD.BarList() or {}
+        local y = 0
+        for _, def in ipairs(list) do
+            if y + 34 > h then break end
+            local okCall, cur, maxv, text, col = pcall(def.Get)
+            if okCall and tonumber(cur) and tonumber(maxv) then
+                local frac = math.Clamp(cur / math.max(1, maxv), 0, 1)
+                draw.SimpleText(def.label or def.id, "GRMInv2_Small", 0, y, C.dim,
+                    TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                if text then
+                    draw.SimpleText(tostring(text), "GRMInv2_Small", w, y,
+                        col or C.text, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+                end
+                draw.RoundedBox(3, 0, y + 16, w, 8, Color(24, 30, 40, 230))
+                draw.RoundedBox(3, 0, y + 16, math.floor(w * frac), 8, col or C.green)
+                y = y + 34
+            end
+        end
+        if y == 0 then
+            draw.SimpleText("Полосы состояния не загружены", "GRMInv2_Small", 0, 0,
+                C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        end
+    end
+end
+
 function INV.OpenGUI()
-    if IsValid(frame) then frame:MakePopup(); rebuildSlots(); rebuildDetail(); rebuildEquipment(); return end
+    -- Уже открыто — просто обновляем содержимое, не перезапуская выезд.
+    if IsValid(invPanel) and not animClosing then
+        invPanel:MakePopup()
+        rebuildSlots() rebuildDetail() rebuildEquipment()
+        return
+    end
+    if IsValid(charPanel) then charPanel:Remove() end
+    if IsValid(invPanel) then invPanel:Remove() end
+
+    local sw, sh, x0, y = layoutMetrics()
+    animStart = SysTime()
+    animClosing = false
+
+    ------------------------------------------------------------------
+    -- ЛЕВАЯ ПОЛОВИНА: персонаж.
+    ------------------------------------------------------------------
+    local cp = vgui.Create("DPanel")
+    charPanel = cp
+    GRM.UI.Track("inventory_char", cp)
+    cp:SetSize(A.LeftW, A.Height)
+    cp:SetPos(-A.LeftW - 40, y)
+    cp.Paint = function(_, w, h)
+        draw.RoundedBox(9, 0, 0, w, h, C.bg)
+        draw.RoundedBoxEx(9, 0, 0, w, 40, C.header, true, true, false, false)
+        local lp = LocalPlayer()
+        local nm = IsValid(lp) and lp:GetNWString("GRM_RPName", "") or ""
+        if nm == "" and IsValid(lp) then nm = lp:Nick() end
+        draw.SimpleText(GRM.Utf8Ellipsis(nm, 26), "GRMInv2_Title", 15, 20, C.text,
+            TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        local fac = IsValid(lp) and lp:GetNWString("GRM_FactionDisplay", "") or ""
+        if fac == "" and IsValid(lp) then fac = lp:GetNWString("GRM_Faction", "") end
+        local role = IsValid(lp) and lp:GetNWString("GRM_Role", "") or ""
+        local sub = fac
+        if role ~= "" then sub = (fac ~= "" and (fac .. " · ") or "") .. role end
+        if sub ~= "" then
+            draw.SimpleText(GRM.Utf8Ellipsis(sub, 40), "GRMInv2_Small", 16, 50, C.dim,
+                TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        end
+    end
+    buildCharPanel(cp)
+
+    ------------------------------------------------------------------
+    -- ПРАВАЯ ПОЛОВИНА: предметы.
+    ------------------------------------------------------------------
     local f = vgui.Create("DFrame")
-    GRM.UI.Track("inventory", f)
-    f:SetTitle(""); f:SetSize(1020, 620); f:Center(); f:MakePopup()
+    invPanel = f
     frame = f
-    f.OnRemove = function() frame = nil; INV.SelectedSlot = nil; dragData = nil; if IsValid(dragImage) then dragImage:Remove(); dragImage = nil end end
+    GRM.UI.Track("inventory", f)
+    f:SetTitle("") f:SetSize(A.RightW, A.Height)
+    f:SetPos(sw + 40, y)
+    f:MakePopup()
+    f:ShowCloseButton(false)
+    --[[ Escape закрывает С АНИМАЦИЕЙ. DFrame по Escape зовёт Close(),
+         который просто прячет окно: половины остались бы висеть за
+         краями экрана, а левая панель — на виду. Перенаправляем на
+         свой обратный выезд. ]]
+    f.Close = function() INV.CloseGUI() end
+    f.OnRemove = function()
+        frame = nil
+        INV.SelectedSlot = nil
+        dragData = nil
+        if IsValid(dragImage) then dragImage:Remove() dragImage = nil end
+        -- Левая половина живёт вместе с правой: закрыли одну — уходит и вторая.
+        if IsValid(charPanel) then charPanel:Remove() end
+        charPanel = nil
+        invPanel = nil
+    end
     f.Paint = function(_, w, h)
         draw.RoundedBox(9, 0, 0, w, h, C.bg)
         draw.RoundedBoxEx(9, 0, 0, w, 40, C.header, true, true, false, false)
         draw.SimpleText("ИНВЕНТАРЬ", "GRMInv2_Title", 15, 20, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        draw.SimpleText("ЛКМ + перетащить — переместить  |  ПКМ — использовать", "GRMInv2_Small", w - 14, 20, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("ЛКМ + перетащить — переместить  |  ПКМ — использовать", "GRMInv2_Small",
+            w - 44, 20, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
     end
 
+    local x = btn(f, "✕", C.red, 26, 26)
+    x:SetPos(A.RightW - 34, 7)
+    x.DoClick = function() INV.CloseGUI() end
+
     weightPanel = vgui.Create("DLabel", f)
-    weightPanel:SetPos(160, 48); weightPanel:SetSize(510, 23); weightPanel:SetFont("GRMInv2_Small")
+    weightPanel:SetPos(16, 48) weightPanel:SetSize(A.RightW - 32, 23)
+    weightPanel:SetFont("GRMInv2_Small")
     drawWeight()
 
     equipmentPanel = vgui.Create("DPanel", f)
-    equipmentPanel:SetPos(16, 78); equipmentPanel:SetSize(140, 430)
+    equipmentPanel:SetPos(16, 78) equipmentPanel:SetSize(140, 430)
     equipmentPanel.Paint = function(_, w, h) draw.RoundedBox(7, 0, 0, w, h, C.panel) end
 
     slotsPanel = vgui.Create("DPanel", f)
-    slotsPanel:SetPos(160, 78); slotsPanel:SetSize(492, 332)
+    slotsPanel:SetPos(164, 78) slotsPanel:SetSize(510, 332)
     slotsPanel.Paint = function(_, w, h) draw.RoundedBox(7, 0, 0, w, h, C.panel) end
 
     detailPanel = vgui.Create("DPanel", f)
-    detailPanel:SetPos(669, 78); detailPanel:SetSize(334, 218)
+    detailPanel:SetPos(164, 418) detailPanel:SetSize(330, 90)
     detailPanel.Paint = function(_, w, h) draw.RoundedBox(7, 0, 0, w, h, C.panel) end
 
     local actions = vgui.Create("DPanel", f)
-    actions:SetPos(669, 312); actions:SetSize(334, 98)
+    actions:SetPos(502, 418) actions:SetSize(172, 90)
     actions.Paint = function(_, w, h) draw.RoundedBox(7, 0, 0, w, h, C.panel) end
-    local store = btn(actions, "Убрать активное оружие", C.accent, 300, 32)
-    store:SetPos(17, 12)
+    local store = btn(actions, "Убрать оружие", C.accent, 148, 32)
+    store:SetPos(12, 10)
     store.DoClick = function() if INV.StoreWeapon then INV.StoreWeapon() end end
-    local dropWep = btn(actions, "Выбросить активное оружие", C.red, 300, 32)
-    dropWep:SetPos(17, 54)
+    local dropWep = btn(actions, "Выбросить оружие", C.red, 148, 32)
+    dropWep:SetPos(12, 48)
     dropWep.DoClick = function() if INV.DropWeapon then INV.DropWeapon() end end
 
     local footer = vgui.Create("DLabel", f)
-    footer:SetPos(16, 522); footer:SetSize(987, 70); footer:SetWrap(true)
-    footer:SetFont("GRMInv2_Small"); footer:SetTextColor(C.dim)
-    footer:SetText("Перегруз: после 50 кг бег не ускоряет игрока. После 62.5 кг нельзя поднимать новые предметы. Вес учитывает содержимое инвентаря, оружие и боеприпасы.\n/drop — выбросить оружие из рук  |  /store — убрать в инвентарь  |  /inv — открыть инвентарь")
+    footer:SetPos(16, 516) footer:SetSize(A.RightW - 32, 90) footer:SetWrap(true)
+    footer:SetFont("GRMInv2_Small") footer:SetTextColor(C.dim)
+    footer:SetText("Перегруз: после 50 кг бег не ускоряет игрока. После 62.5 кг нельзя поднимать новые предметы. Вес учитывает содержимое инвентаря, оружие и боеприпасы.\n/drop — выбросить оружие  |  /store — убрать в инвентарь  |  /inv — открыть инвентарь")
+
+    ------------------------------------------------------------------
+    -- Сам выезд. Think, а не таймер: движение должно идти в такт
+    -- кадрам, иначе видны рывки.
+    ------------------------------------------------------------------
+    f.Think = function()
+        local t = (SysTime() - (animStart or 0)) / A.Time
+        if animClosing then t = 1 - t end
+        t = math.Clamp(t, 0, 1)
+        local _, _, lx, ly = layoutMetrics()
+        if IsValid(charPanel) then
+            charPanel:SetPos(A.SlideX(t, lx, true, A.LeftW, ScrW()), ly)
+        end
+        f:SetPos(A.SlideX(t, lx + A.LeftW + A.Gap, false, A.RightW, ScrW()), ly)
+        if animClosing and t <= 0 then
+            f:Remove()
+        end
+    end
 
     rebuildSlots()
     rebuildDetail()
     rebuildEquipment()
+    if surface and surface.PlaySound then surface.PlaySound("ui/buttonclickrelease.wav") end
+end
+
+--[[ Открыт ли инвентарь. Нужен биндом клавиши: повторное нажатие
+     закрывает окно. Окно, которое уже уезжает, считаем закрытым —
+     иначе нажатие во время выезда ничего бы не делало. ]]
+function INV.IsOpen()
+    return IsValid(invPanel) and not animClosing
+end
+
+--[[ Закрытие с обратным выездом. Панели не удаляем сразу: сначала
+     доводим анимацию до нуля, и только потом Remove (см. f.Think). ]]
+function INV.CloseGUI()
+    if not IsValid(invPanel) then return end
+    if animClosing then return end
+    animClosing = true
+    animStart = SysTime()
+    -- Курсор отпускаем сразу: держать его во время выезда незачем.
+    if IsValid(invPanel) then invPanel:SetMouseInputEnabled(false) end
 end
 
 local ModernOpenGUI = INV.OpenGUI
