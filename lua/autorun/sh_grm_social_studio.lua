@@ -653,7 +653,11 @@ local function openStudio()
             ST.gzAxis, ST.gzDX, ST.gzDY = axis, dx, dy
             ST.gzX, ST.gzY = mx, my
             if ST.mode == "rotate" then
-                ST.gzVal = (axis == "x" and rec.p) or (axis == "y" and rec.yaw) or rec.r
+                --[[ Поле угла берём из общей таблицы соответствия.
+                     Раньше здесь стояло x→p, y→yaw, z→r — соответствие
+                     было сдвинуто, и кольцо Z крутило roll (вокруг X).
+                     См. G.AngleKeyOf в cl_grm_gizmo.lua. ]]
+                ST.gzVal = rec[GRM.Gizmo.AngleKey(axis, "yaw")] or 0
             else
                 ST.gzVal = (axis == "x" and rec.px) or (axis == "y" and rec.py) or rec.pz
             end
@@ -681,9 +685,8 @@ local function openStudio()
             local proj = (mx - (ST.gzX or mx)) * (ST.gzDX or 0) + (my - (ST.gzY or my)) * (ST.gzDY or 0)
             if ST.mode == "rotate" then
                 local v = math.NormalizeAngle((ST.gzVal or 0) + proj * 0.45)
-                if ST.gzAxis == "x" then rec.p = v
-                elseif ST.gzAxis == "y" then rec.yaw = v
-                else rec.r = v end
+                -- То же соответствие, что и при захвате оси.
+                rec[GRM.Gizmo.AngleKey(ST.gzAxis, "yaw")] = v
             else
                 local v = math.Clamp((ST.gzVal or 0) + proj * 0.04, -20, 20)
                 if ST.gzAxis == "x" then rec.px = v
@@ -967,9 +970,12 @@ local function openStudio()
         sliders[key] = s
         return s
     end
-    addSl("Pitch", "p", -180, 180)
-    addSl("Yaw", "yaw", -180, 180)
-    addSl("Roll", "r", -180, 180)
+    --[[ Подписи по ОСИ ГИЗМО, а не по имени поля. Голые «Pitch/Yaw/Roll»
+         не подсказывают, какое кольцо их крутит, и рассинхрон с гизмо
+         (кольцо Z ↔ поле yaw) заметить было невозможно. ]]
+    addSl("Вокруг X (Roll)", "r", -180, 180)
+    addSl("Вокруг Y (Pitch)", "p", -180, 180)
+    addSl("Вокруг Z (Yaw)", "yaw", -180, 180)
     addSl("Сдвиг X", "px", -20, 20)
     addSl("Сдвиг Y", "py", -20, 20)
     addSl("Сдвиг Z", "pz", -20, 20)

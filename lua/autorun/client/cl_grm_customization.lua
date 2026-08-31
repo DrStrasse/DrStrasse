@@ -525,7 +525,11 @@ local function openEditor(catalog, loadout)
             editor.gizmoAxis=axis; editor.gizmoDX=sdx; editor.gizmoDY=sdy
             editor.gizmoStartX=mx; editor.gizmoStartY=my
             if editor.gizmoMode == "rotate" then
-                local angleKey = axis == "x" and "p" or axis == "y" and "y" or "r"
+                --[[ Соответствие «ось → поле угла» лежит в общем модуле.
+                     Здесь было x→p, y→y, z→r: сдвинуто на позицию,
+                     поэтому кольцо Z крутило roll (вокруг X). Хранилище
+                     аксессуаров зовёт yaw полем "y". ]]
+                local angleKey = GRM.Gizmo.AngleKey(axis, "y")
                 editor.gizmoStartValue=equipped and tonumber((equipped.angles or {})[angleKey]) or 0
             else
                 editor.gizmoStartValue=equipped and tonumber((equipped.position or {})[axis]) or 0
@@ -550,7 +554,7 @@ local function openEditor(catalog, loadout)
                 local projected=(mx-editor.gizmoStartX)*(editor.gizmoDX or 0)+(my-editor.gizmoStartY)*(editor.gizmoDY or 0)
                 if editor.gizmoMode == "rotate" then
                     equipped.angles=equipped.angles or {p=0,y=0,r=0}
-                    local angleKey=editor.gizmoAxis=="x" and "p" or editor.gizmoAxis=="y" and "y" or "r"
+                    local angleKey=GRM.Gizmo.AngleKey(editor.gizmoAxis, "y")
                     local value=math.NormalizeAngle((editor.gizmoStartValue or 0)+projected*(editor.rotateStep or 1))
                     equipped.angles[angleKey]=value
                     local sliderPanel=editor.angleSliders and editor.angleSliders[editor.gizmoAxis]
@@ -600,9 +604,19 @@ local function openEditor(catalog, loadout)
         editor.axisSliders.x=add("Позиция X",-48,48,equipped.position.x,function(v) equipped.position.x=v end)
         editor.axisSliders.y=add("Позиция Y",-48,48,equipped.position.y,function(v) equipped.position.y=v end)
         editor.axisSliders.z=add("Позиция Z",-48,48,equipped.position.z,function(v) equipped.position.z=v end)
-        editor.angleSliders.x=add("Угол Pitch",-180,180,equipped.angles.p,function(v) equipped.angles.p=v end)
-        editor.angleSliders.y=add("Угол Yaw",-180,180,equipped.angles.y,function(v) equipped.angles.y=v end)
-        editor.angleSliders.z=add("Угол Roll",-180,180,equipped.angles.r,function(v) equipped.angles.r=v end)
+        --[[ Слайдеры углов ПОДПИСАНЫ ОСЬЮ, а не именем поля.
+
+             Раньше здесь было angleSliders.x → Pitch, .y → Yaw,
+             .z → Roll, то есть то же сдвинутое соответствие, что и у
+             гизмо. После починки маппинга (ось Z крутит yaw, X крутит
+             roll) старая привязка обновляла бы ЧУЖОЙ слайдер: тянешь
+             кольцо Z, а шевелится строка Pitch.
+
+             Ключ таблицы — ось гизмо, подпись — что реально вращается
+             вокруг неё. ]]
+        editor.angleSliders.x=add("Вокруг X (Roll)",-180,180,equipped.angles.r,function(v) equipped.angles.r=v end)
+        editor.angleSliders.y=add("Вокруг Y (Pitch)",-180,180,equipped.angles.p,function(v) equipped.angles.p=v end)
+        editor.angleSliders.z=add("Вокруг Z (Yaw)",-180,180,equipped.angles.y,function(v) equipped.angles.y=v end)
         add("Масштаб",0.2,3,equipped.scale or 1,function(v) equipped.scale=v end)
 
         local fine=vgui.Create("DPanel",right); fine:SetPos(12,y+2); fine:SetSize(316,94); fine.Paint=function(_,w,h) draw.RoundedBox(6,0,0,w,h,UI.card) end; controls[#controls+1]=fine
@@ -616,7 +630,9 @@ local function openEditor(catalog, loadout)
             if rotating then editor.rotateStep=tonumber(data) or 1 else editor.moveStep=tonumber(data) or 0.1 end
         end
         local axisColors={x=Color(205,70,70),y=Color(60,175,95),z=Color(65,125,220)}
-        local axisLabels=rotating and {x="P",y="Y",z="R"} or {x="X",y="Y",z="Z"}
+        -- Подписи кнопок точной подстройки: в режиме вращения это ОСЬ,
+        -- вокруг которой крутим, а не имя поля угла.
+        local axisLabels={x="X",y="Y",z="Z"}
         local function nudge(axis,direction)
             local sliderPanel=rotating and editor.angleSliders[axis] or editor.axisSliders[axis]
             if not IsValid(sliderPanel) then return end

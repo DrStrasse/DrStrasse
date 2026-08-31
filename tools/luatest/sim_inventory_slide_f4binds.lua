@@ -78,9 +78,13 @@ ok(A ~= nil and A.SlideX ~= nil, "функция выезда доступна")
 print("\n=== 2. ПОЛОВИНЫ ЕДУТ С РАЗНЫХ СТОРОН ===")
 -----------------------------------------------------------------------
 local SW = 1920
-local LEFT_W, RIGHT_W = A.LeftW, A.RightW
+--[[ Размеры половин 31.08 стали считаться от экрана (A.Layout) вместо
+     жёстких A.LeftW / A.RightW — окно теперь во весь экран. Берём их
+     оттуда же, откуда берёт сам модуль: проверять надо траекторию, а
+     не конкретные числа, которые владелец может ещё раз попросить
+     поменять. ]]
+local LEFT_W, RIGHT_W, _H, X0 = A.Layout(SW, 1080)
 local total = LEFT_W + A.Gap + RIGHT_W
-local X0 = math.floor((SW - total) * 0.5)
 local LEFT_TARGET = X0
 local RIGHT_TARGET = X0 + LEFT_W + A.Gap
 

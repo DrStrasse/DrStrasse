@@ -978,6 +978,28 @@ R.InnerR = 118
 R.OuterR = 300
 R.LabelR = 214
 
+--[[ Камера под РЕАЛЬНЫЙ размер модели.
+
+     Жёсткие координаты работают ровно для одной модели: у нас
+     жандармерия, гражданские и женские модели разного роста, и любая
+     не та фигура вылезала за круг. Считаем от ограничивающей коробки:
+     смотрим в середину роста и отходим настолько, чтобы фигура влезла
+     целиком.
+
+     Вынесено функцией — стенд проверяет кадрирование без запуска игры. ]]
+function R.CameraFor(mins, maxs, fov)
+    fov = fov or 40
+    local lo = (mins and mins.z) or 0
+    local hi = (maxs and maxs.z) or 72
+    local height = math.max(1, hi - lo)
+    local centerZ = lo + height * 0.5
+    -- Дистанция, при которой рост укладывается в вертикальный угол.
+    local dist = (height * 0.5) / math.max(0.05, math.tan(math.rad(fov) * 0.5))
+    -- Небольшой запас, чтобы фигура не упиралась в край круга.
+    dist = dist * 1.18
+    return Vector(dist, 0, centerZ), Vector(0, 0, centerZ)
+end
+
 local function radialCleanup()
     if IsValid(R.ent) then R.ent:Remove() end
     R.ent = nil
@@ -1114,19 +1136,34 @@ function S.OpenRadialMenu()
         end
         surface.DrawPoly(poly)
 
-        -- Сектор под выбранным пунктом: подсветка направления.
+        --[[ ПОДСВЕТКА ВЫБРАННОГО СЕКТОРА.
+
+             Была залита от ЦЕНТРА до внешнего радиуса — то есть прямо
+             поверх модели персонажа. При одном пункте в категории
+             сектор к тому же занимал все 360° и круг становился
+             сплошным синим пятном: ровно то, что на скриншоте
+             владельца от 31.08.
+
+             Теперь это КОЛЬЦЕВОЙ сегмент от InnerR до OuterR: центр с
+             моделью остаётся чистым. И угол ограничен, чтобы
+             единственный пункт подсвечивал сектор, а не весь круг. ]]
         if R.sel and count > 0 then
-            local step = 360 / count
-            local from = (R.sel - 1) * step - 90 - step * 0.5
-            local sel = {}
-            sel[#sel + 1] = { x = cx, y = cy }
-            for i = 0, 18 do
-                local a = math.rad(from + step * (i / 18))
-                sel[#sel + 1] = { x = cx + math.cos(a) * R.OuterR, y = cy + math.sin(a) * R.OuterR }
+            local step = math.min(360 / count, 120)
+            local from = (R.sel - 1) * (360 / count) - 90 - step * 0.5
+            local ring = {}
+            local N = 20
+            -- Внешняя дуга вперёд, внутренняя назад — получается лента.
+            for i = 0, N do
+                local a = math.rad(from + step * (i / N))
+                ring[#ring + 1] = { x = cx + math.cos(a) * R.OuterR, y = cy + math.sin(a) * R.OuterR }
             end
-            surface.SetDrawColor(62, 132, 220, 90)
+            for i = N, 0, -1 do
+                local a = math.rad(from + step * (i / N))
+                ring[#ring + 1] = { x = cx + math.cos(a) * R.InnerR, y = cy + math.sin(a) * R.InnerR }
+            end
+            surface.SetDrawColor(62, 132, 220, 105)
             draw.NoTexture()
-            surface.DrawPoly(sel)
+            surface.DrawPoly(ring)
         end
 
         ------------------------------------------------------------
@@ -1158,19 +1195,45 @@ function S.OpenRadialMenu()
             end
             ent:FrameAdvance(FrameTime())
 
-            --[[ Рисуем модель вручную. cam.Start3D с прямоугольником
-                 по центру экрана: камера смотрит на модель спереди,
-                 чуть сверху. SuppressEngineLighting — чтобы силуэт не
-                 утонул в темноте карты (на скриншоте владельца как раз
-                 тёмный подъезд). ]]
-            local size = math.floor(R.InnerR * 2.1)
-            local px, py = math.floor(cx - size * 0.5), math.floor(cy - size * 0.62)
-            cam.Start3D(Vector(62, 0, 34), Angle(4, 180, 0), 40, px, py, size, size, 5, 4096)
+            --[[ ПОКАЗ МОДЕЛИ (жалоба владельца 31.08: «колесо анимаций
+                 тоже поправь показ модели»).
+
+                 Было три беды сразу, все видны на его скриншоте:
+
+                 1) КАМЕРА ПО ЖЁСТКИМ ЧИСЛАМ. Позиция (62,0,34), угол
+                    наклона 4, FOV 40 — подобраны под одну модель.
+                    Фигура не влезала в кадр: голова и ноги обрезаны,
+                    видно только торс.
+
+                 2) ЧЁРНЫЙ СИЛУЭТ. ResetModelLighting задаёт лишь
+                    рассеянный свет; без явных направленных источников
+                    (SetModelLighting по шести сторонам) модель в тёмном
+                    помещении оставалась чёрной кляксой.
+
+                 3) Квадрат вывода строился от InnerR с коэффициентом
+                    0.62 по вертикали — модель ещё и уезжала вверх.
+
+                 Теперь камера считается от РЕАЛЬНЫХ габаритов модели
+                 (та же функция, что у карточки инвентаря), а свет
+                 выставляется со всех сторон. ]]
+            local size = math.floor(R.InnerR * 2)
+            local px, py = math.floor(cx - size * 0.5), math.floor(cy - size * 0.5)
+            local mins, maxs = ent:GetRenderBounds()
+            local camPos, lookAt = R.CameraFor(mins, maxs)
+            cam.Start3D(camPos, (lookAt - camPos):Angle(), 40, px, py, size, size, 5, 4096)
                 render.SuppressEngineLighting(true)
                 render.SetLightingOrigin(ent:GetPos())
-                render.ResetModelLighting(1.1, 1.1, 1.1)
+                render.ResetModelLighting(0.42, 0.44, 0.48)
+                -- Направленный свет со всех сторон: иначе силуэт чёрный.
+                render.SetModelLighting(BOX_TOP, 1.05, 1.05, 1.05)
+                render.SetModelLighting(BOX_FRONT, 0.95, 0.98, 1.05)
+                render.SetModelLighting(BOX_LEFT, 0.6, 0.62, 0.68)
+                render.SetModelLighting(BOX_RIGHT, 0.6, 0.62, 0.68)
+                render.SetModelLighting(BOX_BACK, 0.35, 0.36, 0.4)
+                render.SetModelLighting(BOX_BOTTOM, 0.3, 0.3, 0.34)
                 render.SetColorModulation(1, 1, 1)
-                ent:SetAngles(Angle(0, 0, 0))
+                render.SetBlend(1)
+                ent:SetAngles(Angle(0, 32, 0))
                 ent:SetupBones()
                 ent:DrawModel()
                 render.SuppressEngineLighting(false)

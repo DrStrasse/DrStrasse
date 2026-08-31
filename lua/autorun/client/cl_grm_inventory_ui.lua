@@ -159,7 +159,7 @@ local function rebuildDetail()
         local label = vgui.Create("DLabel", detailPanel)
         label:Dock(FILL)
         label:SetContentAlignment(5)
-        label:SetText("Выберите предмет в сетке\n\nЛКМ + перетащить: переместить\nПКМ: использовать")
+        label:SetText("Выберите предмет в сетке\n\nЛКМ — выбрать, перетащить — переместить\nПКМ — меню действий")
         label:SetFont("GRMInv2_Normal")
         label:SetTextColor(C.dim)
         return
@@ -168,11 +168,11 @@ local function rebuildDetail()
     local model = accessoryModel(slot)
     if model then
         local preview = vgui.Create("DModelPanel", detailPanel)
-        preview:SetPos(8, 7); preview:SetSize(60, 60)
+        preview:SetPos(10, 10); preview:SetSize(64, 64)
         setupAccessoryPreview(preview, model, 10)
     else
         local icon = vgui.Create("DImage", detailPanel)
-        icon:SetPos(14, 14); icon:SetSize(48, 48); icon:SetImage(def.icon or "icon16/package.png")
+        icon:SetPos(16, 16); icon:SetSize(52, 52); icon:SetImage(def.icon or "icon16/package.png")
     end
     local title = vgui.Create("DLabel", detailPanel)
     -- Код 109: модулятор рации показывает своё состояние прямо в заголовке —
@@ -181,31 +181,47 @@ local function rebuildDetail()
     if slot.id == "radio_modulator" then
         displayName = displayName .. ((slot.data and slot.data.on == true) and "  [ВКЛ]" or "  [ВЫКЛ]")
     end
-    title:SetPos(74, 14); title:SetSize(260, 24); title:SetText(displayName); title:SetFont("GRMInv2_Normal"); title:SetTextColor(C.text)
+    -- Ширина от панели: при жёстких 260 длинные названия обрезались.
+    local dw = detailPanel:GetWide()
+    title:SetPos(84, 14); title:SetSize(dw - 98, 24); title:SetText(displayName); title:SetFont("GRMInv2_Normal"); title:SetTextColor(C.text)
     local count = vgui.Create("DLabel", detailPanel)
-    count:SetPos(74, 38); count:SetSize(260, 20); count:SetText(string.format("Количество: %d   |   Вес: %.2f кг", tonumber(slot.count) or 1, itemWeight(slot))); count:SetFont("GRMInv2_Small"); count:SetTextColor(C.yellow)
+    count:SetPos(84, 38); count:SetSize(dw - 98, 20); count:SetText(string.format("Количество: %d   |   Вес: %.2f кг", tonumber(slot.count) or 1, itemWeight(slot))); count:SetFont("GRMInv2_Small"); count:SetTextColor(C.yellow)
     local desc = vgui.Create("DLabel", detailPanel)
-    desc:SetPos(14, 76); desc:SetSize(330, 45); desc:SetWrap(true)
+    desc:SetPos(14, 76); desc:SetSize(dw - 28, 52); desc:SetWrap(true)
     local description=def.desc or "Описание отсутствует"
     local docMeta=documentMeta(slot)
     if docMeta then description=description.."\nВладелец: "..(docMeta.ownerName~="" and docMeta.ownerName or docMeta.ownerKey)..(docMeta.number~="" and (" • №"..docMeta.number) or "") end
     desc:SetText(description); desc:SetFont("GRMInv2_Small"); desc:SetTextColor(docMeta and (docMeta.mine and C.green or C.red) or C.dim)
 
-    local use = btn(detailPanel, def.type == "weapon" and "Экипировать" or "Использовать", C.green, 155, 32)
-    use:SetPos(14, 132)
+    --[[ Кнопки прижаты к НИЗУ панели, а не стоят по жёстким y=132/170.
+
+         Владелец 31.08: «где в инвентаре кнопка использовать?». Кнопки
+         были, но панель деталей имела высоту 90 точек, а кнопки
+         начинались со 132-й — то есть ниже её дна, и обрезались. При
+         фиксированных координатах это повторилось бы при любой смене
+         раскладки. ]]
+    local pw, ph = detailPanel:GetWide(), detailPanel:GetTall()
+    local slotCount = tonumber(slot.count) or 1
+    local bw = math.floor((pw - 42) / 2)
+    local bh = 32
+    local rows = slotCount > 1 and 2 or 1
+    local firstY = ph - 14 - rows * bh - (rows - 1) * 8
+
+    local use = btn(detailPanel, def.type == "weapon" and "Экипировать" or "Использовать", C.green, bw, bh)
+    use:SetPos(14, firstY)
     use.DoClick = function() if INV.UseSlot then INV.UseSlot(INV.SelectedSlot) end end
 
-    local drop = btn(detailPanel, "Выбросить 1", C.red, 155, 32)
-    drop:SetPos(179, 132)
+    local drop = btn(detailPanel, "Выбросить 1", C.red, bw, bh)
+    drop:SetPos(28 + bw, firstY)
     drop.DoClick = function() if INV.DropSlot then INV.DropSlot(INV.SelectedSlot, 1) end end
 
-    local slotCount = tonumber(slot.count) or 1
     if slotCount > 1 then
-        local split = btn(detailPanel, "Разделить стак", C.accent, 155, 30)
-        split:SetPos(14, 170)
+        local y2 = firstY + bh + 8
+        local split = btn(detailPanel, "Разделить стак", C.accent, bw, bh)
+        split:SetPos(14, y2)
         split.DoClick = function() if INV.SplitSlot then INV.SplitSlot(INV.SelectedSlot, math.floor(slotCount / 2)) end end
-        local dropAll = btn(detailPanel, "Выбросить всё", C.red, 155, 30)
-        dropAll:SetPos(179, 170)
+        local dropAll = btn(detailPanel, "Выбросить всё", C.red, bw, bh)
+        dropAll:SetPos(28 + bw, y2)
         dropAll.DoClick = function() if INV.DropSlot then INV.DropSlot(INV.SelectedSlot, slotCount) end end
     end
 end
@@ -261,9 +277,61 @@ local function createSlot(parent, index, size)
         INV.SelectedSlot = (INV.SelectedSlot == index) and nil or index
         rebuildDetail()
     end
+    --[[ КОНТЕКСТНОЕ МЕНЮ ПО ПКМ (жалоба владельца 31.08: «ПКМ не вижу
+         чтобы срабатывало, чтобы показывало мини-контекстные
+         клавиши/кнопки использовать/выбросить»).
+
+         ПКМ срабатывал, но НЕМО: сразу использовал предмет, не
+         показывая ничего. Со стороны это выглядело как «не работает» —
+         особенно на предметах, у которых использование ничего видимого
+         не даёт. И выбросить через ПКМ было нельзя вовсе.
+
+         Теперь ПКМ открывает меню с действиями. Само использование
+         никуда не делось — первым пунктом. ]]
     slotBtn.DoRightClick = function()
         local slot = currentSlots()[index]
-        if slot and slot.id and INV.UseSlot then INV.UseSlot(index) end
+        if not slot or not slot.id then return end
+        INV.SelectedSlot = index
+        rebuildDetail()
+
+        local def = itemDef(slot) or {}
+        local count = tonumber(slot.count) or 1
+        local menu = DermaMenu()
+        menu:AddOption(def.type == "weapon" and "Экипировать" or "Использовать", function()
+            if INV.UseSlot then INV.UseSlot(index) end
+        end):SetIcon("icon16/accept.png")
+
+        -- Аксессуар можно надеть прямо отсюда, не открывая кастомизацию.
+        local custom = GRM.Customization
+        local accessory = custom and custom.GetItemByInventoryID
+            and custom.GetItemByInventoryID(slot.id) or nil
+        if accessory and custom.EquipInventorySlot then
+            local target = accessory.slot or accessory.bone
+            if target then
+                menu:AddOption("Надеть", function()
+                    custom.EquipInventorySlot(index, target)
+                    INV.SelectedSlot = nil
+                    rebuildDetail()
+                end):SetIcon("icon16/user_suit.png")
+            end
+        end
+
+        if count > 1 and INV.SplitSlot then
+            menu:AddOption("Разделить стак (" .. math.floor(count / 2) .. ")", function()
+                INV.SplitSlot(index, math.floor(count / 2))
+            end):SetIcon("icon16/arrow_divide.png")
+        end
+
+        menu:AddSpacer()
+        menu:AddOption("Выбросить 1", function()
+            if INV.DropSlot then INV.DropSlot(index, 1) end
+        end):SetIcon("icon16/arrow_down.png")
+        if count > 1 then
+            menu:AddOption("Выбросить всё (" .. count .. ")", function()
+                if INV.DropSlot then INV.DropSlot(index, count) end
+            end):SetIcon("icon16/bin.png")
+        end
+        menu:Open()
     end
     slotBtn.OnMousePressed = function(self, key)
         if key ~= MOUSE_LEFT then return end
@@ -371,16 +439,38 @@ local function createSlot(parent, index, size)
     return slotBtn
 end
 
+--[[ Сетка подстраивается под ширину панели.
+
+     Было жёстко: 6 колонок по 74 точки. Панель теперь тянется по
+     экрану, и при жёстком числе колонок справа оставалась широкая
+     пустая полоса, а ячейки выглядели мелкими на большом мониторе.
+
+     Считаем, сколько колонок влезает, и растягиваем ячейку по
+     остатку — сетка заполняет площадь целиком. ]]
 local function rebuildSlots()
     if not IsValid(slotsPanel) then return end
     slotsPanel:Clear()
     local maxSlots = INV.Config and INV.Config.MaxSlots or 24
-    local columns, size, gap = 6, 74, 8
+    local pad, gap = 12, 8
+    local avail = math.max(120, slotsPanel:GetWide() - pad * 2)
+
+    -- Целимся в ячейку ~84 точки, но не мельче 68 и не крупнее 108.
+    local columns = math.max(4, math.floor((avail + gap) / (84 + gap)))
+    columns = math.min(columns, maxSlots)
+    local size = math.Clamp(math.floor((avail - gap * (columns - 1)) / columns), 68, 108)
+
+    -- Пересчёт: после ограничения размера могло остаться место на ещё колонку.
+    while columns < maxSlots
+        and (columns + 1) * size + columns * gap <= avail
+        and size >= 68 do
+        columns = columns + 1
+    end
+
     for index = 1, maxSlots do
         local slot = createSlot(slotsPanel, index, size)
         local col = (index - 1) % columns
         local row = math.floor((index - 1) / columns)
-        slot:SetPos(col * (size + gap), row * (size + gap))
+        slot:SetPos(pad + col * (size + gap), pad + row * (size + gap))
     end
 end
 
@@ -389,12 +479,14 @@ local function rebuildEquipment()
     equipmentPanel:Clear()
     local custom = GRM.Customization
     local title = vgui.Create("DLabel", equipmentPanel)
-    title:SetPos(8, 7); title:SetSize(122, 20); title:SetText("ЭКИПИРОВКА"); title:SetFont("GRMInv2_Small"); title:SetTextColor(C.text)
+    -- Ширина от панели: колонка экипировки теперь тянется по окну.
+    local ew = equipmentPanel:GetWide()
+    title:SetPos(10, 8); title:SetSize(ew - 20, 20); title:SetText("ЭКИПИРОВКА"); title:SetFont("GRMInv2_Small"); title:SetTextColor(C.text)
     local order = custom and custom.SlotOrder or { "head", "face", "torso", "legs", "left_hand", "right_hand" }
     for i, slotID in ipairs(order) do
         local slotDef = custom and custom.Slots and custom.Slots[slotID] or { name = slotID, icon = "icon16/user_suit.png" }
         local b = vgui.Create("DButton", equipmentPanel)
-        b:SetPos(7, 30 + (i - 1) * 43); b:SetSize(126, 37); b:SetText("")
+        b:SetPos(9, 32 + (i - 1) * 43); b:SetSize(ew - 18, 37); b:SetText("")
         b.Paint = function(self, w, h)
             local equipped = custom and custom.GetClientEquipped and custom.GetClientEquipped(LocalPlayer(), slotID)
             local item = custom and custom.GetClientItem and custom.GetClientItem(equipped)
@@ -431,14 +523,14 @@ local function rebuildEquipment()
             menu:Open()
         end
     end
-    local open = btn(equipmentPanel, "Кастомизация", C.accent, 126, 31)
-    open:SetPos(7, 30 + #order * 43 + 8); open.DoClick = function() if custom and custom.RequestEditor then custom.RequestEditor() end end
+    local open = btn(equipmentPanel, "Кастомизация", C.accent, ew - 18, 31)
+    open:SetPos(9, 32 + #order * 43 + 8); open.DoClick = function() if custom and custom.RequestEditor then custom.RequestEditor() end end
 
     -- Биоконтроль: окно аугментаций/чипов (GRM.AugmentationUI.Open)
     local augUI = GRM.AugmentationUI
     if augUI and isfunction(augUI.Open) then
-        local bio = btn(equipmentPanel, "Биоконтроль", C.green, 126, 31)
-        bio:SetPos(7, 30 + #order * 43 + 43)
+        local bio = btn(equipmentPanel, "Биоконтроль", C.green, ew - 18, 31)
+        bio:SetPos(9, 32 + #order * 43 + 43)
         bio.DoClick = function() augUI.Open() end
     end
 end
@@ -463,10 +555,37 @@ end
 INV.Anim = INV.Anim or {}
 local A = INV.Anim
 A.Time = 0.28           -- длительность выезда, секунды
-A.Gap = 14              -- зазор между половинами
-A.LeftW = 330
-A.RightW = 690
-A.Height = 620
+A.Gap = 16              -- зазор между половинами
+
+--[[ РАЗМЕР ОТ ЭКРАНА (заказ владельца 31.08: «инвентарь побольше — на
+     весь экран давай всё»).
+
+     Было жёстко 330 + 690 на 620 точек. На широком мониторе это
+     небольшое окошко в центре: сетка ужата в 6 колонок, модель
+     персонажа размером с ладонь, панель деталей не вмещала даже
+     собственные кнопки.
+
+     Считаем от экрана с полями по краям. Левой колонке (персонаж)
+     отдаём долю, остальное — предметам: сетке место нужнее.
+
+     Отдельной функцией, чтобы стенд проверял раскладку на разных
+     разрешениях без запуска игры. ]]
+A.Margin = 40           -- отступ от краёв экрана
+A.MinLeft, A.MaxLeft = 300, 470
+
+function A.Layout(sw, sh)
+    sw = sw or ScrW()
+    sh = sh or ScrH()
+    -- На узком экране поля меньше, иначе окну не остаётся места.
+    local m = sw < 1400 and 22 or A.Margin
+    local totalW = sw - m * 2
+    local height = sh - m * 2
+    local leftW = math.Clamp(math.floor(totalW * 0.26), A.MinLeft, A.MaxLeft)
+    local rightW = totalW - leftW - A.Gap
+    local x0 = m
+    local y = m
+    return leftW, rightW, height, x0, y
+end
 
 --[[ Плавность. Обычная линейная подача выглядит механически: панель
      едет с одинаковой скоростью и резко встаёт. Здесь замедление к
@@ -493,24 +612,64 @@ end
 local charPanel, invPanel, animStart, animClosing
 
 local function layoutMetrics()
-    local sw, sh = ScrW(), ScrH()
-    local total = A.LeftW + A.Gap + A.RightW
-    local x0 = math.floor((sw - total) * 0.5)
-    local y = math.floor((sh - A.Height) * 0.5)
-    return sw, sh, x0, y
+    local leftW, rightW, height, x0, y = A.Layout()
+    return ScrW(), ScrH(), x0, y, leftW, rightW, height
 end
 
 --[[ Карточка персонажа. Модель, имя, фракция и полосы состояния —
      те же, что в HUD: берём их из общего реестра GRM.HUD.BarList,
      а не переписываем расчёты заново. Если модуль добавит новую
      полосу (жажда, дыхание), она появится и здесь сама. ]]
-local function buildCharPanel(parent)
+--[[ КАМЕРА ПОД РАЗМЕР МОДЕЛИ (жалоба владельца 31.08: «модель поправь,
+     а то за границы выходит»).
+
+     Камера стояла по жёстким числам: позиция (58,0,40), взгляд в
+     (0,0,38), FOV 34. Эти числа подобраны под одну конкретную модель и
+     под панель 330x360. Модели в сборке разного роста (жандармерия,
+     гражданские, женские), а панель теперь тянется по экрану — при
+     любом отклонении персонаж вылезал за края.
+
+     Считаем от РЕАЛЬНЫХ габаритов модели: берём её ограничивающую
+     коробку, ставим взгляд в середину роста и отодвигаем камеру
+     настолько, чтобы фигура целиком влезла в кадр по вертикали.
+
+     Возвращает позицию камеры и точку взгляда — стенд проверяет их
+     без запуска игры. ]]
+function A.CameraFor(mins, maxs, panelW, panelH, fov)
+    fov = fov or 36
+    local height = math.max(1, (maxs and maxs.z or 72) - (mins and mins.z or 0))
+    local width = math.max(1, math.max(
+        math.abs((maxs and maxs.x or 16) - (mins and mins.x or -16)),
+        math.abs((maxs and maxs.y or 16) - (mins and mins.y or -16))))
+
+    local centerZ = (mins and mins.z or 0) + height * 0.5
+    -- Дистанция, при которой рост целиком помещается в вертикальный угол.
+    local half = math.rad(fov) * 0.5
+    local dist = (height * 0.5) / math.max(0.05, math.tan(half))
+
+    --[[ Узкая и высокая панель обрезает фигуру по БОКАМ: по вертикали
+         влезло, а плечи вышли за края. Поэтому проверяем и ширину
+         кадра, и если она мала — отодвигаемся ещё. ]]
+    local aspect = math.max(0.2, (panelW or 330) / math.max(1, panelH or 360))
+    local needByWidth = (width * 0.5) / math.max(0.05, math.tan(half) * aspect)
+    dist = math.max(dist, needByWidth)
+
+    -- Запас, чтобы фигура не упиралась в рамку панели.
+    dist = dist * 1.12
+    return Vector(dist, 0, centerZ), Vector(0, 0, centerZ)
+end
+
+local function buildCharPanel(parent, leftW, height)
     local lp = LocalPlayer()
 
+    -- Модели оставляем всю высоту панели минус шапка и место под полосы.
+    local barsH = 34 * math.max(3, #((GRM.HUD and GRM.HUD.BarList) and GRM.HUD.BarList() or {})) + 24
+    local mdlH = math.max(240, height - 70 - barsH)
+
     local mdl = vgui.Create("DModelPanel", parent)
-    mdl:SetPos(0, 44)
-    mdl:SetSize(A.LeftW, 360)
-    mdl:SetFOV(34)
+    mdl:SetPos(0, 62)
+    mdl:SetSize(leftW, mdlH)
+    mdl:SetFOV(36)
     mdl:SetModel(IsValid(lp) and lp:GetModel() or "models/player/kleiner.mdl")
     mdl:SetAnimated(true)
     local ent = mdl:GetEntity()
@@ -522,13 +681,19 @@ local function buildCharPanel(parent)
         end
         local seq = ent:LookupSequence("idle_all_01")
         if not seq or seq < 0 then seq = ent:LookupSequence("idle_subtle") end
+        if not seq or seq < 0 then seq = ent:LookupSequence("idle") end
         if seq and seq >= 0 then ent:ResetSequence(seq) end
     end
-    mdl:SetCamPos(Vector(58, 0, 40))
-    mdl:SetLookAt(Vector(0, 0, 38))
-    mdl:SetAmbientLight(Color(140, 148, 162))
+
+    -- Габариты берём у самой модели, а не угадываем числами.
+    local mins, maxs
+    if IsValid(ent) then mins, maxs = ent:GetRenderBounds() end
+    local camPos, lookAt = A.CameraFor(mins, maxs, leftW, mdlH, 36)
+    mdl:SetCamPos(camPos)
+    mdl:SetLookAt(lookAt)
+    mdl:SetAmbientLight(Color(150, 158, 172))
     mdl:SetDirectionalLight(BOX_TOP, Color(255, 255, 255))
-    mdl:SetDirectionalLight(BOX_FRONT, Color(190, 205, 230))
+    mdl:SetDirectionalLight(BOX_FRONT, Color(200, 214, 238))
     mdl.LayoutEntity = function(_, e)
         if not IsValid(e) then return end
         e:SetAngles(Angle(0, 32, 0))
@@ -539,8 +704,8 @@ local function buildCharPanel(parent)
          меняются каждый кадр, плодить и обновлять VGUI-элементы ради
          этого незачем. ]]
     local bars = vgui.Create("DPanel", parent)
-    bars:SetPos(16, 414)
-    bars:SetSize(A.LeftW - 32, A.Height - 414 - 16)
+    bars:SetPos(18, 62 + mdlH + 10)
+    bars:SetSize(leftW - 36, height - (62 + mdlH + 10) - 16)
     bars:SetPaintBackground(false)
     bars.Paint = function(_, w, h)
         local list = (GRM.HUD and GRM.HUD.BarList) and GRM.HUD.BarList() or {}
@@ -578,7 +743,7 @@ function INV.OpenGUI()
     if IsValid(charPanel) then charPanel:Remove() end
     if IsValid(invPanel) then invPanel:Remove() end
 
-    local sw, sh, x0, y = layoutMetrics()
+    local sw, sh, x0, y, LEFT_W, RIGHT_W, HEIGHT = layoutMetrics()
     animStart = SysTime()
     animClosing = false
 
@@ -588,8 +753,8 @@ function INV.OpenGUI()
     local cp = vgui.Create("DPanel")
     charPanel = cp
     GRM.UI.Track("inventory_char", cp)
-    cp:SetSize(A.LeftW, A.Height)
-    cp:SetPos(-A.LeftW - 40, y)
+    cp:SetSize(LEFT_W, HEIGHT)
+    cp:SetPos(-LEFT_W - 40, y)
     cp.Paint = function(_, w, h)
         draw.RoundedBox(9, 0, 0, w, h, C.bg)
         draw.RoundedBoxEx(9, 0, 0, w, 40, C.header, true, true, false, false)
@@ -608,7 +773,7 @@ function INV.OpenGUI()
                 TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
         end
     end
-    buildCharPanel(cp)
+    buildCharPanel(cp, LEFT_W, HEIGHT)
 
     ------------------------------------------------------------------
     -- ПРАВАЯ ПОЛОВИНА: предметы.
@@ -617,7 +782,7 @@ function INV.OpenGUI()
     invPanel = f
     frame = f
     GRM.UI.Track("inventory", f)
-    f:SetTitle("") f:SetSize(A.RightW, A.Height)
+    f:SetTitle("") f:SetSize(RIGHT_W, HEIGHT)
     f:SetPos(sw + 40, y)
     f:MakePopup()
     f:ShowCloseButton(false)
@@ -640,45 +805,74 @@ function INV.OpenGUI()
         draw.RoundedBox(9, 0, 0, w, h, C.bg)
         draw.RoundedBoxEx(9, 0, 0, w, 40, C.header, true, true, false, false)
         draw.SimpleText("ИНВЕНТАРЬ", "GRMInv2_Title", 15, 20, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        draw.SimpleText("ЛКМ + перетащить — переместить  |  ПКМ — использовать", "GRMInv2_Small",
+        draw.SimpleText("ЛКМ + перетащить — переместить  |  ПКМ — меню действий", "GRMInv2_Small",
             w - 44, 20, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
     end
 
     local x = btn(f, "✕", C.red, 26, 26)
-    x:SetPos(A.RightW - 34, 7)
+    x:SetPos(RIGHT_W - 34, 7)
     x.DoClick = function() INV.CloseGUI() end
 
     weightPanel = vgui.Create("DLabel", f)
-    weightPanel:SetPos(16, 48) weightPanel:SetSize(A.RightW - 32, 23)
+    weightPanel:SetPos(16, 48) weightPanel:SetSize(RIGHT_W - 32, 23)
     weightPanel:SetFont("GRMInv2_Small")
     drawWeight()
 
+    --[[ ВНУТРЕННЯЯ РАСКЛАДКА ОТ РАЗМЕРА ОКНА.
+
+         Раньше все координаты были жёсткими: сетка 510x332, детали
+         330x90. Именно из-за высоты 90 у панели деталей владелец не
+         видел кнопок «Использовать» и «Выбросить» — они стоят на
+         y=132, то есть НИЖЕ дна панели и просто обрезались.
+
+         Теперь считаем от фактических размеров. Панели деталей отдаём
+         полноценную высоту: в ней предпросмотр, описание и четыре
+         кнопки действий. ]]
+    local PAD = 16
+    local EQ_W = 168
+    local FOOTER_H = 54
+    local DETAIL_H = 214
+
+    local contentY = 78
+    local contentH = HEIGHT - contentY - FOOTER_H - PAD
+    local gridH = contentH - DETAIL_H - 12
+    local gridW = RIGHT_W - PAD * 2 - EQ_W - 12
+    local gridX = PAD + EQ_W + 12
+
     equipmentPanel = vgui.Create("DPanel", f)
-    equipmentPanel:SetPos(16, 78) equipmentPanel:SetSize(140, 430)
+    equipmentPanel:SetPos(PAD, contentY) equipmentPanel:SetSize(EQ_W, contentH)
     equipmentPanel.Paint = function(_, w, h) draw.RoundedBox(7, 0, 0, w, h, C.panel) end
 
     slotsPanel = vgui.Create("DPanel", f)
-    slotsPanel:SetPos(164, 78) slotsPanel:SetSize(510, 332)
+    slotsPanel:SetPos(gridX, contentY) slotsPanel:SetSize(gridW, gridH)
     slotsPanel.Paint = function(_, w, h) draw.RoundedBox(7, 0, 0, w, h, C.panel) end
 
+    local detailW = math.floor(gridW * 0.62)
     detailPanel = vgui.Create("DPanel", f)
-    detailPanel:SetPos(164, 418) detailPanel:SetSize(330, 90)
+    detailPanel:SetPos(gridX, contentY + gridH + 12)
+    detailPanel:SetSize(detailW, DETAIL_H)
     detailPanel.Paint = function(_, w, h) draw.RoundedBox(7, 0, 0, w, h, C.panel) end
 
     local actions = vgui.Create("DPanel", f)
-    actions:SetPos(502, 418) actions:SetSize(172, 90)
-    actions.Paint = function(_, w, h) draw.RoundedBox(7, 0, 0, w, h, C.panel) end
-    local store = btn(actions, "Убрать оружие", C.accent, 148, 32)
-    store:SetPos(12, 10)
+    actions:SetPos(gridX + detailW + 12, contentY + gridH + 12)
+    actions:SetSize(gridW - detailW - 12, DETAIL_H)
+    actions.Paint = function(_, w, h)
+        draw.RoundedBox(7, 0, 0, w, h, C.panel)
+        draw.SimpleText("ОРУЖИЕ В РУКАХ", "GRMInv2_Small", 14, 14, C.dim)
+    end
+    local aw = actions:GetWide() - 24
+    local store = btn(actions, "Убрать в инвентарь", C.accent, aw, 34)
+    store:SetPos(12, 38)
     store.DoClick = function() if INV.StoreWeapon then INV.StoreWeapon() end end
-    local dropWep = btn(actions, "Выбросить оружие", C.red, 148, 32)
-    dropWep:SetPos(12, 48)
+    local dropWep = btn(actions, "Выбросить оружие", C.red, aw, 34)
+    dropWep:SetPos(12, 80)
     dropWep.DoClick = function() if INV.DropWeapon then INV.DropWeapon() end end
 
     local footer = vgui.Create("DLabel", f)
-    footer:SetPos(16, 516) footer:SetSize(A.RightW - 32, 90) footer:SetWrap(true)
+    footer:SetPos(PAD, HEIGHT - FOOTER_H) footer:SetSize(RIGHT_W - PAD * 2, FOOTER_H - 6)
+    footer:SetWrap(true)
     footer:SetFont("GRMInv2_Small") footer:SetTextColor(C.dim)
-    footer:SetText("Перегруз: после 50 кг бег не ускоряет игрока. После 62.5 кг нельзя поднимать новые предметы. Вес учитывает содержимое инвентаря, оружие и боеприпасы.\n/drop — выбросить оружие  |  /store — убрать в инвентарь  |  /inv — открыть инвентарь")
+    footer:SetText("Перегруз: после 50 кг бег не ускоряет игрока. После 62.5 кг нельзя поднимать новые предметы.\n/drop — выбросить оружие  |  /store — убрать в инвентарь  |  /inv — открыть инвентарь")
 
     ------------------------------------------------------------------
     -- Сам выезд. Think, а не таймер: движение должно идти в такт
@@ -688,11 +882,11 @@ function INV.OpenGUI()
         local t = (SysTime() - (animStart or 0)) / A.Time
         if animClosing then t = 1 - t end
         t = math.Clamp(t, 0, 1)
-        local _, _, lx, ly = layoutMetrics()
+        local _, _, lx, ly, lw, rw = layoutMetrics()
         if IsValid(charPanel) then
-            charPanel:SetPos(A.SlideX(t, lx, true, A.LeftW, ScrW()), ly)
+            charPanel:SetPos(A.SlideX(t, lx, true, lw, ScrW()), ly)
         end
-        f:SetPos(A.SlideX(t, lx + A.LeftW + A.Gap, false, A.RightW, ScrW()), ly)
+        f:SetPos(A.SlideX(t, lx + lw + A.Gap, false, rw, ScrW()), ly)
         if animClosing and t <= 0 then
             f:Remove()
         end
