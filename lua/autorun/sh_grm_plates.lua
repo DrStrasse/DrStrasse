@@ -1685,10 +1685,22 @@ if SERVER then
         local hitUs = tr.Entity == veh or vehicleBase(tr.Entity) == veh
         if not hitUs then return nil end
         if tr.HitNormal:Length() < 0.2 then return nil end
-        -- нормаль должна смотреть ПРИМЕРНО наружу (против направления луча)
+        --[[ НОРМАЛЬ ДОЛЖНА СМОТРЕТЬ НАРУЖУ — то есть ВДОЛЬ dir.
+
+             Луч идёт из-за пределов машины внутрь: start = центр +
+             dir * вынос, endpos = центр - dir * 8. Значит сам луч
+             направлен ВДОЛЬ -dir, а наружная нормаль поверхности —
+             ВДОЛЬ dir.
+
+             Раньше проверка была перевёрнута: n:Dot(-dir) < 0.35.
+             Для правильного попадания скалярное произведение давало
+             -1, и трассировка ОТБРАСЫВАЛА ВСЕ попадания — и спереди,
+             и сзади. До поверхности кузова дело не доходило никогда:
+             знак всегда ставился грубым фолбэком по габариту, отсюда
+             и «крепление сзади крепит хрен пойми как». ]]
         local n = Vector(tr.HitNormal.x, tr.HitNormal.y, tr.HitNormal.z)
         n:Normalize()
-        if n:Dot(-dir) < 0.35 then return nil end
+        if n:Dot(dir) < 0.35 then return nil end
         return { pos = tr.HitPos, normal = n }
     end
 
@@ -1715,9 +1727,16 @@ if SERVER then
         dir:Normalize()
         local span = math.max(wmax.x - wmin.x, wmax.y - wmin.y) * 0.75 + 90
 
-        -- веер высот: от 82% габарита вниз до floorZ. Верхние лучи чаще
-        -- попадают в сам борт/дверь багажника, а не в колесо и землю.
-        local fracs = { 0.82, 0.66, 0.52, 0.40, 0.30, 0.22 }
+        --[[ ВЕЕР ВЫСОТ: ОТ БАМПЕРА ВВЕРХ.
+
+             Номер вешают на бампер, а не на крышку багажника. Раньше
+             лучи шли сверху вниз (0.82 → 0.22), а цикл останавливался
+             на ПЕРВОМ удачном — то есть на самом верхнем. Знак уезжал
+             под крышку багажника, а то и под крышу: «крепит хрен пойми
+             как». Теперь первыми идут высоты бампера, вверх уходим
+             только если бампер трассировке не достался. Пол кузова
+             (floorZ) по-прежнему отсекает колёса и дорогу. ]]
+        local fracs = { 0.28, 0.36, 0.22, 0.44, 0.52, 0.18, 0.64, 0.80 }
         -- небольшое боковое смещение луча (левее/правее центра), чтобы
         -- обойти запасное колесо по центру кормы
         local side = Vector(-dir.y, dir.x, 0)
@@ -1729,9 +1748,11 @@ if SERVER then
                 local cc = c + side * off
                 local hit = traceAtHeight(veh, dir, cc, span, z)
                 if hit and hit.pos.z >= floorZ then
-                    -- берём самый высокий и центральный из валидных
-                    if not best or hit.pos.z > best.pos.z
-                        or (math.abs(hit.pos.z - best.pos.z) < 2 and math.abs(off) < math.abs(best.off or 99)) then
+                    --[[ Из попаданий на одной высоте берём ближайшее к
+                         СЕРЕДИНЕ кормы. Раньше выбирали самое высокое,
+                         но внутри одной высоты это всё равно что
+                         случайное: знак цеплялся краем за крыло. ]]
+                    if not best or math.abs(off) < math.abs(best.off) then
                         best = { pos = hit.pos, normal = hit.normal, up = veh:GetUp(), off = off }
                     end
                 end
@@ -1743,9 +1764,24 @@ if SERVER then
             return { pos = best.pos, normal = best.normal, up = best.up }
         end
 
-        -- фолбэк: точка по границе габарита на 55% высоты, нормаль — ось корпуса
-        local face = Vector(c.x, c.y, wmin.z + math.Clamp(h * 0.55, floorZ + 6, wmax.z - 6))
-            + dir * (math.max(wmax.x - wmin.x, wmax.y - wmin.y) * 0.48)
+        --[[ ФОЛБЭК: трассировка не достала кузов — у части моделей
+             коллизия не совпадает с габаритом. Ставим знак на уровень
+             БАМПЕРА у границы габарита: раньше было 55% высоты, и знак
+             висел посреди борта.
+
+             Границу считаем проекцией углов габарита на направление, а
+             не долей от большей стороны: на длинной машине старая
+             формула уносила точку далеко наружу, и валидация её
+             отбрасывала — знак вовсе не крепился. ]]
+        local extent = 0
+        for _, x in ipairs({ wmin.x, wmax.x }) do
+            for _, y in ipairs({ wmin.y, wmax.y }) do
+                local d = (x - c.x) * dir.x + (y - c.y) * dir.y
+                if d > extent then extent = d end
+            end
+        end
+        local face = Vector(c.x, c.y, wmin.z + math.Clamp(h * 0.30, floorZ + 4, wmax.z - 6))
+            + dir * (extent + 2)
         return { pos = face, normal = -dir, up = veh:GetUp() }
     end
 

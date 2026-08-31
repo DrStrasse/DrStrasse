@@ -960,5 +960,100 @@ do
     ok(PL.LayoutFor(layoutCar) == nil, "layout класса сбрасывается")
 end
 
+-- ================================================================
+print("\n=== КРЕПЛЕНИЕ СЗАДИ: ТОЧКА НА БАМПЕРЕ, А НЕ ПОД КРЫШЕЙ ===")
+-- ================================================================
+do
+    --[[ ЖАЛОБА ВЛАДЕЛЬЦА: «нету нормального крепления сзади, крепит
+         хрен пойми как». Причин оказалось две, и обе в поиске точки:
+
+         1. Проверка нормали была ПЕРЕВЁРНУТА: луч идёт из-за пределов
+            машины внутрь, то есть вдоль -dir, а наружная нормаль
+            смотрит вдоль dir. Проверяли n:Dot(-dir) — для верного
+            попадания это -1, поэтому отбрасывались ВСЕ попадания.
+            До поверхности кузова дело не доходило, знак всегда
+            ставился грубым фолбэком по габариту.
+
+         2. Веер высот шёл сверху вниз (0.82 → 0.22) и останавливался
+            на первом удачном — самом ВЕРХНЕМ. Номер уезжал под крышку
+            багажника.
+
+         Здесь трассировка настоящая: пересечение луча с габаритом
+         машины. Без неё эти две ошибки не поймать — мок не даёт
+         util.TraceLine, и код молча уходит в фолбэк. ]]
+    local car = ents.Create("sim_mount_car")
+    car:SetPos(Vector(0, 0, 0))
+
+    local MN, MX = Vector(-110, -40, 0), Vector(110, 40, 60)   -- габарит мока
+    --[[ Габарит КОЛЛИЗИИ уже визуального: у настоящих машин так и
+         есть (бампер выступает за коробку столкновений). Без этого
+         различия трассировка и фолбэк дают почти одну точку, и
+         перевёрнутую проверку нормали не отличить. ]]
+    local TB = { min = Vector(-104, -40, 0), max = Vector(104, 40, 60) }
+    local H = MX.z - MN.z                                       -- 60
+    local FLOOR = MN.z + math.Clamp(H * 0.18, 12, 24)           -- уровень кузова
+    local BUMPER_TOP = MN.z + H * 0.45                          -- верх бамперной зоны
+
+    -- Пересечение отрезка с габаритом: возвращает точку и нормаль грани.
+    local function hitBox(p0, p1)
+        local d = Vector(p1.x - p0.x, p1.y - p0.y, p1.z - p0.z)
+        local tmin, axis = 0, 1
+        local keys = { "x", "y", "z" }
+        for i, k in ipairs(keys) do
+            local o, dd = p0[k], d[k]
+            if math.abs(dd) < 1e-9 then
+                if o < TB.min[k] or o > TB.max[k] then return nil end
+            else
+                local t1, t2 = (TB.min[k] - o) / dd, (TB.max[k] - o) / dd
+                if t1 > t2 then t1, t2 = t2, t1 end
+                if t1 > tmin then tmin, axis = t1, i end
+                if t2 < tmin then return nil end
+            end
+        end
+        local hit = Vector(p0.x + d.x * tmin, p0.y + d.y * tmin, p0.z + d.z * tmin)
+        local n = Vector(0, 0, 0)
+        n[keys[axis]] = d[keys[axis]] > 0 and -1 or 1
+        return hit, n
+    end
+
+    local oldTrace = util.TraceLine
+    util.TraceLine = function(opts)
+        local hit, n = hitBox(opts.start, opts.endpos)
+        if not hit then return {} end
+        return { Hit = true, Entity = car, HitPos = hit, HitNormal = n }
+    end
+
+    local front, rear = PL.MountEnds(car)
+    ok(rear ~= nil, "задняя точка крепления найдена")
+    if rear then
+        -- Точка на поверхности кузова, а не на отлёте от габарита.
+        ok(math.abs(rear.pos.x - TB.min.x) < 3,
+            "ЗАДНЯЯ ТОЧКА НАЙДЕНА ТРАССИРОВКОЙ, А НЕ ФОЛБЭКОМ", tostring(rear.pos.x))
+        -- Номер вешают на бампер, не под крышку багажника.
+        ok(rear.pos.z >= FLOOR and rear.pos.z <= BUMPER_TOP,
+            "ЗНАК СТАЛ НА ВЫСОТУ БАМПЕРА, А НЕ ПОД КРЫШУ",
+            ("z=%.1f, бампер %.1f..%.1f"):format(rear.pos.z, FLOOR, BUMPER_TOP))
+        -- И по центру кормы, а не краем за крыло.
+        ok(math.abs(rear.pos.y) <= 22, "знак по центру кормы", tostring(rear.pos.y))
+        -- Нормаль смотрит назад.
+        ok(rear.normal and rear.normal.x < -0.35, "нормаль смотрит назад",
+            rear.normal and tostring(rear.normal.x))
+    end
+    ok(front ~= nil and front.pos.x > 100, "передняя точка на переднем борте",
+        front and tostring(front.pos.x))
+
+    -- Фолбэк (трассировка не достала кузов) тоже обязан давать бампер.
+    util.TraceLine = function() return {} end
+    local _, rear2 = PL.MountEnds(car)
+    ok(rear2 ~= nil, "фолбэк даёт точку")
+    if rear2 then
+        ok(rear2.pos.z >= FLOOR and rear2.pos.z <= BUMPER_TOP,
+            "ФОЛБЭК ТОЖЕ НА ВЫСОТЕ БАМПЕРА", tostring(rear2.pos.z))
+        ok(rear2.pos.x < TB.min.x, "фолбэк стоит у задней границы габарита",
+            tostring(rear2.pos.x))
+    end
+    util.TraceLine = oldTrace
+end
+
 print(("\nPLATES: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end
