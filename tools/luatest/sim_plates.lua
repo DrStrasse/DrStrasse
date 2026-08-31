@@ -149,6 +149,19 @@ ents = {
         function e:LocalToWorld(v) return Vector(v.x + self._pos.x, v.y + self._pos.y, v.z + self._pos.z) end
         function e:WorldToLocalAngles(a) return Angle(a.p, a.y, a.r) end
         function e:LocalToWorldAngles(a) return Angle(a.p, a.y, a.r) end
+        --[[ SetLocalPos/SetLocalAngles — как в GMod: относительно
+             РОДИТЕЛЯ. В моке их не было, поэтому редактор подгонки
+             знака стрелками стендом не проверялся вовсе. ]]
+        function e:SetLocalPos(v)
+            local par = self._parent
+            if IsValid(par) and par.LocalToWorld then self._pos = par:LocalToWorld(v)
+            else self._pos = v end
+        end
+        function e:SetLocalAngles(a)
+            local par = self._parent
+            if IsValid(par) and par.LocalToWorldAngles then self._ang = par:LocalToWorldAngles(a)
+            else self._ang = a end
+        end
         function e:EmitSound() end
         function e:Remove() self._valid = false end
         function e:SetupPlate(rec)
@@ -1225,6 +1238,77 @@ do
         "годная память на кузове применяется как есть",
         mp2 and tostring(mp2.pos.x) .. " exact=" .. tostring(mp2.exact))
     gRec.plateMemory = nil
+end
+
+-- ================================================================
+print("\n=== 27. ПОДГОНКА СТРЕЛКАМИ: ПРЕДЕЛ И ПОЛ КУЗОВА ===")
+-- ================================================================
+do
+    --[[ ЖАЛОБА ВЛАДЕЛЬЦА: «невозможно отодвинуть вперёд или назад
+         сверх лимита значений и почему-то под машиной куда-то вниз
+         уходит».
+
+         PL.NudgeLimits.move = 64 накладывался на САМУ локальную
+         координату: math.Clamp(pos.x, -64, 64). Корма типовой
+         машины — это x ≈ -110, то есть за пределами. Первый же
+         шаг стрелкой прибивал знак к -64: внутрь кузова, а не на
+         корму. По z то же самое: знак уезжал на -64, то есть под
+         машину под днище.
+
+         Предел должен считаться от того места, где знак стоял до
+         начала подгонки, а не от нуля локальных координат. ]]
+    local owner = mkPly("Курт", "")
+    local car = ents.Create("sim_car")
+    car:SetPos(Vector(0, 0, 0))
+    local recID = "veh_nudge_1"
+    local gRec = { id = recID, name = "Седан", plates = {}, plate = "" }
+    car.GRMGarageID = recID
+    car.GRMGarageOwner = owner
+    GRM.VehicleDealer = GRM.VehicleDealer or {}
+    GRM.VehicleDealer.FindRecord = function(_, id) return id == recID and gRec or nil end
+    GRM.VehicleDealer.SaveGarages = function() end
+    GRM.VehicleDealer.Garages = { [owner:SteamID64() .. ":char1"] = { [recID] = gRec } }
+    GRM.Fleet = nil
+
+    local nrec = { number = "Н002НН", type = "civil",
+        ownerKey = owner:SteamID64() .. ":char1", status = "active" }
+    PL.Data.plates[nrec.number] = nrec
+
+    -- Ставим знак на корму: x = -110, как у настоящей машины.
+    local plate = PL.SpawnPlate(nrec.number, car:LocalToWorld(Vector(-110, 0, 20)),
+        car:LocalToWorldAngles(Angle(0, 180, 0)), owner)
+    PL.Attach(plate, car, owner)
+
+    local lp0 = car:WorldToLocal(plate:GetPos())
+    ok(math.abs(lp0.x - (-110)) < 2, "знак стоит на корме", tostring(lp0.x))
+
+    -- Двигаем НАЗАД на 5: было бы -115. Старый предел прибил бы к -64.
+    local okN, errN = PL.NudgeMounted(plate, "move", "x", -5)
+    ok(okN == true, "подгонка по x проходит", tostring(errN))
+    local lp1 = car:WorldToLocal(plate:GetPos())
+    ok(math.abs(lp1.x - (-115)) < 2, "ПОДГОНКА ПО X НЕ ПРИБИВАЕТСЯ К ПРЕДЕЛУ ±64",
+        ("стало x=%.1f (было -110, ждали -115)"):format(lp1.x))
+
+    -- Двигаем ВПЕРЁД: тоже должно ходить.
+    PL.NudgeMounted(plate, "move", "x", 20)
+    local lp2 = car:WorldToLocal(plate:GetPos())
+    ok(math.abs(lp2.x - (-95)) < 2, "подгонка вперёд ходит", tostring(lp2.x))
+
+    -- ВНИЗ: знак не должен уезжать под машину. Пол кузова у мока —
+    -- wmin.z + clamp(60 * 0.18, 12, 24) = 12.
+    local okDown, errDown = PL.NudgeMounted(plate, "move", "z", -8)
+    if okDown then
+        local lp3 = car:WorldToLocal(plate:GetPos())
+        ok(lp3.z >= 12, "ЗНАК НЕ УЕЗЖАЕТ ПОД МАШИНУ", tostring(lp3.z))
+    else
+        ok(true, "ЗНАК НЕ УЕЗЖАЕТ ПОД МАШИНУ (шаг отклонён: " .. tostring(errDown) .. ")")
+    end
+    local okSink = select(1, PL.NudgeMounted(plate, "move", "z", -100))
+    ok(okSink == false, "попытка увести знак под машину отклоняется", tostring(okSink))
+
+    -- ВВЕРХ ограничение не мешает.
+    local okUp = select(1, PL.NudgeMounted(plate, "move", "z", 20))
+    ok(okUp == true, "вверх знак двигается", tostring(okUp))
 end
 
 print(("\nPLATES: %d/%d, провалов: %d"):format(pass, pass + fail, fail))

@@ -502,14 +502,30 @@ end
 
 --- Подвинуть/повернуть сохранённое крепление. kind: "move" | "turn".
 --  Возвращает НОВУЮ таблицу крепления (чистая функция, без побочек).
-function PL.NudgeMount(mount, kind, axis, delta)
+function PL.NudgeMount(mount, kind, axis, delta, base)
     local m = PL.NormalizeMount(mount)
     delta = tonumber(delta) or 0
     axis = string.lower(tostring(axis or ""))
     if kind == "move" then
         local lim = PL.NudgeLimits.move
         if m.pos[axis] == nil then return m, false end
-        m.pos[axis] = math.Clamp(m.pos[axis] + delta, -lim, lim)
+        --[[ ПРЕДЕЛ СЧИТАЕМ ОТ ТОГО МЕСТА, ГДЕ ЗНАК СТОЯЛ, А НЕ ОТ НУЛЯ
+             локальных координат машины (жалоба владельца 31.08:
+             «невозможно отодвинуть вперёд или назад сверх лимита»).
+
+             Пока предел ±64 накладывался на саму координату, у любой
+             машины длиннее 128 юнитов знак было не вынести на корму:
+             pos.x у заднего знака около -110, а первый же шаг
+             прибивал его math.Clamp к -64 — ВНУТРЬ кузова. И ровно
+             так же по z: знак уезжал на -64, то есть под машину.
+             Теперь это предел СМЕЩЕНИЯ от точки, где знак стоял
+             перед началом подгонки. ]]
+        local lo, hi = -lim, lim
+        if istable(base) and istable(base.pos) and tonumber(base.pos[axis]) ~= nil then
+            local b = tonumber(base.pos[axis])
+            lo, hi = b - lim, b + lim
+        end
+        m.pos[axis] = math.Clamp(m.pos[axis] + delta, lo, hi)
         return m, true
     elseif kind == "turn" then
         local lim = PL.NudgeLimits.turn
@@ -1272,6 +1288,8 @@ if SERVER then
         if IsValid(phys) then phys:EnableMotion(false) end
         plate.GRMPlateVehicle = veh
         plate:SetNWBool("GRM_PlateMounted", true)
+        -- подгонка стрелками начинается заново от нового места
+        plate.GRMNudgeBase = nil
 
         local number = PL.NormalizeNumber(plate:GetNWString("GRM_Plate", ""))
         local rec = PL.Get(number)
@@ -1980,10 +1998,40 @@ if SERVER then
         local la = veh:WorldToLocalAngles(plate:GetAngles())
         local pos = { x = lp.x, y = lp.y, z = lp.z }
         local ang = { p = la.p, y = la.y, r = la.r }
+        -- Точка отсчёта для предела: где знак стоял до начала подгонки.
+        if not istable(plate.GRMNudgeBase) then
+            plate.GRMNudgeBase = { pos = { x = pos.x, y = pos.y, z = pos.z },
+                                   ang = { p = ang.p, y = ang.y, r = ang.r } }
+        end
+
         local cur = PL.BlankMount()
         cur.pos, cur.ang = pos, ang
-        local moved, ok2 = PL.NudgeMount(cur, kind, axis, delta)
+        local moved, ok2 = PL.NudgeMount(cur, kind, axis, delta, plate.GRMNudgeBase)
         if not ok2 then return false, "Неизвестная ось" end
+
+        --[[ ПОЛ КУЗОВА (жалоба владельца 31.08: «почему-то под машиной
+             куда-то вниз уходит»). Стрелкой «вниз» знак можно было
+             увести под днище и даже под дорогу: предел ±64 отсчитывался
+             от нуля, а не от бампера. Теперь ниже плоскости колёс не
+             опускаем — бампер он и есть бампер, ниже некуда. ]]
+        if kind == "move" and (axis == "z" or axis == "x" or axis == "y") then
+            local wmin, wmax
+            if isfunction(veh.WorldSpaceAABB) then
+                wmin, wmax = veh:WorldSpaceAABB()
+            else
+                local a, b = veh:OBBMins(), veh:OBBMaxs()
+                local vp = veh:GetPos()
+                wmin, wmax = vp + a, vp + b
+            end
+            if wmin and wmax then
+                local h = math.max(8, wmax.z - wmin.z)
+                local floorZ = wmin.z + math.Clamp(h * 0.18, 12, 24)
+                local wz = veh:LocalToWorld(Vector(moved.pos.x, moved.pos.y, moved.pos.z)).z
+                if wz < floorZ then
+                    return false, "Ниже уровня кузова знак не опускаем"
+                end
+            end
+        end
         plate:SetLocalPos(Vector(moved.pos.x, moved.pos.y, moved.pos.z))
         plate:SetLocalAngles(Angle(moved.ang.p, moved.ang.y, moved.ang.r))
         rememberLayout(veh)
