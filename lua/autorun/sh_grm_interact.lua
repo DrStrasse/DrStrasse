@@ -83,6 +83,56 @@ function I.FindTarget(ply, range)
     return nil
 end
 
+--[[ ПРИКИДКА ДОСТУПА К ТРАНСПОРТУ НА КЛИЕНТЕ.
+
+     Нужна ТОЛЬКО чтобы нарисовать меню: показать пункт живым или
+     приглушённым. Решение всё равно принимает сервер в runAction —
+     подделать эту функцию и получить чужую машину нельзя.
+
+     Считаем по тем же полям, что сервер публикует через VK.SyncVehicle
+     (NW2), и по тем же правилам, что в VK.CanInteract: владелец, своя
+     фракция, бесхозная машина. Чего клиент знать не может — выданные
+     ключи от чужой машины — трактуем в пользу игрока: пункт покажем
+     живым, а сервер откажет с внятной причиной. Обратный вариант хуже:
+     человек с ключом видел бы серые пункты и решил, что всё сломано. ]]
+function I.ClientCanVehicle(ent, ply)
+    local V = _G.VK
+    if not V or not IsValid(ent) or not IsValid(ply) then return false end
+    if ply.IsSuperAdmin and ply:IsSuperAdmin() then return true end
+
+    local ownerType, ownerSteam, _, facName = "", "", "", ""
+    if V.GetOwnerState then
+        ownerType, ownerSteam, _, facName = V.GetOwnerState(ent)
+    else
+        ownerType = ent:GetNW2String("VK_OwnerType", "")
+        ownerSteam = ent:GetNW2String("VK_OwnerSteam", "")
+        facName = ent:GetNW2String("VK_FactionName", "")
+    end
+
+    -- Бесхозная машина открыта всем: так же считает и сервер.
+    if ownerType == "" then return true end
+
+    local OT = V.OWNER_TYPE or { PLAYER = "player", FACTION = "faction" }
+
+    if ownerType == OT.FACTION then
+        --[[ Фракцию сверяем по NW-полю игрока: ядро публикует его для
+             текущего персонажа, и это ровно то, на что смотрит
+             VK.IsFactionMember первым делом. ]]
+        local mine = ply:GetNWString("GRM_Faction", "")
+        return mine ~= "" and facName ~= "" and mine == facName
+    end
+
+    if ownerType == OT.PLAYER then
+        if ownerSteam ~= "" and ownerSteam == ply:SteamID64() then return true end
+        if ownerSteam ~= "" and ownerSteam == ply:SteamID() then return true end
+        --[[ Владелец другой. Ключ мог быть выдан, но клиенту связка не
+             приезжает — пусть решает сервер. ]]
+        return true
+    end
+
+    return true
+end
+
 --[[ Действия для цели. Один список на клиента и сервер: клиент рисует
      его в кольце, сервер по нему же проверяет, что пришло.
 
@@ -127,7 +177,26 @@ function I.Actions(ply, ent, kind)
              пустое — там оно только серверное. ]]
         local locked = ent:GetNW2Bool("VK_Locked", false)
         if SERVER then locked = ent.VK_Locked == true end
-        local can = V.CanInteract and V.CanInteract(ent, ply, false) or false
+
+        --[[ ДОСТУП К ТРАНСПОРТУ (баг владельца 31.08: «пытаюсь через Е
+             отпереть дверь машины, пишет нет ключа или доступа, хотя
+             машина фракционная»).
+
+             VK.CanInteract объявлена ТОЛЬКО на сервере
+             (sv_vehicle_keys.lua) и читает серверные поля veh.VK_*. На
+             клиенте её просто нет: вызов возвращал nil, и все пункты
+             гасли с «Нет ключа или доступа» даже у своей фракции.
+
+             Поэтому: на сервере спрашиваем ядро (оно и решает), а на
+             клиенте прикидываем по сетевым полям — только чтобы
+             нарисовать меню. Клиентская оценка НИ НА ЧТО не влияет:
+             сервер всё равно перепроверяет права сам в runAction. ]]
+        local can
+        if SERVER then
+            can = V.CanInteract and V.CanInteract(ent, ply, false) or false
+        else
+            can = I.ClientCanVehicle(ent, ply)
+        end
 
         out[#out + 1] = {
             id = locked and "veh_unlock" or "veh_lock",
@@ -256,7 +325,16 @@ local function runAction(ply, ent, id)
     if id == "door_knock" then
         --[[ Стук слышат вокруг двери, а не только владелец: это
              отыгрышное действие, его смысл в том, чтобы человек за
-             дверью услышал. ]]
+             дверью услышал.
+
+             СВОЙ КУЛДАУН, отдельно от общего ограничителя. Общий даёт
+             серию из 4 действий подряд — для замка это нормально, а
+             стук при этом бьёт звуком по всем вокруг, и подряд
+             четырьмя ударами можно шуметь на весь квартал. Секунда
+             между ударами отыгрышу не мешает, а спам обрывает. ]]
+        ply._grmKnockAt = ply._grmKnockAt or 0
+        if CurTime() < ply._grmKnockAt then return end
+        ply._grmKnockAt = CurTime() + 1
         ent:EmitSound("physics/wood/wood_crate_impact_hard2.wav", 75, 100)
         notify(ply, "Вы постучали.", 200, 210, 225)
         return
