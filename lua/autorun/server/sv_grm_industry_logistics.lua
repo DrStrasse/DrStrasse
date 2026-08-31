@@ -282,6 +282,10 @@ function I.DeliverOrder(ply, ent)
     local risk = riskAt(ply, IsValid(rec.ent) and rec.ent:GetPos() or nil)
     local reward = I.RewardFor(deliveredValue, route.distance or 0, risk, onTime)
 
+    --[[ РЕШЕНИЕ ВЛАДЕЛЬЦА (31.08): «награду за выполненную работу
+         оставить на руки». Платим лично водителю, а не в казну фракции:
+         рейс — его заработок. Стенд sim_industry_logistics проверяет,
+         что деньги уходят именно тому, кто вёз. ]]
     if GRM.GiveMoney then GRM.GiveMoney(ply, reward, "industry_route") end
     if GRM.Audit and GRM.Audit.Write then
         GRM.Audit.Write("industry", "deliver", ply, nil,

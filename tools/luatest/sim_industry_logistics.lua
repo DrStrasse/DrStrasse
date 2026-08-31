@@ -100,7 +100,7 @@ GRM.Persistence = {
 GRM.Audit = { Write = function() end }
 GRM.Access = { Register = function() end, Can = function() return true end }
 GRM.Notify = function() end
-GRM.GiveMoney = function(ply, amount) PAID[#PAID + 1] = amount end
+GRM.GiveMoney = function(ply, amount) PAID[#PAID + 1] = { ply = ply, amount = amount } end
 GRM.TakeMoney = function() end
 GRM.GetBalance = function() return 0 end
 GRM.HasMoney = function() return true end
@@ -329,9 +329,10 @@ do
     ok(C.IsEmpty(route.cargo) or C.Get(route.cargo) == nil, "грузовой отсек пуст")
     ok(I.RouteFor(ply) == nil, "рейс закрыт")
     ok(order.state == "delivered", "заказ выполнен")
-    ok(#PAID == 1 and PAID[1] > 0, "награда выплачена", PAID[1])
-    ok(PAID[1] > I.PriceOf("arccw_makarov") * 10 * 0.05,
-        "награда соразмерна цене довезённого", PAID[1])
+    ok(#PAID == 1 and PAID[1].amount > 0, "награда выплачена", PAID[1] and PAID[1].amount)
+    ok(PAID[1].amount > I.PriceOf("arccw_makarov") * 10 * 0.05,
+        "награда соразмерна цене довезённого", PAID[1].amount)
+    ok(PAID[1].ply == ply, "НАГРАДА УШЛА В РУКИ ВОДИТЕЛЯ, а не в казну фракции")
 end
 
 -- ================================================================

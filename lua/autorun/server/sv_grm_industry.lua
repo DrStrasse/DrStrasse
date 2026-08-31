@@ -750,6 +750,10 @@ Actions.deposit = function(ply, ent, rec)
 end
 
 -- Станок: забрать из выхода.
+--[[ РЕШЕНИЕ ВЛАДЕЛЬЦА (31.08): «Станки общие». Владельца у выхода
+     станка НЕТ: забрать готовое может любой, кто подошёл. Это осознанный
+     выбор, а не недосмотр — не добавлять сюда проверку владельца или
+     фракции. Стенд sim_industry_job это решение фиксирует. ]]
 Actions.withdraw = function(ply, ent, rec)
     local itemID = net.ReadString()
     local count = net.ReadUInt(16)
@@ -780,7 +784,11 @@ Actions.job_start = function(ply, ent, rec)
     return I.StartJob(ply, ent, recipeID)
 end
 
--- Подхватить чужую задачу: станок простаивает, работа ничья.
+--[[ Подхватить чужую задачу. Станки общие, поэтому:
+       * работу, вставшую на паузу (работник ушёл/вышел), может продолжить
+         любой — иначе станок простаивает без хозяина;
+       * работу, которая ИДЁТ, перехватить нельзя: живой работник у станка
+         имеет приоритет. ]]
 Actions.job_resume = function(ply, ent, rec)
     local job = rec.job and I.Jobs[rec.job] or nil
     if not job then notify(ply, "Здесь нечего продолжать", false) return false end

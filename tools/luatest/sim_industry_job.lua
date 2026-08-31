@@ -101,6 +101,48 @@ GRM.Persistence = {
 }
 GRM.Audit = { Write = function() end }
 GRM.Access = { Register = function() end, Can = function() return true end }
+--[[ Инвентарь игрока: у каждого персонажа свои слоты. Без него адаптер
+     контейнера честно возвращает «не влезло», и проверка «чужой забрал
+     готовое» падала бы не на политике доступа, а на отсутствии карманов. ]]
+local INVENTORIES = {}
+local function invOf(ply)
+    INVENTORIES[ply] = INVENTORIES[ply] or { slots = {} }
+    return INVENTORIES[ply]
+end
+local function invUsed(inv)
+    local n = 0
+    for _, slot in pairs(inv.slots) do n = n + (slot.count or 0) end
+    return n
+end
+GRM.Inventory = {
+    AddItem = function(ply, id, count)
+        local inv = invOf(ply)
+        local put = math.min(count, math.max(0, 24 - invUsed(inv)))
+        if put > 0 then inv.slots[#inv.slots + 1] = { id = id, count = put } end
+        return count - put
+    end,
+    RemoveItem = function(ply, id, count)
+        local inv, left = invOf(ply), count
+        for i = 1, #inv.slots do
+            local slot = inv.slots[i]
+            if slot and slot.id == id and left > 0 then
+                local take = math.min(slot.count, left)
+                slot.count = slot.count - take
+                left = left - take
+                if slot.count <= 0 then inv.slots[i] = nil end
+            end
+        end
+        return left
+    end,
+    CountItem = function(ply, id)
+        local n = 0
+        for _, slot in pairs(invOf(ply).slots) do
+            if slot.id == id then n = n + (slot.count or 0) end
+        end
+        return n
+    end,
+    GetPlayerInv = function(ply) return invOf(ply) end,
+}
 GRM.Notify = function() end
 GRM.GiveMoney = function() end
 GRM.TakeMoney = function() end
@@ -170,11 +212,28 @@ local function newEnt(role, kind)
     return e
 end
 
-local function newPlayer()
+local function newPlayer(sid)
     local p = newEnt("player")
     p.pos = V(0, 0, 0)
+    p._sid = sid or "76561190000000001"
+    p.SteamID64 = function() return p._sid end
     p.Alive = function() return true end
     return p
+end
+
+--[[ Вызов боевого обработчика действий цеха в обход сети: читалки net
+     подставляем сами. Так проверяется настоящая политика доступа, а не
+     её пересказ. ]]
+local function callAction(ply, ent, op, itemID, count)
+    local handler = NET_HANDLERS["GRM_IND_Action"]
+    if not handler then return end
+    local strings = { op, itemID or "" }
+    local si = 0
+    net.ReadEntity = function() return ent end
+    net.ReadString = function() si = si + 1 return strings[si] or "" end
+    net.ReadUInt = function() return count or 1 end
+    net.ReadTable = function() return {} end
+    handler(64, ply)
 end
 
 local function newStation(kind)
@@ -457,6 +516,57 @@ do
     local ply = newPlayer()
     ok(I.StartJob(ply, ent, "melt_components") == false, "при забитом выходе работа не начинается")
     ok(C.Count(rec.inID, "defective_components") == 1, "сырьё не списано")
+end
+
+-- ================================================================
+print("\n=== 9. СТАНКИ ОБЩИЕ (решение владельца 31.08) ===")
+-- ================================================================
+do
+    --[[ РЕШЕНИЕ ВЛАДЕЛЬЦА: «Станки общие». Владельца у станка НЕТ:
+         забрать готовое изделие может любой, кто подошёл. Проверка нужна
+         затем, чтобы следующая правка не добавила сюда проверку владельца
+         «для порядка» и не сломала осознанный выбор. ]]
+    local ent, rec = newStation("furnace")
+    fillInput(rec, { defective_components = 1 })
+    local maker = newPlayer("76561190000000011")
+    I.StartJob(maker, ent, "melt_components")
+    local job = I.Jobs[rec.job]
+    advance(job.assembleDuration + 2)
+    ok(C.Count(rec.outID, "scrap_metal") == 2, "изделие лежит в выходе станка")
+
+    -- Чужой игрок забирает продукт.
+    local passer = newPlayer("76561190000000022")
+    ok(maker ~= passer, "это другой персонаж")
+    callAction(passer, ent, "withdraw", "scrap_metal", 2)
+    ok(C.Count(rec.outID, "scrap_metal") == 0, "ЧУЖОЙ ЗАБРАЛ ГОТОВОЕ — станок общий",
+        C.Count(rec.outID, "scrap_metal"))
+    ok(C.Count(C.ForPlayer(passer).id, "scrap_metal") == 2, "изделие ушло в инвентарь забравшего")
+
+    -- Работу, вставшую на паузу, тоже может продолжить любой.
+    local ent2, rec2 = newStation("furnace")
+    fillInput(rec2, { defective_components = 1 })
+    local worker = newPlayer("76561190000000033")
+    I.StartJob(worker, ent2, "melt_components")
+    local job2 = I.Jobs[rec2.job]
+    worker.__dead = true
+    advance(CFG.GraceSeconds + 2)
+    ok(job2.stage == "paused", "работник вышел — работа на паузе", job2.stage)
+
+    local helper = newPlayer("76561190000000044")
+    callAction(helper, ent2, "job_resume")
+    ok(job2.stage == "assemble", "ЧУЖОЙ ПРОДОЛЖИЛ ВСТАВШУЮ РАБОТУ — станок общий", job2.stage)
+    ok(job2.worker == helper, "работник у задачи сменился")
+
+    -- Но ИДУЩУЮ работу перехватить нельзя: живой работник у станка в приоритете.
+    local ent3, rec3 = newStation("furnace")
+    fillInput(rec3, { defective_components = 1 })
+    local busy = newPlayer("76561190000000055")
+    I.StartJob(busy, ent3, "melt_components")
+    local job3 = I.Jobs[rec3.job]
+    advance(2)
+    local stranger = newPlayer("76561190000000066")
+    callAction(stranger, ent3, "job_resume")
+    ok(job3.worker == busy, "идущую работу чужой не перехватывает")
 end
 
 -- ================================================================
