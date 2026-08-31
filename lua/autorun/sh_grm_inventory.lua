@@ -1444,7 +1444,23 @@ if CLIENT then
     CreateClientConVar("grm_cl_inv_key", "0", true, false,
         "Клавиша открытия инвентаря (KEY_*, 0 = выключено)")
 
+    --[[ РЕЖИМ УДЕРЖАНИЯ (заказ владельца 31.08: «инвентарь надо сделать
+         удерживаемым, если он активируется на бинд»).
+
+         Работает как радиальное меню соц.анимаций: зажал — окно
+         открыто, отпустил — закрылось. Так же, как там, короткое
+         НАЖАТИЕ оставляет окно висеть: клавишу отпускают через
+         считанные миллисекунды, и без этого порога окно закрывалось бы
+         в том же кадре, в котором открылось.
+
+         Выключается конваром: кому-то привычнее обычный переключатель. ]]
+    CreateClientConVar("grm_cl_inv_hold", "1", true, false,
+        "1 — инвентарь открыт, пока держите клавишу; 0 — переключатель")
+
     local invKeyLock = 0
+    local invOpenedAt = 0
+    local invHoldArmed = false
+
     hook.Add("PlayerButtonDown", "GRM_Inv_Bind", function(ply, key)
         if ply ~= LocalPlayer() then return end
         local want = math.floor(GetConVarNumber("grm_cl_inv_key") or 0)
@@ -1460,10 +1476,40 @@ if CLIENT then
              переключателем, как и ожидается от инвентаря. Без этого
              игрок жал бы клавишу и лез мышью к крестику. ]]
         if GRM.Inventory.IsOpen and GRM.Inventory.IsOpen() then
+            invHoldArmed = false
             if GRM.Inventory.CloseGUI then GRM.Inventory.CloseGUI() end
             return
         end
+        invOpenedAt = now
+        invHoldArmed = GetConVarNumber("grm_cl_inv_hold") ~= 0
         GRM.Inventory.RequestOpen()
+    end)
+
+    --[[ Отпустили клавишу — закрываем, если это было именно удержание.
+
+         Порог 0.25 с тот же, что у радиального меню: за меньшее время
+         клавишу отпускают при обычном клике, и окно исчезло бы
+         мгновенно.
+
+         IsBusy: пока предмет тащат мышью или открыто контекстное меню,
+         не закрываем — иначе перетаскивание оборвётся на полпути, а
+         меню останется висеть поверх игры без своего окна. Окно в этом
+         случае просто остаётся открытым, и закрыть его можно обычным
+         повторным нажатием клавиши или крестиком. ]]
+    hook.Add("PlayerButtonUp", "GRM_Inv_BindUp", function(ply, key)
+        if ply ~= LocalPlayer() then return end
+        if not invHoldArmed then return end
+        if key ~= math.floor(GetConVarNumber("grm_cl_inv_key") or 0) then return end
+        if RealTime() - invOpenedAt < 0.25 then
+            -- Короткое нажатие: окно остаётся, дальше работает как обычно.
+            invHoldArmed = false
+            return
+        end
+        if GRM.Inventory.IsBusy and GRM.Inventory.IsBusy() then return end
+        invHoldArmed = false
+        if GRM.Inventory.IsOpen and GRM.Inventory.IsOpen() then
+            if GRM.Inventory.CloseGUI then GRM.Inventory.CloseGUI() end
+        end
     end)
 
     concommand.Add("grm_inventory", function()

@@ -297,6 +297,9 @@ local function createSlot(parent, index, size)
         local def = itemDef(slot) or {}
         local count = tonumber(slot.count) or 1
         local menu = DermaMenu()
+        -- Запоминаем меню: пока оно открыто, режим удержания не должен
+        -- закрывать окно из-под руки (см. INV.IsBusy).
+        INV._ctxMenu = menu
         menu:AddOption(def.type == "weapon" and "Экипировать" or "Использовать", function()
             if INV.UseSlot then INV.UseSlot(index) end
         end):SetIcon("icon16/accept.png")
@@ -516,6 +519,7 @@ local function rebuildEquipment()
             if not equipped then return end
             local item = custom.GetClientItem and custom.GetClientItem(equipped) or nil
             local menu = DermaMenu()
+            INV._ctxMenu = menu
             local option = menu:AddOption("Снять" .. (item and (" — " .. tostring(item.name or "аксессуар")) or ""), function()
                 custom.UnequipInventorySlot(slotID)
             end)
@@ -903,6 +907,23 @@ end
      иначе нажатие во время выезда ничего бы не делало. ]]
 function INV.IsOpen()
     return IsValid(invPanel) and not animClosing
+end
+
+--[[ Занят ли игрок прямо сейчас работой в окне.
+
+     Нужно режиму удержания: если отпустить клавишу, пока предмет
+     тащат мышью или открыто контекстное меню, окно закрылось бы
+     прямо из-под руки — перетаскивание оборвалось бы на полпути, а
+     меню осталось висеть поверх игры без своего окна. ]]
+function INV.IsBusy()
+    if dragData ~= nil then return true end
+    if IsValid(dragImage) then return true end
+    --[[ Открытое контекстное меню (ПКМ по слоту) — тоже незаконченное
+         действие. Ссылку храним свою, а не спрашиваем список открытых
+         меню у Derma: тот перечислитель не документирован, полагаться
+         на него в рабочем коде не стоит. ]]
+    if IsValid(INV._ctxMenu) then return true end
+    return false
 end
 
 --[[ Закрытие с обратным выездом. Панели не удаляем сразу: сначала

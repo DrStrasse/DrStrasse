@@ -629,7 +629,7 @@ local function buildSettingsTab(sc)
          добавили бинд — блок вырос сам, без правки константы. ]]
     local BINDS = {
         { "Открыть инвентарь", "grm_cl_inv_key", 0,
-          "Повторное нажатие закрывает окно" },
+          "По умолчанию открыт, пока держите клавишу. Режим — галочкой ниже" },
         { "Меню соц. анимаций", "grm_cl_social_key", 18,
           "Удерживайте клавишу — круг выбора. Повтор анимации снимает её" },
         { "Замок транспорта", "grm_cl_vehlock_key", 0,
@@ -637,7 +637,8 @@ local function buildSettingsTab(sc)
     }
 
     local HEAD, PAD = 30, 12
-    local bk = block(sc, HEAD + #BINDS * BIND_ROW_H + PAD + 24, "Клавиши:")
+    -- +30 на строку режима удержания под списком клавиш.
+    local bk = block(sc, HEAD + #BINDS * BIND_ROW_H + PAD + 24 + 30, "Клавиши:")
     local hintK = vgui.Create("DLabel", bk)
     hintK:SetPos(14, 26) hintK:SetSize(760, 20)
     hintK:SetFont("GRMF4_Normal") hintK:SetTextColor(C.dim)
@@ -645,6 +646,21 @@ local function buildSettingsTab(sc)
 
     for i, b in ipairs(BINDS) do
         bindRow(bk, HEAD + 18 + (i - 1) * BIND_ROW_H, b[1], b[2], b[3], b[4])
+    end
+
+    --[[ Режим клавиши инвентаря. Стоит прямо под списком, а не в
+         отдельном блоке: настройка относится к биндам и искать её
+         нужно там же, где назначается клавиша. ]]
+    local holdY = HEAD + 18 + #BINDS * BIND_ROW_H + 4
+    local holdCv = GetConVar("grm_cl_inv_hold")
+    local hold = vgui.Create("DCheckBoxLabel", bk)
+    hold:SetPos(14, holdY) hold:SetSize(620, 22)
+    hold:SetText("Инвентарь открыт, пока держите клавишу (отпустил — закрылся)")
+    hold:SetFont("GRMF4_Normal") hold:SetTextColor(C.text)
+    hold:SetValue((not holdCv or holdCv:GetInt() ~= 0) and 1 or 0)
+    hold:SetTooltip("Выключено — клавиша работает переключателем: нажал открыл, нажал закрыл")
+    hold.OnChange = function(_, v)
+        RunConsoleCommand("grm_cl_inv_hold", v and "1" or "0")
     end
 end
 
