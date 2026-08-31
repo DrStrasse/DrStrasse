@@ -503,7 +503,7 @@ if SERVER then
   if not ent then return nil,(spawnErrors and spawnErrors[1])or"Не удалось выдать транспорт"end
   r.lastPlace=tostring(placeLabel or "")
   r.stored=false;saveGarage()
-  ent.GRMGarageID=id;ent.GRMGarageOwner=ply;ent.VD_Price=r.price
+  ent.GRMGarageID=id;ent.GRMGarageOwner=ply;ent.GRMGarageOwnerKey=key(ply);ent.VD_Price=r.price
   VD.TagVehicle(ent,ply,r.class,tostring(r.ownershipType or"personal"),r)
   VD.Active[id]=ent
   if VD.AssignLockOwner then VD.AssignLockOwner(ent,ply,"personal") end
@@ -690,7 +690,7 @@ if SERVER then
    -- знает, поле читает модуль GRM.Garage в хуке ниже.
    record.requestedGarage=tostring(wantGarage or""):sub(1,48);if personal then local g=garage(ply);g[id]=record;saveGarage()end;if IsValid(ent)then
     record.stored=false
-    ent.GRMGarageID=id;ent.GRMGarageOwner=ply;ent.VD_Price=price;VD.TagVehicle(ent,ply,class,kind,record);VD.Active[id]=ent
+    ent.GRMGarageID=id;ent.GRMGarageOwner=ply;ent.GRMGarageOwnerKey=key(ply);ent.VD_Price=price;VD.TagVehicle(ent,ply,class,kind,record);VD.Active[id]=ent
     if VD.AssignLockOwner then VD.AssignLockOwner(ent,ply,"personal") end
    end
    hook.Run("GRM_VehicleDealerSpawned",ent,ply,class,record,dealer)
@@ -822,7 +822,7 @@ if SERVER then
  end)
  net.Receive("GRM_VD_ZoneRequest",function(_,ply)if not IsValid(ply)or not ply:IsSuperAdmin()then return end;local out={}for _,d in ipairs(ents.FindByClass("sent_vehicle_dealer"))do if IsValid(d)then out[#out+1]={id=d:GetDealerID(),name=d:GetDealerName(),pos=vd(d:GetPos()),hasZone=d:GetHasSpawnZone(),min=vd(d:GetSpawnZoneMin()),max=vd(d:GetSpawnZoneMax()),ang=ad(d:GetSpawnAngle()),hasPoint=d:GetHasCustomSpawn(),spawnPos=vd(d:GetSpawnPos()),spawnAng=ad(d:GetSpawnAngle()),lift=tonumber(d.VD_Lift)or VD.DefaultLift}end end;net.Start("GRM_VD_ZoneData")net.WriteTable(out)net.Send(ply)end)
  net.Receive("VD_RequestVehicleList",function(_,ply)if not IsValid(ply)or not ply:IsSuperAdmin()then return end;local out={}for _,v in ipairs(VD.AllVehicleClasses())do out[#out+1]={class=v.class,name=v.name,dealer="GRM v3"}end;net.Start("VD_VehicleList")net.WriteTable(out)net.Send(ply)end)
- net.Receive("VD_AdminSpawnVehicle",function(_,ply)if not IsValid(ply)or not ply:IsSuperAdmin()then return end;local sid,class=net.ReadString(),net.ReadString();local target;for _,p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll())do if p:SteamID64()==sid then target=p break end end;if not IsValid(target)then return end;local d,best=nil,math.huge;for _,candidate in ipairs(ents.FindByClass("sent_vehicle_dealer"))do local distance=target:GetPos():DistToSqr(candidate:GetPos());if distance<best then d,best=candidate,distance end end;if not IsValid(d)then return end;local placeAdm=VD.ResolveDeliveryPlace(target,{class=class},d,nil);local ent=VD.Spawn(class,d,target,placeAdm);if IsValid(ent)then local id=makeID("admin_vehicle");ent.GRMGarageID=id;ent.GRMGarageOwner=target;ent.VD_Owner=target;ent.VD_Class=class;VD.Active[id]=ent end end)
+ net.Receive("VD_AdminSpawnVehicle",function(_,ply)if not IsValid(ply)or not ply:IsSuperAdmin()then return end;local sid,class=net.ReadString(),net.ReadString();local target;for _,p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll())do if p:SteamID64()==sid then target=p break end end;if not IsValid(target)then return end;local d,best=nil,math.huge;for _,candidate in ipairs(ents.FindByClass("sent_vehicle_dealer"))do local distance=target:GetPos():DistToSqr(candidate:GetPos());if distance<best then d,best=candidate,distance end end;if not IsValid(d)then return end;local placeAdm=VD.ResolveDeliveryPlace(target,{class=class},d,nil);local ent=VD.Spawn(class,d,target,placeAdm);if IsValid(ent)then local id=makeID("admin_vehicle");ent.GRMGarageID=id;ent.GRMGarageOwner=target;ent.GRMGarageOwnerKey=key(target);ent.VD_Owner=target;ent.VD_Class=class;VD.Active[id]=ent end end)
  net.Receive("GRM_VD_AdminSave",function(_,ply)
   if not IsValid(ply)or not ply:IsSuperAdmin()then return end
   local dealer,data=net.ReadEntity(),net.ReadTable()or{};if not IsValid(dealer)or dealer:GetClass()~="sent_vehicle_dealer"or ply:GetPos():DistToSqr(dealer:GetPos())>600*600 then return end

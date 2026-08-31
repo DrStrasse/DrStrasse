@@ -1082,10 +1082,40 @@ if SERVER then
     local function garageRecordOf(veh)
         local VD = GRM.VehicleDealer
         if not (VD and VD.FindRecord) then return nil end
-        local ply = IsValid(veh) and veh.GRMGarageOwner or nil
-        local id = IsValid(veh) and veh.GRMGarageID or nil
-        if not (IsValid(ply) and id) then return nil end
-        return VD.FindRecord(ply, id), ply, id
+        if not IsValid(veh) then return nil end
+        local id = veh.GRMGarageID
+        if not id then return nil end
+        local ply = veh.GRMGarageOwner
+
+        --[[ КЛЮЧ ВЛАДЕЛЬЦА ПОМНИМ НА САМОЙ МАШИНЕ (жалоба 31.08:
+             «проблемы с запоминанием номеров»).
+
+             Раньше запись гаража искали ТОЛЬКО по энтити игрока.
+             Энтити умирает, как только человек выходит с сервера:
+             IsValid(ply) становится ложью, запись не находится, и
+             память позиции знака не пишется и не читается — номер
+             «забывает», куда его поставили, и встаёт в авто-точку.
+
+             Ключ персонажа — строка, она переживает выход владельца.
+             Проставляем его при первом удобном случае, чтобы
+             подхватились и машины, выданные до этой правки. ]]
+        if not veh.GRMGarageOwnerKey and IsValid(ply) then
+            veh.GRMGarageOwnerKey = charKey(ply)
+        end
+
+        if IsValid(ply) then
+            local rec = VD.FindRecord(ply, id)
+            if istable(rec) then return rec, ply, id end
+        end
+        local ck = veh.GRMGarageOwnerKey
+        if ck ~= nil and tostring(ck) ~= "" and istable(VD.Garages) then
+            local bucket = VD.Garages[tostring(ck)]
+            if istable(bucket) then
+                local rec = bucket[tostring(id)]
+                if istable(rec) then return rec, nil, id end
+            end
+        end
+        return nil
     end
 
     --[[ СЛУЖЕБНЫЙ ТРАНСПОРТ: у него нет записи в личном гараже дилера, но
@@ -1297,11 +1327,20 @@ if SERVER then
             end
         end
         rememberLayout(veh)
-        -- Запоминаем позицию по конкретной машине: после снятия и повторной
-        -- установки знак встанет ровно сюда, а не в авто-точку.
-        local _lp = veh:WorldToLocal(plate:GetPos())
-        local _la = veh:WorldToLocalAngles(plate:GetAngles())
-        saveVehicleMemory(veh, _lp, _la)
+        --[[ Запоминаем позицию по конкретной машине: после снятия и
+             повторной установки знак встанет ровно сюда, а не в
+             авто-точку.
+
+             Но только если точку выбрал человек. Авто-расчёт
+             (MountOnRear) помечает знак флагом GRMPlateAutoPlaced —
+             его результат в память не пишем, иначе кривой расчёт
+             залип бы намертво. ]]
+        if not plate.GRMPlateAutoPlaced then
+            local _lp = veh:WorldToLocal(plate:GetPos())
+            local _la = veh:WorldToLocalAngles(plate:GetAngles())
+            saveVehicleMemory(veh, _lp, _la)
+        end
+        plate.GRMPlateAutoPlaced = nil
         hook.Run("GRM_PlateAttached", plate, veh, actor)
         return true
     end
@@ -1845,10 +1884,22 @@ if SERVER then
         local mem = readVehicleMemory(veh)
         if mem and isfunction(veh.LocalToWorld) then
             local world = veh:LocalToWorld(mem.pos)
-            local nrm = veh:LocalToWorldAngles(mem.ang):Forward()
-            return { pos = world, normal = nrm, up = veh:GetUp(),
-                exact = true,
-                setPlate = function(plate) plate:SetPos(world); plate:SetAngles(veh:LocalToWorldAngles(mem.ang)) end }
+            --[[ ПАМЯТЬ ПРОВЕРЯЕМ, А НЕ СЛЕПО ВЕРИМ (жалоба 31.08).
+
+                 Пока память применялась без проверки, однажды
+                 неудачно посчитанная точка залипала навсегда: знак
+                 возвращался в неё и после правки расчёта, и после
+                 смены кузова. Теперь если память села мимо корпуса
+                 или ниже уровня кузова — её игнорируем и считаем
+                 авто-точку заново. Ручная подгонка, сделанная
+                 стрелками, всегда лежит на кузове, поэтому её это
+                 не заденет. ]]
+            if validateMountPoint(veh, world) then
+                local nrm = veh:LocalToWorldAngles(mem.ang):Forward()
+                return { pos = world, normal = nrm, up = veh:GetUp(),
+                    exact = true,
+                    setPlate = function(plate) plate:SetPos(world); plate:SetAngles(veh:LocalToWorldAngles(mem.ang)) end }
+            end
         end
 
         -- 3) авто-точка
@@ -1894,6 +1945,19 @@ if SERVER then
         end
         if mount then
             PL.PlaceOnSurface(plate, mount.pos, mount.normal, mount.up)
+            --[[ АВТО-ТОЧКУ НЕ ЗАПОМИНАЕМ КАК «ТАК ХОТЕЛ ИГРОК».
+
+                 Attach по умолчанию пишет позицию в память машины,
+                 чтобы знак возвращался ровно на место. Пока авто-точка
+                 писалась наравне с ручной, первый же — пусть и
+                 неудачный — расчёт залипал: исправление расчёта уже
+                 ничего не меняло, знак вставал в запомненную кривую
+                 точку. Теперь запоминается только осознанное
+                 размещение: взгляд в кузов, стрелки в редакторе,
+                 раскладка на класс. ]]
+            if not mount.layout and not mount.exact then
+                plate.GRMPlateAutoPlaced = true
+            end
         end
         return PL.Attach(plate, veh, actor)
     end

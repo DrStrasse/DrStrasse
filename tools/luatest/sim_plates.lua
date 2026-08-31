@@ -55,7 +55,16 @@ end
 function VMT:Angle() return Angle(0, 0, 0) end
 function VMT:AngleEx() return Angle(0, 0, 0) end
 function Vector(x, y, z) return setmetatable({ x = x or 0, y = y or 0, z = z or 0 }, VMT) end
-function Angle(p, y, r) return { p = p or 0, y = y or 0, r = r or 0 } end
+function Angle(p, y, r)
+    local a = { p = p or 0, y = y or 0, r = r or 0 }
+    -- В GMod у Angle есть Forward(); в моке его не было, и расчёт
+    -- нормали по памяти машины падал. Считаем так же, как движок.
+    function a:Forward()
+        local yp, yr = math.rad(self.y or 0), math.rad(self.p or 0)
+        return Vector(math.cos(yp) * math.cos(yr), math.sin(yp) * math.cos(yr), -math.sin(yr))
+    end
+    return a
+end
 
 local HOOKS = {}
 hook = {
@@ -1053,6 +1062,169 @@ do
             tostring(rear2.pos.x))
     end
     util.TraceLine = oldTrace
+end
+
+-- ================================================================
+print("\n=== 25. ПАМЯТЬ НОМЕРА И УДАЛЕНИЕ ИЗ БАЗЫ ===")
+-- ================================================================
+do
+    --[[ ЖАЛОБА ВЛАДЕЛЬЦА: «проблемы с запоминанием номеров и стиранием
+         их из базы данных служебных компьютеров».
+
+         Память позиции и раскладка знака пишутся в запись гаража.
+         Запись ищут так:
+
+             local ply = veh.GRMGarageOwner
+             if not (IsValid(ply) and id) then return nil end
+
+         А GRMGarageOwner — это ЭНТИТИ игрока. Владелец вышел с
+         сервера — IsValid(ply) ложь, запись не находится, и память
+         не пишется и не читается. Номер «забывает», куда его
+         поставили. ]]
+    local owner = mkPly("Фриц", "")
+    local car = ents.Create("sim_car")
+    car:SetPos(Vector(0, 0, 0))
+    local recID = "veh_mem_1"
+    car.GRMGarageID = recID
+    car.GRMGarageOwner = owner
+    local gRec = { id = recID, name = "Седан", plates = {}, plate = "" }
+    local ownerKey = owner:SteamID64() .. ":char1"
+    GRM.VehicleDealer = GRM.VehicleDealer or {}
+    GRM.VehicleDealer.FindRecord = function(_, id) return id == recID and gRec or nil end
+    GRM.VehicleDealer.SaveGarages = function() end
+    GRM.VehicleDealer.Garages = { [ownerKey] = { [recID] = gRec } }
+    GRM.Fleet = nil
+
+    local nrec = { number = "М777ММ", type = "civil", ownerKey = ownerKey, status = "active" }
+    PL.Data.plates[nrec.number] = nrec
+
+    local plate = PL.SpawnPlate(nrec.number, car:LocalToWorld(Vector(-110, 0, 20)),
+        car:LocalToWorldAngles(Angle(0, 180, 0)), owner)
+    ok(IsValid(plate), "бланк знака создан")
+    PL.Attach(plate, car, owner)
+
+    ok(gRec.plateMemory ~= nil, "память позиции записана в запись гаража",
+        tostring(gRec.plateMemory))
+    ok(istable(gRec.plates) and #gRec.plates >= 1, "раскладка знака записана в гараж",
+        tostring(gRec.plates and #gRec.plates))
+
+    -- ВЛАДЕЛЕЦ ВЫШЕЛ С СЕРВЕРА. Машина осталась на карте.
+    owner._valid = false
+    local mem = PL._readVehicleMemory(car)
+    ok(mem ~= nil, "ПАМЯТЬ ПОЗИЦИИ ЧИТАЕТСЯ, КОГДА ВЛАДЕЛЕЦ НЕ В СЕТИ",
+        "владелец офлайн — запись гаража не найдена")
+
+    -- Снимаем и вешаем знак обратно при офлайн-владельце: память
+    -- должна пережить и запись.
+    PL.Detach(plate, nil)
+    gRec.plateMemory = nil          -- стираем, чтобы проверить запись заново
+    plate:SetPos(car:LocalToWorld(Vector(-90, 10, 40)))
+    PL.Attach(plate, car, nil)
+    ok(gRec.plateMemory ~= nil, "ПАМЯТЬ ПИШЕТСЯ, КОГДА ВЛАДЕЛЕЦ НЕ В СЕТИ",
+        tostring(gRec.plateMemory))
+    if istable(gRec.plateMemory) and istable(gRec.plateMemory.pos) then
+        ok(math.abs((tonumber(gRec.plateMemory.pos.x) or 0) - (-90)) < 2,
+            "запомнена именно новая позиция", tostring(gRec.plateMemory.pos.x))
+    end
+    owner._valid = true
+
+    -- ── УДАЛЕНИЕ ИЗ БАЗЫ ───────────────────────────────────────────
+    local uid = tostring(nrec.vehicleUID or "")
+    ok(uid ~= "", "у записи есть UID машины", uid)
+    gRec.vehicleUID = uid
+
+    local okDel, errDel = PL.Delete(nrec.number, "инспектор")
+    ok(okDel == true, "номер удалён из реестра", tostring(errDel))
+    ok(PL.Get(nrec.number) == nil, "НОМЕРА НЕТ В БАЗЕ ПОСЛЕ УДАЛЕНИЯ",
+        tostring(PL.Get(nrec.number)))
+
+    local inPayload = false
+    local payload = PL.Snapshot and PL.Snapshot() or nil
+    if istable(payload) and istable(payload.plates) then
+        for _, r in ipairs(payload.plates) do
+            if tostring(r.number) == nrec.number then inPayload = true end
+        end
+    end
+    ok(payload == nil or not inPayload, "удалённого номера нет в снимке для компьютеров")
+
+    ok(gRec.plate == nil or gRec.plate == "", "номер стёрт из записи гаража",
+        tostring(gRec.plate))
+    ok(gRec.plates == nil or #gRec.plates == 0, "раскладка стёрта из записи гаража",
+        gRec.plates and tostring(#gRec.plates) or "nil")
+    ok(gRec.vehicleUID == nil, "привязка машины к номеру снята", tostring(gRec.vehicleUID))
+end
+
+-- ================================================================
+print("\n=== 26. АВТО-ТОЧКА НЕ ЗАЛИПАЕТ ===")
+-- ================================================================
+do
+    --[[ ЖАЛОБА ВЛАДЕЛЬЦА: правка расчёта точки крепления ничего не
+         меняет — знак всё равно встаёт криво.
+
+         Причина: Attach всегда писал фактическую позицию в память
+         машины. Авто-расчёт (MountOnRear) кончается тем же Attach,
+         поэтому его результат — даже заведомо неудачный — попадал в
+         память и вытеснял авто-точку при каждой следующей установке.
+         Исправление расчёта для такой машины уже ничего не меняло:
+         она помнила старую кривую точку. ]]
+    local owner = mkPly("Отто", "")
+    local recID = "veh_auto_1"
+    local gRec = { id = recID, name = "Универсал", plates = {}, plate = "" }
+    local ownerKey = owner:SteamID64() .. ":char1"
+    GRM.VehicleDealer = GRM.VehicleDealer or {}
+    GRM.VehicleDealer.FindRecord = function(_, id) return id == recID and gRec or nil end
+    GRM.VehicleDealer.SaveGarages = function() end
+    GRM.VehicleDealer.Garages = { [ownerKey] = { [recID] = gRec } }
+    GRM.Fleet = nil
+
+    local function newCar()
+        local c = ents.Create("sim_car")
+        c:SetPos(Vector(0, 0, 0))
+        c.GRMGarageID = recID
+        c.GRMGarageOwner = owner
+        c.NearestPoint = function(_, pos)
+            return Vector(math.max(-110, math.min(110, pos.x)),
+                          math.max(-40, math.min(40, pos.y)),
+                          math.max(0, math.min(60, pos.z)))
+        end
+        return c
+    end
+
+    -- А) авто-установка не должна писать память машины
+    local car = newCar()
+    local nrec = { number = "О001ОО", type = "civil", ownerKey = ownerKey, status = "active" }
+    PL.Data.plates[nrec.number] = nrec
+    local plate = PL.SpawnPlate(nrec.number, Vector(0, 0, 30), Angle(0, 0, 0), owner)
+    PL.MountOnRear(plate, car, owner)
+    ok(gRec.plateMemory == nil, "АВТО-ТОЧКА НЕ ПИШЕТСЯ В ПАМЯТЬ МАШИНЫ",
+        tostring(gRec.plateMemory))
+
+    -- Б) память, однажды записанная вручную, сохраняется
+    local car2 = newCar()
+    local plate2 = PL.SpawnPlate(nrec.number, car2:LocalToWorld(Vector(-108, 0, 18)),
+        car2:LocalToWorldAngles(Angle(0, 180, 0)), owner)
+    PL.Attach(plate2, car2, owner)
+    ok(gRec.plateMemory ~= nil, "ручная установка память пишет", tostring(gRec.plateMemory))
+
+    -- В) кривая (устаревшая) память отбрасывается, берётся авто-точка
+    local car3 = newCar()
+    gRec.plateMemory = { pos = { x = -400, y = 0, z = 20 }, ang = { p = 0, y = 180, r = 0 } }
+    local mp = PL.MountPointFor(car3)
+    ok(mp ~= nil, "точка найдена и при кривой памяти")
+    if mp then
+        ok(mp.pos.x > -200, "КРИВАЯ ПАМЯТЬ ОТБРОШЕНА — ВЗЯТА АВТО-ТОЧКА",
+            tostring(mp.pos.x) .. " (память была -400)")
+    end
+    gRec.plateMemory = nil
+
+    -- Г) годная память (на кузове) по-прежнему применяется
+    local car4 = newCar()
+    gRec.plateMemory = { pos = { x = -108, y = 0, z = 20 }, ang = { p = 0, y = 180, r = 0 } }
+    local mp2 = PL.MountPointFor(car4)
+    ok(mp2 ~= nil and mp2.exact == true and math.abs(mp2.pos.x - (-108)) < 2,
+        "годная память на кузове применяется как есть",
+        mp2 and tostring(mp2.pos.x) .. " exact=" .. tostring(mp2.exact))
+    gRec.plateMemory = nil
 end
 
 print(("\nPLATES: %d/%d, провалов: %d"):format(pass, pass + fail, fail))

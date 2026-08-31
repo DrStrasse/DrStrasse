@@ -1233,6 +1233,8 @@ if SERVER then
         ent.GRMFleetID = unit.id          -- ЕДИНЫЙ UID для номеров/восстановления
         ent.GRMFleetFaction = unit.faction
         ent.GRMGarageOwner = ply
+        ent.GRMGarageOwnerKey = (GRM.Identity and GRM.Identity.CharacterKey and IsValid(ply)
+            and GRM.Identity.CharacterKey(ply)) or nil
         if VD.TagVehicle then VD.TagVehicle(ent, ply, unit.class, tostring(unit.kind or "government"), unit) end
         if VD.AssignLockOwner then VD.AssignLockOwner(ent,ply,"government",unit.faction) end
         ent:SetNWString("GRM_FleetFaction", tostring(unit.faction))
