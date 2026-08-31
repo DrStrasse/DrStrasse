@@ -939,6 +939,336 @@ local function buildPreview(parent, getDef)
     return mdl
 end
 
+-----------------------------------------------------------------------
+-- РАДИАЛЬНОЕ МЕНЮ (заказ владельца 31.08 по скриншоту чужого проекта:
+-- «радиальное меню анимаций с показом этих самых анимаций, причём
+-- рендерит как саму анимацию, так и 3д модельку персонажа за которого
+-- человек играет»).
+--
+-- Устройство. Пункты по кругу, выбор — НАПРАВЛЕНИЕМ мыши от центра, а
+-- не попаданием курсором в маленькую кнопку: так быстрее и не надо
+-- целиться. В центре — модель СВОЕГО персонажа (та же модель, тот же
+-- скин и bodygroups), которая тут же проигрывает наведённую анимацию
+-- функцией S.Sample — то есть ровно то, что увидят окружающие.
+--
+-- Почему не DModelPanel, как в обычном меню: панель рисует модель в
+-- своём прямоугольнике на непрозрачном фоне и перехватывает мышь. Для
+-- радиального меню нужен свободно висящий над игрой силуэт без рамки,
+-- поэтому модель клиентская (ClientsideModel с NoDraw) и рисуется
+-- вручную через cam.Start3D в Paint.
+-----------------------------------------------------------------------
+surface.CreateFont("GRMSoc_Ring", { font = "Roboto", size = 17, weight = 600, extended = true })
+surface.CreateFont("GRMSoc_RingBig", { font = "Roboto", size = 21, weight = 800, extended = true })
+
+local R = {
+    open = false,
+    items = {},
+    sel = nil,
+    ent = nil,
+    entMdl = nil,
+    animStart = 0,
+    lastID = nil,
+    cats = {},
+    catIdx = 1,
+}
+S.Radial = R
+
+-- Радиусы кольца. Держим в одном месте: их читают и отрисовка, и выбор.
+R.InnerR = 118
+R.OuterR = 300
+R.LabelR = 214
+
+local function radialCleanup()
+    if IsValid(R.ent) then R.ent:Remove() end
+    R.ent = nil
+    R.entMdl = nil
+    R.lastID = nil
+end
+
+--[[ Модель своего персонажа. ClientsideModel, а не DModelPanel: нужен
+     силуэт без рамки и без фона поверх игры.
+
+     SetNoDraw(true) обязателен — иначе движок нарисует модель ещё и
+     в мире, рядом с игроком появится двойник. Мы рисуем её сами,
+     вручную, внутри cam.Start3D. ]]
+local function radialEnsureModel()
+    local lp = LocalPlayer()
+    if not IsValid(lp) then return end
+    local want = lp:GetModel()
+    if IsValid(R.ent) and R.entMdl == want then return R.ent end
+    radialCleanup()
+    local m = ClientsideModel(want, RENDERGROUP_OTHER)
+    if not IsValid(m) then return end
+    m:SetNoDraw(true)
+    m:SetPos(Vector(0, 0, 0))
+    m:SetAngles(Angle(0, 0, 0))
+    --[[ Скин и bodygroups копируем с игрока: у нас костюмы жандармерии
+         и прочая форма живут именно в bodygroups, без них в меню
+         показывался бы «голый» базовый вариант модели. ]]
+    m:SetSkin(lp:GetSkin() or 0)
+    for i = 0, (lp:GetNumBodyGroups() or 1) - 1 do
+        m:SetBodygroup(i, lp:GetBodygroup(i) or 0)
+    end
+    local seq = m:LookupSequence("idle_all_01")
+    if not seq or seq < 0 then seq = m:LookupSequence("idle_subtle") end
+    if not seq or seq < 0 then seq = m:LookupSequence("idle") end
+    if seq and seq >= 0 then m:ResetSequence(seq) end
+    R.ent = m
+    R.entMdl = want
+    return m
+end
+
+--[[ Что сейчас под мышью. Выбор по УГЛУ от центра экрана: курсор
+     достаточно сдвинуть в сторону пункта, попадать в него не нужно.
+
+     Внутри мёртвой зоны (радиус меньше InnerR) выбора нет — там модель,
+     и это же способ закрыть меню, ничего не применив. ]]
+function R.Pick(mx, my, cx, cy, count)
+    if count <= 0 then return nil end
+    local dx, dy = mx - cx, my - cy
+    local dist = math.sqrt(dx * dx + dy * dy)
+    if dist < R.InnerR then return nil end
+    --[[ Отсчёт от ВЕРХНЕЙ точки круга и по часовой стрелке — так же,
+         как раскладываются подписи. Экранный Y растёт вниз, поэтому
+         подаём -dy: иначе кольцо читалось бы зеркально. ]]
+    local ang = math.deg(math.atan2(dx, -dy))
+    if ang < 0 then ang = ang + 360 end
+    local step = 360 / count
+    local idx = math.floor((ang + step * 0.5) / step) + 1
+    if idx > count then idx = idx - count end
+    return idx
+end
+
+-- Положение пункта на кольце. Отдельно от отрисовки: этим же считаются
+-- координаты подписи и точки-маркера.
+function R.SlotPos(i, count, cx, cy, radius)
+    local step = 360 / count
+    local a = math.rad((i - 1) * step - 90)
+    return cx + math.cos(a) * radius, cy + math.sin(a) * radius
+end
+
+function S.CloseRadialMenu()
+    R.open = false
+    S.RadialOpen = false
+    if IsValid(R.panel) then R.panel:Remove() end
+    R.panel = nil
+    R.sel = nil
+    radialCleanup()
+    gui.EnableScreenClicker(false)
+end
+
+function S.OpenRadialMenu()
+    if IsValid(R.panel) then return end
+
+    R.cats = (isfunction(S.Categories) and S.Categories()) or { { id = "general", name = "Общее" } }
+    R.catIdx = 1
+    for i = 1, #R.cats do
+        if R.cats[i].id == S._menuCat then R.catIdx = i break end
+    end
+
+    local function loadItems()
+        local cat = R.cats[R.catIdx]
+        S._menuCat = cat and cat.id or "general"
+        R.items = (isfunction(S.InCat) and S.InCat(S._menuCat)) or (S.List or {})
+        R.sel = nil
+    end
+    loadItems()
+
+    radialEnsureModel()
+
+    local f = vgui.Create("DPanel")
+    R.panel = f
+    R.open = true
+    S.RadialOpen = true
+    S._radialOpenedAt = RealTime()
+    S._menu = f
+    f:SetSize(ScrW(), ScrH())
+    f:SetPos(0, 0)
+    f:SetPaintBackground(false)
+    f:MakePopup()
+    f:SetKeyboardInputEnabled(false)
+    gui.EnableScreenClicker(true)
+    f.OnRemove = function()
+        R.open = false
+        S.RadialOpen = false
+        S._menu = nil
+        radialCleanup()
+    end
+
+    f.Paint = function(_, w, h)
+        local cx, cy = w * 0.5, h * 0.5
+        local mx, my = gui.MousePos()
+        local count = #R.items
+        R.sel = R.Pick(mx, my, cx, cy, count)
+
+        --[[ Затемняем ТОЛЬКО круг под меню, а не весь экран: 31.08
+             владелец уже ловил меня на подложке во весь экран в студии
+             («чё за потемнение?»). Игру должно быть видно. ]]
+        surface.SetDrawColor(8, 11, 16, 170)
+        draw.NoTexture()
+        local segs = 64
+        local poly = {}
+        for i = 0, segs do
+            local a = math.rad(i / segs * 360)
+            poly[#poly + 1] = { x = cx + math.cos(a) * R.OuterR, y = cy + math.sin(a) * R.OuterR }
+        end
+        surface.DrawPoly(poly)
+
+        -- Сектор под выбранным пунктом: подсветка направления.
+        if R.sel and count > 0 then
+            local step = 360 / count
+            local from = (R.sel - 1) * step - 90 - step * 0.5
+            local sel = {}
+            sel[#sel + 1] = { x = cx, y = cy }
+            for i = 0, 18 do
+                local a = math.rad(from + step * (i / 18))
+                sel[#sel + 1] = { x = cx + math.cos(a) * R.OuterR, y = cy + math.sin(a) * R.OuterR }
+            end
+            surface.SetDrawColor(62, 132, 220, 90)
+            draw.NoTexture()
+            surface.DrawPoly(sel)
+        end
+
+        ------------------------------------------------------------
+        -- Модель персонажа в центре.
+        ------------------------------------------------------------
+        local ent = R.ent
+        if IsValid(ent) then
+            local def = R.sel and R.items[R.sel] or nil
+            local id = def and def.id or nil
+            if R.lastID ~= id then
+                R.lastID = id
+                R.animStart = RealTime()
+                -- Кости прошлой анимации надо снять, иначе они висят
+                -- поверх новой и поза получается смешанной.
+                for i = 0, (ent:GetBoneCount() or 1) - 1 do
+                    ent:ManipulateBoneAngles(i, Angle(0, 0, 0))
+                    ent:ManipulateBonePosition(i, Vector(0, 0, 0))
+                end
+            end
+            if def then
+                local bones = S.Sample(def, RealTime() - (R.animStart or RealTime()))
+                for name, rec in pairs(bones or {}) do
+                    local b = ent:LookupBone(name)
+                    if b then
+                        ent:ManipulateBoneAngles(b, S.BoneToAngle(rec))
+                        ent:ManipulateBonePosition(b, S.BoneToPos(rec))
+                    end
+                end
+            end
+            ent:FrameAdvance(FrameTime())
+
+            --[[ Рисуем модель вручную. cam.Start3D с прямоугольником
+                 по центру экрана: камера смотрит на модель спереди,
+                 чуть сверху. SuppressEngineLighting — чтобы силуэт не
+                 утонул в темноте карты (на скриншоте владельца как раз
+                 тёмный подъезд). ]]
+            local size = math.floor(R.InnerR * 2.1)
+            local px, py = math.floor(cx - size * 0.5), math.floor(cy - size * 0.62)
+            cam.Start3D(Vector(62, 0, 34), Angle(4, 180, 0), 40, px, py, size, size, 5, 4096)
+                render.SuppressEngineLighting(true)
+                render.SetLightingOrigin(ent:GetPos())
+                render.ResetModelLighting(1.1, 1.1, 1.1)
+                render.SetColorModulation(1, 1, 1)
+                ent:SetAngles(Angle(0, 0, 0))
+                ent:SetupBones()
+                ent:DrawModel()
+                render.SuppressEngineLighting(false)
+            cam.End3D()
+        end
+
+        ------------------------------------------------------------
+        -- Подписи по кольцу.
+        ------------------------------------------------------------
+        for i = 1, count do
+            local def = R.items[i]
+            local lx, ly = R.SlotPos(i, count, cx, cy, R.LabelR)
+            local on = R.sel == i
+            local active = LocalPlayer():GetNWString("GRM_SocAnim", "") == def.id
+            local col = MC.dim
+            if on then col = Color(255, 255, 255)
+            elseif active then col = Color(120, 220, 150) end
+            draw.SimpleTextOutlined(def.name or def.id, on and "GRMSoc_RingBig" or "GRMSoc_Ring",
+                lx, ly, col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 220))
+            -- Значок движения: сразу понятно, поза это или анимация.
+            if #S.Frames(def) > 1 then
+                draw.SimpleTextOutlined("▶", "GRMSoc_Sm", lx, ly + (on and 17 or 14),
+                    on and Color(240, 200, 90) or Color(150, 140, 110),
+                    TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 200))
+            end
+        end
+
+        if count == 0 then
+            draw.SimpleTextOutlined("В этой категории пусто", "GRMSoc_Ring", cx, cy - R.LabelR,
+                MC.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 220))
+        end
+
+        ------------------------------------------------------------
+        -- Подписи снизу: категория и подсказки.
+        ------------------------------------------------------------
+        local cat = R.cats[R.catIdx]
+        if cat and #R.cats > 1 then
+            draw.SimpleTextOutlined("◄  " .. string.upper(cat.name or cat.id) .. "  ►",
+                "GRMSoc_Ring", cx, cy + R.OuterR + 24, MC.gold,
+                TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 220))
+            draw.SimpleTextOutlined("колесо мыши — категория", "GRMSoc_Sm", cx, cy + R.OuterR + 46,
+                MC.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 200))
+        end
+
+        local sel = R.sel and R.items[R.sel]
+        if sel then
+            local n = #S.Frames(sel)
+            local info = n > 1 and (n .. " кадров · " .. string.format("%.1f с", S.TotalTime(sel))) or "поза"
+            if sel.loop then info = info .. " · цикл" end
+            draw.SimpleTextOutlined(info, "GRMSoc_Sm", cx, cy + R.InnerR + 6, MC.dim,
+                TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 200))
+        else
+            draw.SimpleTextOutlined("отпустите клавишу — применить", "GRMSoc_Sm",
+                cx, cy + R.OuterR - 18, MC.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 200))
+        end
+
+        local cur = LocalPlayer():GetNWString("GRM_SocAnim", "")
+        if cur ~= "" then
+            draw.SimpleTextOutlined("ПКМ — снять текущую", "GRMSoc_Sm", cx, cy - R.OuterR - 16,
+                Color(220, 140, 130), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 200))
+        end
+    end
+
+    -- Колесо листает категории: рука уже на мыши, лезть к клавиатуре
+    -- за переключением не нужно.
+    f.OnMouseWheeled = function(_, d)
+        if #R.cats < 2 then return true end
+        R.catIdx = R.catIdx - (d > 0 and 1 or -1)
+        if R.catIdx < 1 then R.catIdx = #R.cats end
+        if R.catIdx > #R.cats then R.catIdx = 1 end
+        loadItems()
+        if surface and surface.PlaySound then surface.PlaySound("ui/buttonrollover.wav") end
+        return true
+    end
+
+    f.OnMousePressed = function(_, key)
+        if key == MOUSE_RIGHT then
+            sendPlay("stop")
+            S.CloseRadialMenu()
+            return
+        end
+        if key ~= MOUSE_LEFT then return end
+        S.ApplyRadialChoice()
+    end
+end
+
+--[[ Применить наведённое и закрыть. Общая точка для клика и для
+     отпускания клавиши: раньше повторение этой логики в двух местах
+     уже приводило к расхождению поведения. ]]
+function S.ApplyRadialChoice()
+    local def = R.sel and R.items[R.sel]
+    if def then
+        if surface and surface.PlaySound then surface.PlaySound("common/wpn_select.wav") end
+        sendPlay(def.id)
+    end
+    S.CloseRadialMenu()
+end
+
 function S.OpenMenu()
     if IsValid(S._menu) then
         S._menu:SetVisible(true)
@@ -1104,10 +1434,23 @@ end
 function S.OpenRadial() S.OpenMenu() end
 function S.CloseRadial() S.CloseMenu() end
 
+--[[ КЛАВИША. Радиальное меню работает «на удержание»: зажал — кольцо,
+     повёл мышью — выбрал, отпустил — применилось. Это быстрее списка и
+     привычно по другим играм.
+
+     Полное окно со списком никуда не делось: оно открывается командой
+     grm_social и из биндера, где нужен неспешный выбор и категории. ]]
+CreateClientConVar("grm_cl_social_radial", "1", true, false,
+    "1 — радиальное меню на удержание, 0 — обычное окно списком")
+
 S._keyLock = 0
 hook.Add("PlayerButtonDown", "GRM_Soc_Key", function(ply, key)
     if ply ~= LocalPlayer() then return end
-    if IsValid(S._menu) and (key == MOUSE_RIGHT or key == KEY_ESCAPE) then
+    if R.open and (key == KEY_ESCAPE) then
+        S.CloseRadialMenu()
+        return
+    end
+    if IsValid(S._menu) and not R.open and (key == MOUSE_RIGHT or key == KEY_ESCAPE) then
         S.CloseMenu()
         return
     end
@@ -1115,10 +1458,31 @@ hook.Add("PlayerButtonDown", "GRM_Soc_Key", function(ply, key)
     if inputBusy() then return end
     local now = CurTime()
     if now < (S._keyLock or 0) then return end
-    S._keyLock = now + 0.35
+    S._keyLock = now + 0.2
     -- Удержание не закрывает: повтор клавиши при hold давал мерцание.
-    if IsValid(S._menu) then return end
-    S.OpenMenu()
+    if IsValid(S._menu) or R.open then return end
+    if GetConVarNumber("grm_cl_social_radial") ~= 0 then
+        S.OpenRadialMenu()
+    else
+        S.OpenMenu()
+    end
+end)
+
+--[[ Отпустили клавишу — применяем наведённое.
+
+     Защита по времени обязательна: короткое НАЖАТИЕ (клик, а не
+     удержание) отпускается практически мгновенно, и без неё меню
+     закрывалось бы в тот же кадр, в котором открылось, — игрок не
+     успел бы даже увидеть кольцо. Поэтому в первые 0.25 с отпускание
+     не закрывает: меню остаётся висеть, как обычное, и применяется
+     кликом или повторным нажатием клавиши. ]]
+S._radialOpenedAt = 0
+hook.Add("PlayerButtonUp", "GRM_Soc_KeyUp", function(ply, key)
+    if ply ~= LocalPlayer() then return end
+    if not R.open then return end
+    if key ~= keyNum() then return end
+    if RealTime() - (S._radialOpenedAt or 0) < 0.25 then return end
+    S.ApplyRadialChoice()
 end)
 
 hook.Add("StartCommand", "GRM_Soc_MenuFreeze", function(ply, cmd)
@@ -1127,6 +1491,17 @@ hook.Add("StartCommand", "GRM_Soc_MenuFreeze", function(ply, cmd)
     cmd:ClearMovement()
     cmd:RemoveKey(IN_ATTACK)
     cmd:RemoveKey(IN_ATTACK2)
+    --[[ Камеру держим неподвижно, пока открыто радиальное меню.
+         Курсор в нём двигается мышью, и без этого тот же ход мыши
+         одновременно разворачивал бы игрока: выбираешь анимацию и
+         крутишься на месте. У обычного окна такой проблемы нет —
+         MakePopup сам забирает мышь. ]]
+    if R.open then
+        local a = ply:EyeAngles()
+        cmd:SetViewAngles(a)
+        cmd:SetMouseX(0)
+        cmd:SetMouseY(0)
+    end
 end)
 
 function S.OpenPicker()
