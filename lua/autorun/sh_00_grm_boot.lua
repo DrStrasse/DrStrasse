@@ -139,9 +139,25 @@ local function runTask(task, reason)
     if task.state == "done" or task.state == "skipped" then return false end
     if not realmOK(task) then task.state = "skipped" return false end
 
+    --[[ ЗАЩИТА ОТ ПОВТОРНОГО ВХОДА (найдено стендом 31.08).
+
+         state выставляется ПОСЛЕ выполнения, поэтому пока задача
+         работает, она числится "waiting". Если её тело прямо или
+         косвенно дёрнет Ensure на саму себя — а так и происходит,
+         когда загрузка данных обращается к коду, который эти данные
+         запрашивает, — задача запустится второй раз, третий и так до
+         переполнения стека.
+
+         Флаг ставим ДО вызова и снимаем в любом исходе: повторный
+         вход просто возвращает false, вместо того чтобы уронить
+         сервер на старте карты. ]]
+    if task.running then return false end
+    task.running = true
+
     local started = SysTime()
     local ok, err = pcall(task.fn)
     local ms = (SysTime() - started) * 1000
+    task.running = nil
 
     task.ms = ms
     task.state = ok and "done" or "failed"

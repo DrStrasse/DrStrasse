@@ -1437,9 +1437,37 @@ if SERVER then
         D.SyncLockNW(ent, rec and rec.locked == true)
     end
 
+    --[[ ГОТОВА ЛИ БАЗА ДВЕРЕЙ (жалоба владельца 31.08: «после
+         перезапуска было несколько минут/секунд, что ключи дверные по
+         дверям не срабатывали»).
+
+         База владельцев грузится не мгновенно: задача "doors.db" стоит
+         в очереди планировщика (GRM.Boot), а он выполняет задачи
+         порциями по 2 мс на тик, чтобы не ронять tickrate на старте.
+         До её выполнения D.Data.doors пуста.
+
+         Беда в том, что пустая база НЕОТЛИЧИМА от «дверь ничья»:
+         getRecord не находил запись и заводил новую, со свежими
+         правами. Владелец двери на несколько секунд превращался в
+         постороннего — ключи отвечали «У вас нет ключей от этой
+         двери» либо молча ничего не делали.
+
+         Здесь одна проверка на всех: пока база не поднята, любой
+         запрос прав её ДОЖИДАЕТСЯ (Ensure выполняет задачу немедленно,
+         вне очереди). Это дешевле, чем пускать игрока в чужую дверь. ]]
+    local function ensureDoorsDB()
+        if not GRM.Boot or not GRM.Boot.Ensure then return true end
+        if GRM.Boot.Done and GRM.Boot.Done("doors.db") then return true end
+        GRM.Boot.Ensure("doors.db", "запрос прав на дверь")
+        return true
+    end
+    D.EnsureDB = ensureDoorsDB
+
     local function getRecord(ent)
         local id = D.GetDoorID(ent)
         if not id then return nil, nil end
+        -- Без этого свежая карта отдаёт «ничью» дверь вместо купленной.
+        ensureDoorsDB()
         D.Data.doors = D.Data.doors or {}
 
         local rec, bestScore = D.Data.doors[id], recordPriority(D.Data.doors[id])
