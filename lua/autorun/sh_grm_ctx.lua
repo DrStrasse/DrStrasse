@@ -370,9 +370,33 @@ local function actAdminInv()
         net.WriteUInt(tonumber(ap.idx) or 0, 16)
     net.SendToServer()
 end
+--[[ Вид от третьего лица — СВОЙ модуль (GRM.ThirdPerson).
+
+     Раньше здесь звалась simple_thirdperson_enable_toggle — команда
+     ЧУЖОГО аддона. Нет его на сервере или переименовали в новой
+     версии — кнопка молча ничего не делает, и локальный флаг tp при
+     этом честно переключался: подпись менялась на «Выкл», а вид не
+     менялся.
+
+     Теперь состояние спрашиваем у своего модуля, а не храним копию:
+     вид можно включить ещё и командой grm_tp, и подпись в меню обязана
+     это показывать. ]]
 local function actTp()
-    tp = not tp
-    RunConsoleCommand("simple_thirdperson_enable_toggle")
+    if GRM.ThirdPerson and GRM.ThirdPerson.Toggle then
+        tp = GRM.ThirdPerson.Toggle()
+        return
+    end
+    -- Модуль не загрузился — не притворяемся, что сработало.
+    if GRM.Notify then GRM.Notify("Вид от третьего лица недоступен", 255, 160, 90) end
+end
+
+--[[ Подпись кнопки читает РЕАЛЬНОЕ состояние модуля. Локальный tp
+     оставлен только как запасной вариант, если модуля нет. ]]
+local function tpOn()
+    if GRM.ThirdPerson and GRM.ThirdPerson.IsEnabled then
+        return GRM.ThirdPerson.IsEnabled()
+    end
+    return tp
 end
 local function actRadio()
     Derma_StringRequest("Рация", "Частота (1-999.9) или пусто = отключиться:", "",
@@ -705,7 +729,7 @@ local BTNS = {
       fn = vehAct("remove"),
       c = Color(190, 90, 80), ch = Color(210, 110, 100), ok = vehOk("canRemove"),
       confirm = true }, -- двойное нажатие-подтверждение (Диллер 2.1)
-    { id = "tp",         l = function() return (tp and "Выкл" or "Вкл") .. " 3-е лицо" end, fn = actTp, c = CC.third, ch = CC.thirdH, ok = function() return true end },
+    { id = "tp",         l = function() return (tpOn() and "Выкл" or "Вкл") .. " 3-е лицо" end, fn = actTp, c = CC.third, ch = CC.thirdH, ok = function() return true end },
     { id = "radio",      l = "Рация",        fn = actRadio,      c = CC.radio,   ch = CC.radioH,   ok = function() return true end },
     { id = "laws",       l = "Законы государства", fn = actLaws, c = Color(200, 180, 100), ch = Color(220, 200, 120), ok = function() return true end },
     { id = "faction",    l = "Меню фракций", fn = actFactions,   c = CC.faction, ch = CC.factionH, ok = function() return data.isLeaderOrAdmin == true or data.isFactionMember == true end },

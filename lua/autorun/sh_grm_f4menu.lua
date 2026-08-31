@@ -662,6 +662,63 @@ local function buildSettingsTab(sc)
     hold.OnChange = function(_, v)
         RunConsoleCommand("grm_cl_inv_hold", v and "1" or "0")
     end
+
+    --[[ ВИД ОТ ТРЕТЬЕГО ЛИЦА (заказ владельца 31.08).
+
+         Свой модуль вместо чужого аддона, поэтому и настройки свои.
+         Слайдеры пишут прямо в конвары через SetConVar: значение
+         сохраняется на ПК игрока само, лишний код синхронизации не
+         нужен. ]]
+    local bt = block(sc, 250, "Вид от третьего лица:")
+    local hintT = vgui.Create("DLabel", bt)
+    hintT:SetPos(14, 26) hintT:SetSize(760, 20)
+    hintT:SetFont("GRMF4_Normal") hintT:SetTextColor(C.dim)
+    hintT:SetText("Переключается в C-меню («3-е лицо») или командой grm_tp.")
+
+    local tpOn = vgui.Create("DCheckBoxLabel", bt)
+    tpOn:SetPos(14, 50) tpOn:SetSize(400, 22)
+    tpOn:SetText("Включить вид от третьего лица")
+    tpOn:SetFont("GRMF4_Normal") tpOn:SetTextColor(C.text)
+    tpOn:SetConVar("grm_tp_enabled")
+
+    local function tpSlider(y, label, cvar, mn, mx, dec)
+        local l = vgui.Create("DLabel", bt)
+        l:SetPos(14, y) l:SetSize(240, 20)
+        l:SetFont("GRMF4_Normal") l:SetTextColor(C.text) l:SetText(label)
+        local s = vgui.Create("DNumSlider", bt)
+        s:SetPos(250, y - 4) s:SetSize(430, 26)
+        s:SetText("") s:SetMin(mn) s:SetMax(mx) s:SetDecimals(dec or 0)
+        s:SetConVar(cvar)
+        s:SetDark(false)
+        if IsValid(s.Label) then s.Label:SetTextColor(C.text) end
+        if IsValid(s.TextArea) then s.TextArea:SetTextColor(C.text) end
+        return s
+    end
+
+    tpSlider(78,  "Отдаление камеры", "grm_tp_dist", 30, 220)
+    tpSlider(106, "Смещение вбок (плечо)", "grm_tp_right", -80, 80)
+    tpSlider(134, "Смещение вверх", "grm_tp_up", -30, 40)
+    tpSlider(162, "Угол обзора (0 — как в игре)", "grm_tp_fov", 0, 120)
+
+    local smooth = vgui.Create("DCheckBoxLabel", bt)
+    smooth:SetPos(14, 194) smooth:SetSize(300, 22)
+    smooth:SetText("Плавное движение камеры")
+    smooth:SetFont("GRMF4_Normal") smooth:SetTextColor(C.text)
+    smooth:SetConVar("grm_tp_smooth")
+
+    local inCar = vgui.Create("DCheckBoxLabel", bt)
+    inCar:SetPos(320, 194) inCar:SetSize(300, 22)
+    inCar:SetText("Работает в транспорте")
+    inCar:SetFont("GRMF4_Normal") inCar:SetTextColor(C.text)
+    inCar:SetTooltip("У транспорта своя камера: вместе они могут дёргаться")
+    inCar:SetConVar("grm_tp_incar")
+
+    local inCombat = vgui.Create("DCheckBoxLabel", bt)
+    inCombat:SetPos(14, 218) inCombat:SetSize(500, 22)
+    inCombat:SetText("Работает с оружием в руках")
+    inCombat:SetFont("GRMF4_Normal") inCombat:SetTextColor(C.text)
+    inCombat:SetTooltip("Выключено — с оружием вид возвращается в первое лицо (точнее прицел)")
+    inCombat:SetConVar("grm_tp_incombat")
 end
 
 -----------------------------------------------------------

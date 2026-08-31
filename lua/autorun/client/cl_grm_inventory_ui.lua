@@ -790,11 +790,36 @@ function INV.OpenGUI()
     f:SetPos(sw + 40, y)
     f:MakePopup()
     f:ShowCloseButton(false)
+
+    --[[ КЛАВИАТУРУ ОКНУ НЕ ОТДАЁМ (баг 31.08: «клавиша удержания не
+         срабатывает на инвентарь»).
+
+         MakePopup включает окну И мышь, И клавиатуру. Пока фокус
+         клавиатуры у панели, движок отдаёт нажатия ей, а не в игру —
+         хук PlayerButtonUp просто не вызывается. Игрок отпускает
+         клавишу, а окно висит.
+
+         Радиальное меню соц.анимаций работает именно потому, что
+         снимает у себя клавиатуру той же строкой. Мышь остаётся: ею
+         таскают предметы и жмут кнопки.
+
+         Побочный эффект: Escape тоже перестаёт доходить до DFrame,
+         поэтому закрытие по Escape вешаем сами (см. ниже). ]]
+    f:SetKeyboardInputEnabled(false)
     --[[ Escape закрывает С АНИМАЦИЕЙ. DFrame по Escape зовёт Close(),
          который просто прячет окно: половины остались бы висеть за
          краями экрана, а левая панель — на виду. Перенаправляем на
          свой обратный выезд. ]]
     f.Close = function() INV.CloseGUI() end
+
+    --[[ Escape своими руками: клавиатуру у окна мы забрали (см. выше),
+         поэтому DFrame его больше не увидит. Ловим на уровне игры. ]]
+    hook.Add("PlayerButtonDown", "GRM_Inv_Escape", function(p, key)
+        if p ~= LocalPlayer() then return end
+        if key ~= KEY_ESCAPE then return end
+        if not INV.IsOpen() then return end
+        INV.CloseGUI()
+    end)
     f.OnRemove = function()
         frame = nil
         INV.SelectedSlot = nil
@@ -804,6 +829,8 @@ function INV.OpenGUI()
         if IsValid(charPanel) then charPanel:Remove() end
         charPanel = nil
         invPanel = nil
+        -- Снимаем обработчик Escape: без окна он только зря висит.
+        hook.Remove("PlayerButtonDown", "GRM_Inv_Escape")
     end
     f.Paint = function(_, w, h)
         draw.RoundedBox(9, 0, 0, w, h, C.bg)

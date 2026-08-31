@@ -1512,7 +1512,19 @@ if CLIENT then
         end
     end)
 
+    --[[ Команда работает ПЕРЕКЛЮЧАТЕЛЕМ (баг 31.08).
+
+         Раньше она только открывала. C-меню зовёт именно её («Инвентарь»
+         в быстром доступе), поэтому окно, открытое оттуда, клавишей уже
+         не закрывалось: бинд видел открытое окно и закрывал его, а
+         кнопка C-меню — открывала заново. Владелец описал это как «у
+         него свой режим открытия».
+
+         Теперь оба входа ведут себя одинаково. ]]
     concommand.Add("grm_inventory", function()
+        if GRM.Inventory.IsOpen and GRM.Inventory.IsOpen() then
+            if GRM.Inventory.CloseGUI then GRM.Inventory.CloseGUI() return end
+        end
         GRM.Inventory.RequestOpen()
     end)
 
