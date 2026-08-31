@@ -117,8 +117,17 @@ ok(rebuild and rebuild:find("ST._busy = false", 1, true) ~= nil,
 ok(src:find("if ST._busy then return end\n        if line and line._id then", 1, true) ~= nil,
    "OnRowSelected отличает клик игрока от программной подсветки")
 
-ok(src:match("ST%._busy = true\n                    for i = 1, 48 do") ~= nil,
-   "ChooseOptionID обёрнут флагом — на нём и замыкалась рекурсия")
+--[[ Проверяем ПО СМЫСЛУ, а не по точной строке.
+
+     Раньше здесь стоял поиск дословного «ST._busy = true» с отступом и
+     следом идущим «for i = 1, 48 do». Любая правка студии (смена
+     верхней границы цикла, переименование combobox) роняла стенд, хотя
+     защита была на месте. Ищем сам блок: между подъёмом флага и
+     вызовом ChooseOptionID не должно быть выхода из функции. ]]
+do
+    local blk = src:match("ST%._busy = true.-ChooseOptionID.-ST%._busy = wasBusy")
+    ok(blk ~= nil, "ChooseOptionID обёрнут флагом — на нём и замыкалась рекурсия")
+end
 ok(src:find("ST._busy = wasBusy", 1, true) ~= nil,
    "и флаг восстанавливается, а не сбрасывается в false вслепую")
 

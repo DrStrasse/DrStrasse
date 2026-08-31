@@ -117,6 +117,20 @@ if SERVER then
             rec.stance = tostring(rec.stance or "idle")
             rec.sequence = tostring(rec.sequence or "")
             rec.bones = istable(rec.bones) and rec.bones or {}
+            --[[ КЛЮЧЕВЫЕ КАДРЫ. Чистим на сервере: данные приходят от
+                 клиента, и даже у админа может быть кривой каталог —
+                 а раздаётся он потом ВСЕМ игрокам. ]]
+            rec.frames = (S.SanitizeFrames and S.SanitizeFrames(rec.frames)) or {}
+            if #rec.frames > 0 then
+                --[[ bones держим синхронно с первым кадром: старый код
+                     (бинды, предпросмотр, телефонная поза) читает
+                     именно его и не знает про кадры. ]]
+                rec.bones = rec.frames[1].bones or {}
+            elseif istable(rec.bones) and next(rec.bones) then
+                rec.frames = { { dur = 0.5, bones = rec.bones } }
+            end
+            rec.loop = rec.loop == true
+            rec.speed = math.Clamp(tonumber(rec.speed) or 1, 0.1, 4)
             rec.prop = tostring(rec.prop or "")
             rec.freeze = rec.freeze == true
             rec.nomove = rec.nomove == true
@@ -466,9 +480,106 @@ hook.Add("CalcMainActivity", "GRM_SocStudio_ActCl", function(ply)
     if seq and seq >= 0 then return ACT_INVALID, seq end
 end)
 
+--[[ ПРЕДПРОСМОТР И КАДРЫ В СТУДИИ.
+
+     ST.frames — массив кадров редактируемой анимации, ST.frameIdx —
+     номер текущего. ST.bones ВСЕГДА ссылается на таблицу костей
+     текущего кадра: так весь старый код (слайдеры, гизмо, applyLocal)
+     работает без единой правки, просто теперь он правит кадр, а не
+     единственную позу. ]]
+surface.CreateFont("GRMSocEd_T", { font = "Roboto", size = 15, weight = 700, extended = true })
+surface.CreateFont("GRMSocEd_S", { font = "Roboto", size = 12, weight = 500, extended = true })
+
+local COL = {
+    bg     = Color(18, 23, 32, 250),
+    panel  = Color(24, 30, 41, 252),
+    card   = Color(34, 42, 56),
+    cardOn = Color(62, 138, 224),
+    line   = Color(48, 58, 74),
+    text   = Color(232, 238, 246),
+    dim    = Color(150, 165, 182),
+    gold   = Color(245, 195, 65),
+    green  = Color(52, 148, 92),
+    red    = Color(170, 66, 62),
+}
+
+local function copyBones(src)
+    local out = {}
+    for name, rec in pairs(src or {}) do
+        out[name] = {
+            p = tonumber(rec.p) or 0, yaw = tonumber(rec.yaw or rec.y) or 0, r = tonumber(rec.r) or 0,
+            px = tonumber(rec.px or rec.x) or 0, py = tonumber(rec.py) or 0, pz = tonumber(rec.pz or rec.z) or 0,
+        }
+    end
+    return out
+end
+
+-- Кадры не могут быть пустыми: редактировать «ничто» нельзя.
+local function ensureFrames()
+    if not istable(ST.frames) or #ST.frames == 0 then
+        ST.frames = { { dur = 0.5, bones = istable(ST.bones) and ST.bones or {} } }
+    end
+    ST.frameIdx = math.Clamp(math.floor(tonumber(ST.frameIdx) or 1), 1, #ST.frames)
+    ST.frames[ST.frameIdx].bones = ST.frames[ST.frameIdx].bones or {}
+    ST.bones = ST.frames[ST.frameIdx].bones
+    return ST.frames[ST.frameIdx]
+end
+
+--[[ Описание анимации в том виде, в каком её понимает модуль
+     воспроизведения. Предпросмотр обязан считаться ТОЙ ЖЕ функцией
+     GRM.Social.Sample, что и в игре: иначе студия покажет одно, а
+     игроки увидят другое. ]]
+function ST.PreviewDef()
+    return { id = "__preview", frames = ST.frames or {}, loop = ST.loop == true, speed = ST.speed or 1 }
+end
+
+local function applyBonesLocal(bones)
+    local lp = LocalPlayer()
+    if not IsValid(lp) then return end
+    for i = 0, (lp:GetBoneCount() or 1) - 1 do
+        lp:ManipulateBoneAngles(i, Angle(0, 0, 0))
+        lp:ManipulateBonePosition(i, Vector(0, 0, 0))
+    end
+    for name, rec in pairs(bones or {}) do
+        local b = lp:LookupBone(name)
+        if b then
+            lp:ManipulateBoneAngles(b, Angle(rec.p or 0, rec.yaw or 0, rec.r or 0))
+            lp:ManipulateBonePosition(b, Vector(rec.px or 0, rec.py or 0, rec.pz or 0))
+        end
+    end
+end
+
+--[[ Показать то, что должно быть видно СЕЙЧАС: либо текущий кадр, либо
+     проигрываемую анимацию. Один вход вместо разбросанных applyLocal —
+     раньше фоновой таймер пинга затирал бы предпросмотр текущим
+     кадром каждые две секунды. ]]
+function ST.applyCurrent()
+    if not ST.on then return end
+    if ST.playing then
+        local S2 = GRM.Social
+        local t = RealTime() - (ST.playStart or RealTime())
+        if S2 and S2.Sample then
+            applyBonesLocal(S2.Sample(ST.PreviewDef(), t))
+            -- Разовый прогон сам останавливается на последнем кадре.
+            if not ST.loop and S2.TotalTime and t > S2.TotalTime(ST.PreviewDef()) + 0.2 then
+                ST.playing = false
+                if ST.syncPlayBtn then ST.syncPlayBtn() end
+            end
+        end
+        return
+    end
+    applyLocal()
+end
+
+hook.Add("Think", "GRM_SocStudio_Preview", function()
+    if not ST.on or not ST.playing then return end
+    ST.applyCurrent()
+end)
+
 local function closeStudio()
     if not ST.on then return end
     ST.on = false
+    ST.playing = false
     sendAct("close")
     if IsValid(ST.frame) then ST.frame:Remove() end
     ST.frame = nil
@@ -481,10 +592,44 @@ local function closeStudio()
     end
 end
 
+-- Кнопка одного вида: не плодим copy-paste на каждый DButton.
+local function flatBtn(parent, text, col, fn, font)
+    local b = vgui.Create("DButton", parent)
+    b:SetText("")
+    b.Paint = function(s, w, h)
+        local c = col
+        if s:IsHovered() then c = Color(math.min(255, c.r + 26), math.min(255, c.g + 26), math.min(255, c.b + 26)) end
+        draw.RoundedBox(5, 0, 0, w, h, c)
+        draw.SimpleText(isfunction(text) and text() or text, font or "GRMSocEd_B", w / 2, h / 2,
+            COL.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
+    b.DoClick = fn
+    return b
+end
+
+local function sectionTitle(parent, txt)
+    local l = vgui.Create("DLabel", parent)
+    l:Dock(TOP) l:SetTall(22) l:DockMargin(0, 0, 0, 4)
+    l:SetFont("GRMSocEd_T") l:SetTextColor(COL.gold) l:SetText(txt)
+    return l
+end
+
+local function fieldLabel(parent, txt)
+    local l = vgui.Create("DLabel", parent)
+    l:Dock(TOP) l:SetTall(16)
+    l:SetFont("GRMSocEd_S") l:SetTextColor(COL.dim) l:SetText(txt)
+    return l
+end
+
 local function openStudio()
     if IsValid(ST.frame) then ST.frame:Remove() end
     ST.on = true
-    ST.bones = {}
+    ST.playing = false
+    ST.loop = ST.loop == true
+    ST.speed = ST.speed or 1
+    ST.frames = { { dur = 0.5, bones = {} } }
+    ST.frameIdx = 1
+    ensureFrames()
     local lp = LocalPlayer()
     local names = boneNames(lp)
     ST.bone = names[1] or ST.bone
@@ -497,15 +642,40 @@ local function openStudio()
     f:ShowCloseButton(false)
     f:MakePopup()
     f.Paint = function(_, w, h)
-        draw.RoundedBox(0, 0, 0, w, 48, Color(14, 18, 26, 250))
-        draw.SimpleText("СТУДИЯ СОЦ. АНИМАЦИЙ", "GRMSocEd_H", 18, 24, Color(245, 195, 65), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        draw.SimpleText("ЛКМ по панели — орбита  ·  слайдеры/гизмо — кости  ·  суперадмин", "GRMSocEd_B", w / 2, 24, Color(160, 175, 190), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.RoundedBox(0, 0, 0, w, h, Color(10, 13, 18, 200))
+        draw.RoundedBox(0, 0, 0, w, 52, Color(14, 18, 26, 252))
+        draw.RoundedBox(0, 0, 51, w, 1, COL.line)
+        draw.SimpleText("СТУДИЯ АНИМАЦИЙ", "GRMSocEd_H", 20, 26, COL.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("ЛКМ по сцене — орбита  ·  колесо — приблизить  ·  гизмо/слайдеры — кость  ·  кадры внизу",
+            "GRMSocEd_B", 210, 26, COL.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
     f.OnRemove = function() if ST.on then closeStudio() end end
 
-    local view = vgui.Create("DPanel", f)
-    view:SetPos(300, 56)
-    view:SetSize(ScrW() - 640, ScrH() - 70)
+    local xBtn = flatBtn(f, "✕ ЗАКРЫТЬ", Color(58, 66, 82), function() closeStudio() end)
+    xBtn:SetPos(ScrW() - 132, 12) xBtn:SetSize(120, 28)
+
+    -------------------------------------------------------------------
+    -- Каркас: слева библиотека и параметры, справа кости, снизу кадры.
+    -------------------------------------------------------------------
+    local body = vgui.Create("DPanel", f)
+    body:SetPos(0, 52)
+    body:SetSize(ScrW(), ScrH() - 52)
+    body:SetPaintBackground(false)
+
+    local left = vgui.Create("DPanel", body)
+    left:Dock(LEFT) left:SetWide(330) left:DockMargin(10, 10, 5, 10) left:DockPadding(10, 10, 10, 10)
+    left.Paint = function(_, w, h) draw.RoundedBox(8, 0, 0, w, h, COL.panel) end
+
+    local right = vgui.Create("DPanel", body)
+    right:Dock(RIGHT) right:SetWide(340) right:DockMargin(5, 10, 10, 10) right:DockPadding(10, 10, 10, 10)
+    right.Paint = function(_, w, h) draw.RoundedBox(8, 0, 0, w, h, COL.panel) end
+
+    local tl = vgui.Create("DPanel", body)
+    tl:Dock(BOTTOM) tl:SetTall(152) tl:DockMargin(5, 5, 5, 10) tl:DockPadding(10, 8, 10, 8)
+    tl.Paint = function(_, w, h) draw.RoundedBox(8, 0, 0, w, h, COL.panel) end
+
+    local view = vgui.Create("DPanel", body)
+    view:Dock(FILL) view:DockMargin(5, 10, 5, 5)
     view:SetPaintBackground(false)
     view.OnMousePressed = function(s, key)
         if key ~= MOUSE_LEFT then return end
@@ -520,6 +690,10 @@ local function openStudio()
             else
                 ST.gzVal = (axis == "x" and rec.px) or (axis == "y" and rec.py) or rec.pz
             end
+            -- Тянуть кость во время проигрывания бессмысленно: кадр
+            -- всё равно перезапишется следующим тиком. Останавливаем.
+            ST.playing = false
+            if ST.syncPlayBtn then ST.syncPlayBtn() end
         else
             s.drag = true
             s.lx, s.ly = mx, my
@@ -531,6 +705,7 @@ local function openStudio()
         ST.gzAxis = nil
         s:MouseCapture(false)
         if ST.refreshSliders then ST.refreshSliders() end
+        if ST.refreshStrip then ST.refreshStrip() end
     end
     view.OnCursorMoved = function(s)
         local mx, my = gui.MousePos()
@@ -562,94 +737,83 @@ local function openStudio()
         return true
     end
 
-    local left = vgui.Create("DPanel", f)
-    left:SetPos(10, 56)
-    left:SetSize(280, ScrH() - 70)
-    left.Paint = function(_, w, h)
-        draw.RoundedBox(8, 0, 0, w, h, Color(20, 26, 36, 248))
+    -------------------------------------------------------------------
+    -- ЛЕВО: параметры анимации (низ) + библиотека (верх).
+    --
+    -- Жалоба владельца 31.08: «название задаётся с одной стороны, а
+    -- сохранить кнопка вообще справа». Теперь имя, ID, категория,
+    -- галочки и САМА кнопка сохранения лежат в одном блоке, кнопка —
+    -- прямо под полями, к которым относится.
+    -------------------------------------------------------------------
+    local props = vgui.Create("DPanel", left)
+    props:Dock(BOTTOM) props:SetTall(302) props:DockMargin(0, 8, 0, 0) props:DockPadding(8, 6, 8, 8)
+    props.Paint = function(_, w, h)
+        draw.RoundedBox(6, 0, 0, w, h, Color(30, 37, 50, 255))
     end
-    local right = vgui.Create("DPanel", f)
-    right:SetPos(ScrW() - 330, 56)
-    right:SetSize(320, ScrH() - 70)
-    right.Paint = function(_, w, h)
-        draw.RoundedBox(8, 0, 0, w, h, Color(20, 26, 36, 248))
-    end
+    sectionTitle(props, "ПАРАМЕТРЫ АНИМАЦИИ")
 
-    local idE = vgui.Create("DTextEntry", left)
-    idE:SetPos(10, 10) idE:SetSize(120, 24) idE:SetPlaceholderText("id")
-    local nameE = vgui.Create("DTextEntry", left)
-    nameE:SetPos(136, 10) nameE:SetSize(134, 24) nameE:SetPlaceholderText("название")
+    fieldLabel(props, "Название (видят игроки)")
+    local nameE = vgui.Create("DTextEntry", props)
+    nameE:Dock(TOP) nameE:SetTall(24) nameE:DockMargin(0, 0, 0, 6)
+    nameE:SetPlaceholderText("Приветствие")
 
-    local chkP = vgui.Create("DCheckBoxLabel", left)
-    chkP:SetPos(10, 40) chkP:SetText("Игрокам") chkP:SetValue(1) chkP:SetTextColor(color_white)
-    local chkC = vgui.Create("DCheckBoxLabel", left)
-    chkC:SetPos(110, 40) chkC:SetText("Присед") chkC:SetTextColor(color_white)
-    local chkW = vgui.Create("DCheckBoxLabel", left)
-    chkW:SetPos(200, 40) chkW:SetText("Ходьба") chkW:SetValue(1) chkW:SetTextColor(color_white)
+    fieldLabel(props, "ID (латиницей, без пробелов)")
+    local idE = vgui.Create("DTextEntry", props)
+    idE:Dock(TOP) idE:SetTall(24) idE:DockMargin(0, 0, 0, 6)
+    idE:SetPlaceholderText("wave")
 
-    -- «Заморозка»: при проигрывании этой анимации игрок не может двигаться.
-    local chkFreeze = vgui.Create("DCheckBoxLabel", left)
-    chkFreeze:SetPos(10, 58) chkFreeze:SetText("Заморозить при проигрывании") chkFreeze:SetValue(0)
-    chkFreeze:SetTextColor(color_white) chkFreeze:SetTooltip("Игрок не сможет двигаться, пока активна эта анимация (можно крутить камерой)")
+    fieldLabel(props, "Категория")
+    local catSel = vgui.Create("DComboBox", props)
+    catSel:Dock(TOP) catSel:SetTall(24) catSel:DockMargin(0, 0, 0, 6)
+    catSel:SetValue("Общее")
 
-    local catBox = vgui.Create("DComboBox", left)
-    catBox:SetPos(10, 86) catBox:SetSize(168, 24)
-    catBox:SetValue("Общее")
-    catBox.OnSelect = function() if ST.rebuildList then ST.rebuildList() end end
-    function ST.rebuildCats()
-        if not IsValid(catBox) then return end
-        local keep = catBox:GetOptionData(catBox:GetSelectedID() or 0) or "general"
-        catBox:Clear()
-        -- 0 = все категории
-        catBox:AddChoice("Все категории", "all", keep == "all")
-        local cats = ST.cats or (GRM.Social and GRM.Social.CatList) or {}
-        if #cats == 0 then cats = { { id = "general", name = "Общее" } } end
-        local sel = false
-        for _, c in ipairs(cats) do
-            local on = c.id == keep
-            catBox:AddChoice(c.name or c.id, c.id, on)
-            if on then sel = true end
-        end
-        if not sel then catBox:AddChoice("Общее", "general", true) end
+    local flags = vgui.Create("DPanel", props)
+    flags:Dock(TOP) flags:SetTall(42) flags:DockMargin(0, 0, 0, 6)
+    flags:SetPaintBackground(false)
+    local function mkChk(x, y, w, txt, def, tip)
+        local c = vgui.Create("DCheckBoxLabel", flags)
+        c:SetPos(x, y) c:SetWide(w) c:SetText(txt) c:SetValue(def and 1 or 0)
+        c:SetTextColor(COL.text)
+        if tip then c:SetTooltip(tip) end
+        return c
     end
-    ST.rebuildCats()
-    local catNew = vgui.Create("DButton", left)
-    catNew:SetPos(182, 86) catNew:SetSize(88, 24) catNew:SetText("")
-    catNew.Paint = function(s, w, h)
-        draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(60, 150, 90) or Color(46, 110, 70))
-        draw.SimpleText("+ КАТЕГОРИЯ", "GRMSocEd_B", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-    end
-    catNew.DoClick = function()
-        Derma_StringRequest("Новая категория", "Название категории поз", "", function(n)
-            n = string.Trim(n or "")
-            if n ~= "" then sendAct("addcat", n) end
-        end)
-    end
+    local chkP = mkChk(0, 2, 100, "Игрокам", true, "Показывать анимацию в меню игроков")
+    local chkC = mkChk(104, 2, 90, "Присед", false)
+    local chkW = mkChk(200, 2, 100, "Ходьба", true, "Можно идти во время анимации")
+    local chkFreeze = mkChk(0, 22, 150, "Заморозить", false, "Игрок не сможет двигаться, пока идёт анимация")
+    local chkHold = mkChk(160, 22, 150, "Держать до отмены", true,
+        "Выкл — разовая анимация: доиграет и снимется сама")
 
-    local catDel = vgui.Create("DButton", left)
-    catDel:SetPos(10, 144) catDel:SetSize(260, 20) catDel:SetText("")
-    catDel.Paint = function(s, w, h)
-        draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(150, 60, 60) or Color(90, 50, 50))
-        draw.SimpleText("Удалить текущую категорию", "GRMSocEd_B", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-    end
-    catDel.DoClick = function()
-        local id = IsValid(catBox) and catBox:GetOptionData(catBox:GetSelectedID()) or "general"
-        if id == "general" then return end
-        Derma_Query("Удалить категорию и перенести позы в «Общее»?", "Категория",
-            "Удалить", function() sendAct("delcat", id) end, "Отмена", function() end)
-    end
+    local saveB = flatBtn(props, "СОХРАНИТЬ АНИМАЦИЮ", COL.green, function()
+        if not ST.doSave then return end
+        ST.doSave()
+    end, "GRMSocEd_T")
+    saveB:Dock(TOP) saveB:SetTall(34) saveB:DockMargin(0, 2, 0, 4)
 
-    local stance = vgui.Create("DComboBox", left)
-    stance:SetPos(10, 114) stance:SetSize(126, 24)
+    local newB = flatBtn(props, "СОЗДАТЬ НОВУЮ", Color(58, 66, 82), function()
+        if ST.newAnim then ST.newAnim() end
+    end)
+    newB:Dock(TOP) newB:SetTall(24)
+
+    --[[ БАЗОВАЯ СТОЙКА. Кости крутятся ОТНОСИТЕЛЬНО текущей анимации
+         модели, поэтому автору важно видеть исходник: на T-pose удобно
+         строить позу с нуля, на «Стойке» — проверять, как она ляжет в
+         игре. Раньше этот выбор жил среди полей сохранения и выглядел
+         как свойство анимации, хотя он только для просмотра. ]]
+    sectionTitle(left, "БАЗА ПРОСМОТРА")
+    local baseRow = vgui.Create("DPanel", left)
+    baseRow:Dock(TOP) baseRow:SetTall(26) baseRow:DockMargin(0, 0, 0, 8)
+    baseRow:SetPaintBackground(false)
+    local stance = vgui.Create("DComboBox", baseRow)
+    stance:Dock(LEFT) stance:SetWide(150) stance:DockMargin(0, 0, 4, 0)
     stance:AddChoice("T-pose", "tpose", true)
     stance:AddChoice("Стойка", "idle")
     stance:AddChoice("Присед", "crouch")
     stance.OnSelect = function(_, _, _, v) sendAct("stance", v or "tpose") end
-
-    local seq = vgui.Create("DComboBox", left)
-    seq:SetPos(142, 114) seq:SetSize(128, 24)
-    seq:SetValue("sequence")
-    seq:AddChoice("(нет)", "", true)
+    local seq = vgui.Create("DComboBox", baseRow)
+    seq:Dock(FILL)
+    seq:SetValue("движение (нет)")
+    seq:AddChoice("движение (нет)", "", true)
     if IsValid(lp) and lp.GetSequenceList then
         local seen = {}
         for _, n in ipairs(lp:GetSequenceList() or {}) do
@@ -661,68 +825,89 @@ local function openStudio()
     end
     seq.OnSelect = function(_, _, _, v) sendAct("seq", v or "") end
 
+    sectionTitle(left, "БИБЛИОТЕКА")
+
+    local catRow = vgui.Create("DPanel", left)
+    catRow:Dock(TOP) catRow:SetTall(26) catRow:DockMargin(0, 0, 0, 4)
+    catRow:SetPaintBackground(false)
+    local catBox = vgui.Create("DComboBox", catRow)
+    catBox:Dock(FILL) catBox:DockMargin(0, 0, 4, 0)
+    catBox:SetValue("Все категории")
+    local catNew = flatBtn(catRow, "+ КАТ.", Color(46, 110, 70), function()
+        Derma_StringRequest("Новая категория", "Название категории", "", function(n)
+            n = string.Trim(n or "")
+            if n ~= "" then sendAct("addcat", n) end
+        end)
+    end)
+    catNew:Dock(RIGHT) catNew:SetWide(66)
+
+    local catDel = flatBtn(left, "Удалить текущую категорию", Color(84, 48, 48), function()
+        local id = IsValid(catBox) and catBox:GetOptionData(catBox:GetSelectedID()) or "general"
+        if id == "general" or id == "all" then return end
+        Derma_Query("Удалить категорию и перенести анимации в «Общее»?", "Категория",
+            "Удалить", function() sendAct("delcat", id) end, "Отмена", function() end)
+    end, "GRMSocEd_S")
+    catDel:Dock(TOP) catDel:SetTall(22) catDel:DockMargin(0, 0, 0, 6)
+
     local statusL = vgui.Create("DLabel", left)
-    statusL:SetPos(10, 150) statusL:SetSize(260, 18)
-    -- Шрифта GRMSocEd_Small в модуле нет: объявлены только _H и _B.
-    statusL:SetFont("GRMSocEd_B") statusL:SetTextColor(Color(110, 200, 130))
-    statusL:SetText("")
+    statusL:Dock(BOTTOM) statusL:SetTall(18)
+    statusL:SetFont("GRMSocEd_B") statusL:SetTextColor(Color(110, 200, 130)) statusL:SetText("")
     function ST.setStatus(txt) if IsValid(statusL) then statusL:SetText(txt or "") end end
 
-    local list = vgui.Create("DListView", left)
-    list:SetPos(10, 170) list:SetSize(260, 118)
-    list:AddColumn("Сохранённые позы")
+    local list = vgui.Create("DListView")
+    list:SetParent(left)
+    list:Dock(FILL)
+    list:AddColumn("Сохранённые анимации")
     list:SetMultiSelect(false)
-    --[[ STACK OVERFLOW (жалоба владельца 28.08).
 
-         Была замкнутая цепочка вызовов:
+    -------------------------------------------------------------------
+    -- Категории в двух списках сразу: фильтр библиотеки и выбор для
+    -- сохраняемой анимации. Раньше это был ОДИН combobox на две роли,
+    -- из-за чего смена фильтра молча меняла категорию сохранения.
+    -------------------------------------------------------------------
+    function ST.rebuildCats()
+        local cats = ST.cats or (GRM.Social and GRM.Social.CatList) or {}
+        if #cats == 0 then cats = { { id = "general", name = "Общее" } } end
+        if IsValid(catBox) then
+            local keep = catBox:GetOptionData(catBox:GetSelectedID() or 0) or "all"
+            catBox:Clear()
+            catBox:AddChoice("Все категории", "all", keep == "all")
+            for _, c in ipairs(cats) do
+                catBox:AddChoice(c.name or c.id, c.id, c.id == keep)
+            end
+        end
+        if IsValid(catSel) then
+            local keep2 = catSel:GetOptionData(catSel:GetSelectedID() or 0) or "general"
+            catSel:Clear()
+            local sel = false
+            for _, c in ipairs(cats) do
+                local on = c.id == keep2
+                catSel:AddChoice(c.name or c.id, c.id, on)
+                if on then sel = true end
+            end
+            if not sel then catSel:ChooseOptionID(1) end
+        end
+    end
+    ST.rebuildCats()
+    catBox.OnSelect = function() if ST.rebuildList then ST.rebuildList() end end
 
-           OnRowSelected → loadPose → catBox:ChooseOptionID
-             → catBox.OnSelect → rebuildList → list:SelectItem
-             → OnRowSelected → …
-
-         То есть выбор строки в списке в итоге приводил к повторному
-         выбору строки — и так до переполнения стека. Игра падала при
-         обычном клике по сохранённой позе.
-
-         Лечим флагом повторного входа: пока идёт перестроение списка или
-         загрузка позы, обработчики выбора не запускают цепочку заново.
-         Это надёжнее, чем расставлять «не вызывай меня» по одному месту:
-         любой новый обработчик автоматически попадёт под защиту. ]]
-    --[[ Тело вынесено отдельно, чтобы обёртка ниже могла гарантированно
-         снять флаг даже при ошибке внутри. ]]
     local function rebuildListBody()
         list:Clear()
         local keep = IsValid(catBox) and catBox:GetOptionData(catBox:GetSelectedID() or 0) or "all"
-        local cats = ST.cats or {}
-        local catNameOf = function(id)
-            for _, c in ipairs(cats) do if c.id == id then return c.name end end
-            return id
-        end
         for _, p in ipairs(ST.catalog or {}) do
             if keep == "all" or (p.cat or "general") == keep then
-                local cat = p.catName or p.cat or "общее"
-                local line = list:AddLine((p.players ~= false and "● " or "○ ") .. (p.name or p.id) .. "  [" .. tostring(cat) .. "]")
+                local frames = (GRM.Social and GRM.Social.Frames) and GRM.Social.Frames(p) or {}
+                -- Сразу видно, поза это или настоящая анимация.
+                local mark = #frames > 1 and ("▶ " .. #frames .. "к  ") or "● "
+                local line = list:AddLine(mark .. (p.name or p.id))
                 line._id = p.id
-                line._cat = p.cat or "general"
-                --[[ Подсветка ранее выбранной строки. SelectItem дёргает
-                     OnRowSelected — под флагом ST._busy он не станет
-                     заново грузить позу и крутить combobox. ]]
-                if p.id == ST.selectedID then
-                    list:SelectItem(line)
-                end
+                if p.id == ST.selectedID then list:SelectItem(line) end
             end
         end
     end
 
-    --[[ ФЛАГ СНИМАЕТСЯ ВСЕГДА.
-
-         Раньше сброс стоял последней строкой тела: любая ошибка внутри
-         (например, упавший loadPose) выбрасывала нас наружу, флаг
-         оставался поднятым, и rebuildList больше НИКОГДА не работал —
-         список замирал до перезахода. Владелец видел это как
-         «перемещение между категориями не отражается».
-
-         pcall гарантирует снятие флага при любом исходе. ]]
+    --[[ Флаг повторного входа снимается ВСЕГДА (pcall): иначе ошибка
+         внутри навсегда замораживала список — так уже ловили 28.08. ]]
     function ST.rebuildList()
         if not IsValid(list) then return end
         if ST._busy then return end
@@ -733,227 +918,440 @@ local function openStudio()
             ErrorNoHalt("[GRM Studio] сбой перестроения списка: " .. tostring(err) .. "\n")
         end
     end
-    ST.rebuildList()
 
-    --[[ ОБЪЯВЛЕНИЕ ЗАРАНЕЕ — обязательно.
-
-         Сама функция определена НИЖЕ, а обработчики списка ссылаются на
-         неё здесь. Без этой строки `loadPose` внутри них — глобальная
-         переменная, то есть nil, и клик по строке падал с
-         «attempt to call global 'loadPose' (a nil value)».
-
-         Именно так я и сломал студию, убирая дубль обработчика: удалил
-         нижний (объявленный ПОСЛЕ loadPose и потому рабочий), оставив
-         верхний. Локальная переменная в Lua видна только после своего
-         объявления — предварительное объявление это чинит. ]]
+    -- Объявление заранее: обработчики ниже ссылаются на функцию, которая
+    -- определена дальше по файлу (локальные видны только после себя).
     local loadPose
 
-    --[[ ЛКМ — загрузить позу, ПКМ — меню.
-
-         Обработчик один. Раньше их было ДВА (здесь и ниже, после
-         loadPose): второй молча перезаписывал первый. Работал по факту
-         только нижний, а этот вводил в заблуждение при чтении кода. ]]
     list.OnRowSelected = function(_, _, line)
-        -- Идёт перестроение списка — это не клик игрока, а подсветка.
         if ST._busy then return end
         if line and line._id then
-            ST.selectedID = line._id
-            --[[ Через pcall осознанно. Ошибка ВНУТРИ загрузки позы летела
-                 наружу через rebuildList и прерывала его до сброса
-                 ST._busy — флаг оставался поднятым, и список замирал
-                 навсегда. Внешне это выглядело как «перемещение между
-                 категориями не отражается»: сервер данные менял, а
-                 клиент их больше не перерисовывал.
-                 Теперь сломанная поза портит только себя. ]]
             local ok, err = pcall(loadPose, line._id)
             if not ok then
-                ErrorNoHalt("[GRM Studio] не удалось загрузить позу '"
-                    .. tostring(line._id) .. "': " .. tostring(err) .. "\n")
+                ErrorNoHalt("[GRM Studio] не удалось загрузить '" .. tostring(line._id) .. "': " .. tostring(err) .. "\n")
             end
         end
     end
-    -- контекстное меню позы: загрузить / переместить / удалить
     list.OnRowRightClick = function(_, _, line)
         if not (line and line._id) then return end
         local menu = DermaMenu()
         menu:AddOption("Загрузить", function() loadPose(line._id) end)
         local move = menu:AddSubMenu("Переместить в…")
         for _, c in ipairs(ST.cats or { { id = "general", name = "Общее" } }) do
-            move:AddOption(c.name or c.id, function()
-                sendAct("movepose", line._id, c.id)
-            end)
+            move:AddOption(c.name or c.id, function() sendAct("movepose", line._id, c.id) end)
         end
         menu:AddOption("Удалить", function()
-            Derma_Query("Удалить позу «" .. tostring(line._id) .. "»?", "Удаление",
-                "Удалить", function()
-                    ST.selectedID = nil
-                    sendAct("delete", line._id)
-                    notification.AddLegacy("Поза удалена", NOTIFY_UNDO, 3)
-                end, "Отмена", function() end)
+            Derma_Query("Удалить «" .. tostring(line._id) .. "»?", "Удаление", "Удалить", function()
+                ST.selectedID = nil
+                sendAct("delete", line._id)
+                notification.AddLegacy("Анимация удалена", NOTIFY_UNDO, 3)
+            end, "Отмена", function() end)
         end)
         menu:Open()
     end
+    ST.rebuildList()
 
-    -- Присваиваем объявленной выше переменной, а НЕ создаём новую local.
-    function loadPose(id)
-        for _, p in ipairs(ST.catalog or {}) do
-            if p.id == id then
-                idE:SetText(p.id)
-                nameE:SetText(p.name or "")
-                chkP:SetValue(p.players ~= false)
-                chkC:SetValue(p.crouch == true)
-                chkW:SetValue(p.walk ~= false)
-                if chkFreeze then chkFreeze:SetValue(p.freeze == true or p.nomove == true) end
-                --[[ Переключаем combobox на категорию позы. ChooseOptionID
-                     дёргает OnSelect, а тот перестраивает список — на этом
-                     и замыкалась рекурсия. Под флагом цепочка обрывается:
-                     список нам сейчас перестраивать не нужно, поза уже
-                     выбрана. ]]
-                if IsValid(catBox) then
-                    local wasBusy = ST._busy
-                    ST._busy = true
-                    for i = 1, 48 do
-                        local d = catBox:GetOptionData(i)
-                        if not d then break end
-                        if d == (p.cat or "general") then catBox:ChooseOptionID(i) break end
-                    end
-                    ST._busy = wasBusy
-                end
-                ST.selectedID = id
-                if ST.setStatus then ST.setStatus("Загружено: " .. tostring(p.name or id)) end
-                ST.bones = {}
-                for bn, rec in pairs(p.bones or {}) do
-                    if isangle(rec) then
-                        ST.bones[bn] = { p = rec.p, yaw = rec.y, r = rec.r, px = 0, py = 0, pz = 0 }
-                    else
-                        ST.bones[bn] = {
-                            p = rec.p or 0, yaw = rec.yaw or rec.y or 0, r = rec.r or 0,
-                            px = rec.px or rec.x or 0, py = rec.py or 0, pz = rec.pz or rec.z or 0,
-                        }
-                    end
-                end
-                applyLocal()
-                if ST.refreshSliders then ST.refreshSliders() end
-                return
-            end
-        end
-    end
-    --[[ Здесь БЫЛ второй list.OnRowSelected, дословно повторявший тот,
-         что объявлен выше. Он перезаписывал первый: два обработчика на
-         одно событие — это гарантированная путаница при отладке.
-         Оставлен один, с защитой от повторного входа. ]]
+    -------------------------------------------------------------------
+    -- ПРАВО: кости и трансформация.
+    -------------------------------------------------------------------
+    local trans = vgui.Create("DPanel", right)
+    trans:Dock(BOTTOM) trans:SetTall(330) trans:DockMargin(0, 8, 0, 0) trans:DockPadding(8, 6, 8, 8)
+    trans.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(30, 37, 50, 255)) end
 
-    local bonesc = vgui.Create("DScrollPanel", left)
-    bonesc:SetPos(10, 296) bonesc:SetSize(260, ScrH() - 438)
-    for _, n in ipairs(names) do
-        local b = vgui.Create("DButton", bonesc)
-        b:Dock(TOP) b:SetTall(20) b:DockMargin(0, 0, 0, 1)
-        b:SetText(string.gsub(n, "ValveBiped.Bip01_", ""))
-        b:SetTextColor(Color(235, 240, 248))
-        b.DoClick = function()
-            ST.bone = n
-            if ST.refreshSliders then ST.refreshSliders() end
-        end
-        b.Paint = function(s, w, h)
-            draw.RoundedBox(3, 0, 0, w, h, ST.bone == n and Color(65, 145, 235) or Color(32, 40, 54))
-        end
-    end
+    local boneNameL = vgui.Create("DLabel", trans)
+    boneNameL:Dock(TOP) boneNameL:SetTall(20)
+    boneNameL:SetFont("GRMSocEd_T") boneNameL:SetTextColor(COL.gold)
+    boneNameL:SetText("КОСТЬ")
 
-    local moveB = vgui.Create("DButton", right)
-    moveB:SetPos(10, 8) moveB:SetSize(145, 26) moveB:SetText("ПЕРЕМЕЩЕНИЕ")
-    moveB:SetTextColor(Color(240, 244, 250))
-    local rotB = vgui.Create("DButton", right)
-    rotB:SetPos(163, 8) rotB:SetSize(145, 26) rotB:SetText("ВРАЩЕНИЕ")
-    rotB:SetTextColor(Color(240, 244, 250))
-    local function paintMode(s, w, h, on, col)
+    local modeRow = vgui.Create("DPanel", trans)
+    modeRow:Dock(TOP) modeRow:SetTall(28) modeRow:DockMargin(0, 2, 0, 6)
+    modeRow:SetPaintBackground(false)
+    local moveB = vgui.Create("DButton", modeRow)
+    moveB:Dock(LEFT) moveB:SetWide(150) moveB:SetText("")
+    local rotB = vgui.Create("DButton", modeRow)
+    rotB:Dock(RIGHT) rotB:SetWide(150) rotB:SetText("")
+    local function paintMode(s, w, h, on, col, txt)
         draw.RoundedBox(5, 0, 0, w, h, on and col or Color(40, 48, 62))
+        draw.SimpleText(txt, "GRMSocEd_B", w / 2, h / 2, COL.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end
-    moveB.Paint = function(s, w, h) paintMode(s, w, h, ST.mode == "move", Color(65, 145, 235)) end
-    rotB.Paint = function(s, w, h) paintMode(s, w, h, ST.mode == "rotate", Color(230, 150, 60)) end
+    moveB.Paint = function(s, w, h) paintMode(s, w, h, ST.mode == "move", Color(65, 145, 235), "ПЕРЕМЕЩЕНИЕ") end
+    rotB.Paint = function(s, w, h) paintMode(s, w, h, ST.mode == "rotate", Color(230, 150, 60), "ВРАЩЕНИЕ") end
     moveB.DoClick = function() ST.mode = "move" end
     rotB.DoClick = function() ST.mode = "rotate" end
 
     local sliders = {}
-    local function addSl(y, label, key, mn, mx)
-        local s = vgui.Create("DNumSlider", right)
-        s:SetPos(8, y) s:SetSize(300, 28)
+    local function addSl(label, key, mn, mx)
+        local s = vgui.Create("DNumSlider", trans)
+        s:Dock(TOP) s:SetTall(26)
         s:SetText(label) s:SetMin(mn) s:SetMax(mx) s:SetDecimals(1)
         s:SetDark(false)
         if IsValid(s.Label) then
-            s.Label:SetTextColor(Color(230, 236, 245))
+            s.Label:SetTextColor(COL.text)
             s.Label:SetFont("GRMSocEd_B")
         end
-        if IsValid(s.TextArea) then
-            s.TextArea:SetTextColor(Color(240, 244, 250))
-        end
+        if IsValid(s.TextArea) then s.TextArea:SetTextColor(COL.text) end
         s.OnValueChanged = function(_, v)
+            if ST._syncing then return end
             local rec = recOf(ST.bone)
             rec[key] = tonumber(v) or 0
             applyLocal()
+            if ST.refreshStrip then ST.refreshStrip() end
         end
         sliders[key] = s
-        return y + 30
+        return s
     end
-    local yy = 42
-    yy = addSl(yy, "Pitch", "p", -180, 180)
-    yy = addSl(yy, "Yaw", "yaw", -180, 180)
-    yy = addSl(yy, "Roll", "r", -180, 180)
-    yy = addSl(yy, "Сдвиг X", "px", -20, 20)
-    yy = addSl(yy, "Сдвиг Y", "py", -20, 20)
-    yy = addSl(yy, "Сдвиг Z", "pz", -20, 20)
+    addSl("Pitch", "p", -180, 180)
+    addSl("Yaw", "yaw", -180, 180)
+    addSl("Roll", "r", -180, 180)
+    addSl("Сдвиг X", "px", -20, 20)
+    addSl("Сдвиг Y", "py", -20, 20)
+    addSl("Сдвиг Z", "pz", -20, 20)
 
+    --[[ Флаг _syncing обязателен: SetValue дёргает OnValueChanged, и без
+         него простое обновление слайдеров записывало бы значения назад
+         в кость — при переключении кадров это стирало данные. ]]
     function ST.refreshSliders()
         local rec = recOf(ST.bone)
+        ST._syncing = true
         for k, s in pairs(sliders) do
             if IsValid(s) then s:SetValue(tonumber(rec[k]) or 0) end
         end
-    end
-    ST.refreshSliders()
-
-    local function mk(txt, col, y, fn)
-        local b = vgui.Create("DButton", right)
-        b:SetPos(12, y) b:SetSize(296, 30) b:SetText(txt)
-        b:SetTextColor(Color(245, 248, 252))
-        b.Paint = function(s, w, h)
-            draw.RoundedBox(5, 0, 0, w, h, s:IsHovered() and Color(col.r + 20, col.g + 20, col.b + 20) or col)
+        ST._syncing = false
+        if IsValid(boneNameL) then
+            boneNameL:SetText("КОСТЬ: " .. string.gsub(tostring(ST.bone or ""), "ValveBiped.Bip01_", ""))
         end
-        b.DoClick = fn
-        return b
     end
-    mk("СБРОСИТЬ КОСТЬ", Color(80, 90, 110), yy + 8, function()
+
+    local resetRow = vgui.Create("DPanel", trans)
+    resetRow:Dock(TOP) resetRow:SetTall(28) resetRow:DockMargin(0, 6, 0, 0)
+    resetRow:SetPaintBackground(false)
+    local rb1 = flatBtn(resetRow, "СБРОС КОСТИ", Color(72, 82, 100), function()
         ST.bones[ST.bone] = { p = 0, yaw = 0, r = 0, px = 0, py = 0, pz = 0 }
         applyLocal()
         ST.refreshSliders()
+        if ST.refreshStrip then ST.refreshStrip() end
     end)
-    mk("СБРОСИТЬ ВСЕ КОСТИ", Color(90, 70, 70), yy + 44, function()
-        ST.bones = {}
+    rb1:Dock(LEFT) rb1:SetWide(150)
+    local rb2 = flatBtn(resetRow, "СБРОС КАДРА", Color(96, 62, 62), function()
+        local fr = ensureFrames()
+        for k in pairs(fr.bones) do fr.bones[k] = nil end
         applyLocal()
         ST.refreshSliders()
+        if ST.refreshStrip then ST.refreshStrip() end
     end)
-    mk("СОХРАНИТЬ ПОЗУ", Color(50, 150, 90), yy + 88, function()
-        local catId = IsValid(catBox) and catBox:GetOptionData(catBox:GetSelectedID()) or "general"
-        local catName = IsValid(catBox) and catBox:GetValue() or "Общее"
+    rb2:Dock(RIGHT) rb2:SetWide(150)
+
+    local copyRow = vgui.Create("DPanel", trans)
+    copyRow:Dock(TOP) copyRow:SetTall(26) copyRow:DockMargin(0, 6, 0, 0)
+    copyRow:SetPaintBackground(false)
+    local cb1 = flatBtn(copyRow, "КОПИРОВАТЬ ПОЗУ", Color(58, 70, 92), function()
+        ST.clip = copyBones(ensureFrames().bones)
+        ST.setStatus("Поза кадра скопирована")
+    end, "GRMSocEd_S")
+    cb1:Dock(LEFT) cb1:SetWide(150)
+    local cb2 = flatBtn(copyRow, "ВСТАВИТЬ В КАДР", Color(58, 70, 92), function()
+        if not istable(ST.clip) then ST.setStatus("Буфер пуст") return end
+        local fr = ensureFrames()
+        fr.bones = copyBones(ST.clip)
+        ST.bones = fr.bones
+        applyLocal()
+        ST.refreshSliders()
+        if ST.refreshStrip then ST.refreshStrip() end
+    end, "GRMSocEd_S")
+    cb2:Dock(RIGHT) cb2:SetWide(150)
+
+    sectionTitle(right, "СКЕЛЕТ")
+    local search = vgui.Create("DTextEntry", right)
+    search:Dock(TOP) search:SetTall(24) search:DockMargin(0, 0, 0, 6)
+    search:SetPlaceholderText("поиск кости: hand, spine, head…")
+
+    local bonesc = vgui.Create("DScrollPanel", right)
+    bonesc:Dock(FILL)
+
+    local function rebuildBones()
+        bonesc:Clear()
+        local q = string.lower(string.Trim(IsValid(search) and search:GetValue() or ""))
+        for _, n in ipairs(names) do
+            local shortN = string.gsub(n, "ValveBiped.Bip01_", "")
+            if q == "" or string.find(string.lower(shortN), q, 1, true) then
+                local b = vgui.Create("DButton", bonesc)
+                b:Dock(TOP) b:SetTall(20) b:DockMargin(0, 0, 0, 1) b:SetText("")
+                b.Paint = function(_, w, h)
+                    local on = ST.bone == n
+                    -- Изменённые кости подсвечиваем: сразу видно, что
+                    -- участвует в кадре, а что нет.
+                    local touched = istable(ST.bones) and ST.bones[n] ~= nil
+                    draw.RoundedBox(3, 0, 0, w, h, on and COL.cardOn or COL.card)
+                    draw.SimpleText(shortN, "GRMSocEd_S", 8, h / 2,
+                        touched and COL.gold or COL.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                end
+                b.DoClick = function()
+                    ST.bone = n
+                    ST.refreshSliders()
+                end
+            end
+        end
+    end
+    search.OnChange = rebuildBones
+    rebuildBones()
+    ST.refreshSliders()
+
+    -------------------------------------------------------------------
+    -- НИЗ: лента ключевых кадров.
+    -------------------------------------------------------------------
+    local tlTop = vgui.Create("DPanel", tl)
+    tlTop:Dock(TOP) tlTop:SetTall(28) tlTop:DockMargin(0, 0, 0, 6)
+    tlTop:SetPaintBackground(false)
+
+    local tlTitle = vgui.Create("DLabel", tlTop)
+    tlTitle:Dock(LEFT) tlTitle:SetWide(180)
+    tlTitle:SetFont("GRMSocEd_T") tlTitle:SetTextColor(COL.gold)
+    tlTitle:SetText("КЛЮЧЕВЫЕ КАДРЫ")
+
+    local playB
+    function ST.syncPlayBtn()
+        if IsValid(playB) then playB:InvalidateLayout() end
+    end
+    playB = flatBtn(tlTop, function() return ST.playing and "■ СТОП" or "▶ ПРОСМОТР" end, Color(52, 120, 190), function()
+        ST.playing = not ST.playing
+        ST.playStart = RealTime()
+        if not ST.playing then applyLocal() end
+    end, "GRMSocEd_T")
+    playB:Dock(RIGHT) playB:SetWide(140)
+
+    local loopChk = vgui.Create("DCheckBoxLabel", tlTop)
+    loopChk:Dock(RIGHT) loopChk:SetWide(110) loopChk:DockMargin(0, 6, 8, 0)
+    loopChk:SetText("Зациклить") loopChk:SetTextColor(COL.text)
+    loopChk:SetValue(ST.loop and 1 or 0)
+    loopChk.OnChange = function(_, v) ST.loop = v == true end
+
+    local speedSl = vgui.Create("DNumSlider", tlTop)
+    speedSl:Dock(RIGHT) speedSl:SetWide(210)
+    speedSl:SetText("Скорость") speedSl:SetMin(0.2) speedSl:SetMax(3) speedSl:SetDecimals(2)
+    speedSl:SetValue(ST.speed or 1) speedSl:SetDark(false)
+    if IsValid(speedSl.Label) then speedSl.Label:SetTextColor(COL.text) speedSl.Label:SetFont("GRMSocEd_B") end
+    if IsValid(speedSl.TextArea) then speedSl.TextArea:SetTextColor(COL.text) end
+    speedSl.OnValueChanged = function(_, v) ST.speed = math.Clamp(tonumber(v) or 1, 0.1, 4) end
+
+    local durSl = vgui.Create("DNumSlider", tlTop)
+    durSl:Dock(RIGHT) durSl:SetWide(260) durSl:DockMargin(0, 0, 8, 0)
+    durSl:SetText("Кадр, сек") durSl:SetMin(0.05) durSl:SetMax(5) durSl:SetDecimals(2)
+    durSl:SetValue(0.5) durSl:SetDark(false)
+    if IsValid(durSl.Label) then durSl.Label:SetTextColor(COL.text) durSl.Label:SetFont("GRMSocEd_B") end
+    if IsValid(durSl.TextArea) then durSl.TextArea:SetTextColor(COL.text) end
+    durSl.OnValueChanged = function(_, v)
+        if ST._syncing then return end
+        local fr = ensureFrames()
+        fr.dur = math.Clamp(tonumber(v) or 0.5, 0.05, 10)
+        if ST.refreshStrip then ST.refreshStrip() end
+    end
+
+    local btnRow = vgui.Create("DPanel", tl)
+    btnRow:Dock(BOTTOM) btnRow:SetTall(26) btnRow:DockMargin(0, 6, 0, 0)
+    btnRow:SetPaintBackground(false)
+
+    local strip = vgui.Create("DHorizontalScroller", tl)
+    strip:Dock(FILL)
+    strip:SetOverlap(-6)
+
+    --[[ Переключение кадра. Кадр — это отдельная поза, поэтому меняем
+         ST.bones (на неё смотрят слайдеры и гизмо) и сразу показываем
+         результат: без этого админ правил бы один кадр, глядя на другой. ]]
+    local function selectFrame(i)
+        ST.frameIdx = math.Clamp(i, 1, #(ST.frames or { 1 }))
+        ensureFrames()
+        ST.playing = false
+        ST._syncing = true
+        if IsValid(durSl) then durSl:SetValue(ST.frames[ST.frameIdx].dur or 0.5) end
+        ST._syncing = false
+        applyLocal()
+        ST.refreshSliders()
+        if ST.refreshStrip then ST.refreshStrip() end
+    end
+
+    function ST.refreshStrip()
+        if not IsValid(strip) then return end
+        strip:Clear()
+        ensureFrames()
+        for i, fr in ipairs(ST.frames) do
+            local card = vgui.Create("DButton")
+            card:SetSize(96, 56)
+            card:SetText("")
+            card.Paint = function(_, w, h)
+                local on = i == ST.frameIdx
+                draw.RoundedBox(6, 0, 0, w, h, on and COL.cardOn or COL.card)
+                draw.SimpleText("КАДР " .. i, "GRMSocEd_T", w / 2, 14, COL.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                draw.SimpleText(string.format("%.2f с", tonumber(fr.dur) or 0.5), "GRMSocEd_S", w / 2, 32,
+                    COL.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                local n = 0
+                for _ in pairs(fr.bones or {}) do n = n + 1 end
+                draw.SimpleText(n .. " костей", "GRMSocEd_S", w / 2, 46,
+                    on and COL.text or COL.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            end
+            card.DoClick = function() selectFrame(i) end
+            card.DoRightClick = function()
+                local menu = DermaMenu()
+                menu:AddOption("Вставить копию после", function()
+                    table.insert(ST.frames, i + 1, { dur = fr.dur or 0.5, bones = copyBones(fr.bones) })
+                    selectFrame(i + 1)
+                end)
+                menu:AddOption("Сдвинуть влево", function()
+                    if i > 1 then
+                        ST.frames[i], ST.frames[i - 1] = ST.frames[i - 1], ST.frames[i]
+                        selectFrame(i - 1)
+                    end
+                end)
+                menu:AddOption("Сдвинуть вправо", function()
+                    if i < #ST.frames then
+                        ST.frames[i], ST.frames[i + 1] = ST.frames[i + 1], ST.frames[i]
+                        selectFrame(i + 1)
+                    end
+                end)
+                menu:AddOption("Удалить кадр", function()
+                    if #ST.frames <= 1 then return end
+                    table.remove(ST.frames, i)
+                    selectFrame(math.min(i, #ST.frames))
+                end)
+                menu:Open()
+            end
+            strip:AddPanel(card)
+        end
+        local total = (GRM.Social and GRM.Social.TotalTime) and GRM.Social.TotalTime(ST.PreviewDef()) or 0
+        if IsValid(tlTitle) then
+            tlTitle:SetText(string.format("КАДРЫ: %d · %.2f с", #ST.frames, total))
+        end
+    end
+
+    local addB = flatBtn(btnRow, "+ КАДР (копия текущего)", COL.green, function()
+        local fr = ensureFrames()
+        table.insert(ST.frames, ST.frameIdx + 1, { dur = fr.dur or 0.5, bones = copyBones(fr.bones) })
+        selectFrame(ST.frameIdx + 1)
+    end)
+    addB:Dock(LEFT) addB:SetWide(210) addB:DockMargin(0, 0, 6, 0)
+    local addEmptyB = flatBtn(btnRow, "+ ПУСТОЙ", Color(58, 70, 92), function()
+        table.insert(ST.frames, ST.frameIdx + 1, { dur = 0.5, bones = {} })
+        selectFrame(ST.frameIdx + 1)
+    end)
+    addEmptyB:Dock(LEFT) addEmptyB:SetWide(120) addEmptyB:DockMargin(0, 0, 6, 0)
+    local delB = flatBtn(btnRow, "УДАЛИТЬ КАДР", COL.red, function()
+        if #ST.frames <= 1 then ST.setStatus("Последний кадр удалить нельзя") return end
+        table.remove(ST.frames, ST.frameIdx)
+        selectFrame(math.min(ST.frameIdx, #ST.frames))
+    end)
+    delB:Dock(LEFT) delB:SetWide(150)
+    local hintL = vgui.Create("DLabel", btnRow)
+    hintL:Dock(FILL) hintL:DockMargin(10, 0, 0, 0)
+    hintL:SetFont("GRMSocEd_S") hintL:SetTextColor(COL.dim)
+    hintL:SetText("Один кадр = поза. Два и больше = анимация: ПКМ по кадру — копия/порядок/удаление.")
+
+    ST.refreshStrip()
+
+    -------------------------------------------------------------------
+    -- Загрузка / сохранение.
+    -------------------------------------------------------------------
+    function loadPose(id)
+        for _, p in ipairs(ST.catalog or {}) do
+            if p.id == id then
+                ST.selectedID = id
+                idE:SetText(p.id or "")
+                nameE:SetText(p.name or "")
+                chkP:SetValue(p.players ~= false)
+                chkC:SetValue(p.crouch == true)
+                chkW:SetValue(p.walk ~= false)
+                chkFreeze:SetValue(p.freeze == true or p.nomove == true)
+                chkHold:SetValue(p.hold ~= false)
+                ST.loop = p.loop == true
+                if IsValid(loopChk) then loopChk:SetValue(ST.loop and 1 or 0) end
+                ST.speed = math.Clamp(tonumber(p.speed) or 1, 0.1, 4)
+                if IsValid(speedSl) then
+                    ST._syncing = true
+                    speedSl:SetValue(ST.speed)
+                    ST._syncing = false
+                end
+                --[[ ChooseOptionID дёргает OnSelect. Здесь у списка
+                     категорий сохранения обработчика нет, но флаг
+                     ставим всё равно: 28.08 именно на этой строке
+                     замыкалась рекурсия
+                     OnRowSelected → loadPose → OnSelect → rebuildList →
+                     SelectItem → OnRowSelected, и игра падала по
+                     переполнению стека. Стоит кому-то повесить сюда
+                     обработчик — цепочка вернётся. Флаг ВОССТАНАВЛИВАЕМ,
+                     а не гасим в false: loadPose могли вызвать изнутри
+                     перестроения списка. ]]
+                if IsValid(catSel) then
+                    local wasBusy = ST._busy
+                    ST._busy = true
+                    for i = 1, 64 do
+                        local d = catSel:GetOptionData(i)
+                        if not d then break end
+                        if d == (p.cat or "general") then catSel:ChooseOptionID(i) break end
+                    end
+                    ST._busy = wasBusy
+                end
+                --[[ Кадры берём через общий S.Frames: он же превращает
+                     старую позу (только bones) в один кадр. Если бы
+                     студия делала это по-своему, старые записи после
+                     пересохранения могли бы поехать. ]]
+                local src = (GRM.Social and GRM.Social.Frames) and GRM.Social.Frames(p) or {}
+                ST.frames = {}
+                for _, fr in ipairs(src) do
+                    ST.frames[#ST.frames + 1] = { dur = tonumber(fr.dur) or 0.5, bones = copyBones(fr.bones) }
+                end
+                if #ST.frames == 0 then ST.frames = { { dur = 0.5, bones = {} } } end
+                ST.frameIdx = 1
+                selectFrame(1)
+                ST.setStatus("Загружено: " .. tostring(p.name or id))
+                if ST.rebuildList then ST.rebuildList() end
+                return
+            end
+        end
+    end
+
+    function ST.newAnim()
+        ST.selectedID = nil
+        idE:SetText("")
+        nameE:SetText("")
+        chkP:SetValue(true) chkC:SetValue(false) chkW:SetValue(true)
+        chkFreeze:SetValue(false) chkHold:SetValue(true)
+        ST.loop = false
+        if IsValid(loopChk) then loopChk:SetValue(0) end
+        ST.frames = { { dur = 0.5, bones = {} } }
+        ST.frameIdx = 1
+        selectFrame(1)
+        ST.setStatus("Новая анимация")
+    end
+
+    function ST.doSave()
+        local nm = string.Trim(nameE:GetValue() or "")
+        if nm == "" then
+            ST.setStatus("Укажите название")
+            notification.AddLegacy("Название обязательно", NOTIFY_ERROR, 3)
+            return
+        end
+        local catId = IsValid(catSel) and catSel:GetOptionData(catSel:GetSelectedID()) or "general"
+        local catName = IsValid(catSel) and catSel:GetValue() or "Общее"
+        ensureFrames()
+        --[[ id пустой — сервер сам сделает его из названия (slug). Так
+             админу не надо придумывать латиницу для каждой анимации. ]]
         sendAct("save", {
-            id = idE:GetValue(),
-            name = nameE:GetValue(),
+            id = string.Trim(idE:GetValue() or ""),
+            name = nm,
             players = chkP:GetChecked(),
             crouch = chkC:GetChecked(),
             walk = chkW:GetChecked(),
             freeze = chkFreeze:GetChecked(),
-            hold = true,
-            stance = stance:GetOptionData(stance:GetSelectedID()) or "idle",
-            sequence = seq:GetOptionData(seq:GetSelectedID()) or "",
-            bones = ST.bones,
+            hold = chkHold:GetChecked(),
+            loop = ST.loop == true,
+            speed = ST.speed or 1,
+            stance = "idle",
+            sequence = "",
+            bones = ST.frames[1] and ST.frames[1].bones or {},
+            frames = ST.frames,
             cat = catId,
             catName = catName,
         })
-        if ST.setStatus then ST.setStatus("Сохранено") end
-    end)
-    mk("УДАЛИТЬ ВЫБРАННУЮ", Color(180, 70, 70), yy + 124, function()
-        local _, line = list:GetSelectedLine()
-        if line and line._id then sendAct("delete", line._id) end
-    end)
-    mk("ЗАКРЫТЬ", Color(50, 55, 70), yy + 168, function() closeStudio() end)
+        ST.setStatus("Сохранено: " .. nm .. " (" .. #ST.frames .. " кадр(ов))")
+    end
 end
 
 net.Receive("GRM_SocStudio_Open", function() openStudio() end)
@@ -968,8 +1366,14 @@ concommand.Add("grm_anim_studio", function()
     -- и открываем окно у себя
     openStudio()
 end)
+--[[ Пинг держит серверную заморозку. applyCurrent, а НЕ applyLocal:
+     иначе каждые две секунды предпросмотр анимации сбивался бы на
+     текущий кадр. ]]
 timer.Create("GRM_SocStudio_Ping", 2, 0, function()
-    if ST.on then sendAct("ping") applyLocal() end
+    if ST.on then
+        sendAct("ping")
+        if ST.applyCurrent then ST.applyCurrent() end
+    end
 end)
 
 print("[GRM Social Studio] client")

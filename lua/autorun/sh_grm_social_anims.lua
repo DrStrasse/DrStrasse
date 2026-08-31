@@ -4,7 +4,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Social = GRM.Social or {}
 local S = GRM.Social
-S.Version = "1.1.0"
+S.Version = "1.2.0"
 S.CatList = S.CatList or { { id = "general", name = "Общее" } }
 
 -- Поза трубки: не в радиальном меню, ставит модуль телефона.
@@ -72,6 +72,93 @@ S.List = {
             ["ValveBiped.Bip01_L_Hand"]     = Angle(0, 6, -8),
         },
     },
+    --[[ ВСТРОЕННЫЙ ПРИМЕР ПОКАДРОВОЙ АНИМАЦИИ.
+
+         Раньше весь список был статичными позами, и проверить механику
+         кадров было не на чем: свежий сервер без сохранённого каталога
+         показывал только позы. Здесь рука поднимается и качается из
+         стороны в сторону — четыре кадра, цикл.
+
+         hold = false: разовая. Отмахал и опустил руку сам, без
+         необходимости лезть в меню и снимать позу вручную. ]]
+    {
+        id = "wave",
+        name = "Приветствие",
+        cat = "general",
+        hold = false,
+        walk = true,
+        --[[ НЕ цикл. Зацикленная анимация никогда не снимется сама
+             (в S.Play авто-снятие пропускает loop), и «поздоровавшийся»
+             игрок махал бы рукой до ручной отмены. Здесь рука
+             поднимается, дважды качается и ВОЗВРАЩАЕТСЯ последним
+             пустым кадром — после него запись снимается таймером. ]]
+        loop = false,
+        speed = 1,
+        frames = {
+            {
+                dur = 0.22,
+                bones = {
+                    ["ValveBiped.Bip01_R_UpperArm"] = { p = -6, yaw = -18, r = -30 },
+                    ["ValveBiped.Bip01_R_Forearm"]  = { p = 4, yaw = -34, r = 6 },
+                    ["ValveBiped.Bip01_R_Hand"]     = { p = 0, yaw = 4, r = 4 },
+                },
+            },
+            {
+                dur = 0.3,
+                bones = {
+                    ["ValveBiped.Bip01_R_UpperArm"] = { p = -14, yaw = -26, r = -66 },
+                    ["ValveBiped.Bip01_R_Forearm"]  = { p = 6, yaw = -46, r = 10 },
+                    ["ValveBiped.Bip01_R_Hand"]     = { p = 0, yaw = 8, r = 22 },
+                    ["ValveBiped.Bip01_Head1"]      = { p = 0, yaw = -4, r = -6 },
+                },
+            },
+            {
+                dur = 0.3,
+                bones = {
+                    ["ValveBiped.Bip01_R_UpperArm"] = { p = -14, yaw = -26, r = -66 },
+                    ["ValveBiped.Bip01_R_Forearm"]  = { p = 6, yaw = -46, r = 10 },
+                    ["ValveBiped.Bip01_R_Hand"]     = { p = 0, yaw = 8, r = -24 },
+                    ["ValveBiped.Bip01_Head1"]      = { p = 0, yaw = -4, r = -6 },
+                },
+            },
+            {
+                dur = 0.3,
+                bones = {
+                    ["ValveBiped.Bip01_R_UpperArm"] = { p = -14, yaw = -26, r = -66 },
+                    ["ValveBiped.Bip01_R_Forearm"]  = { p = 6, yaw = -46, r = 10 },
+                    ["ValveBiped.Bip01_R_Hand"]     = { p = 0, yaw = 8, r = 22 },
+                    ["ValveBiped.Bip01_Head1"]      = { p = 0, yaw = -4, r = -6 },
+                },
+            },
+            -- Возврат: пустой кадр = все кости в исходное положение.
+            { dur = 0.28, bones = {} },
+        },
+    },
+    {
+        id = "point",
+        name = "Указать вперёд",
+        cat = "general",
+        hold = false,
+        walk = true,
+        loop = false,
+        frames = {
+            {
+                dur = 0.25,
+                bones = {
+                    ["ValveBiped.Bip01_R_UpperArm"] = { p = 10, yaw = -14, r = -8 },
+                    ["ValveBiped.Bip01_R_Forearm"]  = { p = 0, yaw = -30, r = 0 },
+                },
+            },
+            {
+                dur = 0.9,
+                bones = {
+                    ["ValveBiped.Bip01_R_UpperArm"] = { p = 34, yaw = -46, r = -6 },
+                    ["ValveBiped.Bip01_R_Forearm"]  = { p = -4, yaw = -12, r = 4 },
+                    ["ValveBiped.Bip01_R_Hand"]     = { p = 0, yaw = 0, r = 10 },
+                },
+            },
+        },
+    },
     {
         id = "docs",
         name = "Рассматривать документы",
@@ -108,7 +195,13 @@ local function markBones(t)
 end
 function S.MarkAllBones()
     ALL_BONES = {}
-    for i = 1, #S.List do markBones(S.List[i].bones) end
+    for i = 1, #S.List do
+        markBones(S.List[i].bones)
+        --[[ Кости из КАДРОВ тоже обязаны попасть в список сброса: иначе
+             кость, которую двигает только третий кадр, останется
+             вывернутой после снятия анимации. ]]
+        for _, f in ipairs(S.List[i].frames or {}) do markBones(f.bones) end
+    end
     markBones(S.PhonePose.bones)
 end
 S.MarkAllBones()
@@ -122,6 +215,178 @@ end
 function S.BoneToPos(rec)
     if not istable(rec) then return Vector(0, 0, 0) end
     return Vector(tonumber(rec.px or rec.x) or 0, tonumber(rec.py) or 0, tonumber(rec.pz or rec.z) or 0)
+end
+
+-----------------------------------------------------------------------
+-- КЛЮЧЕВЫЕ КАДРЫ (заказ владельца 31.08).
+--
+-- БЫЛО. Каждая «анимация» это ОДИН набор углов костей (def.bones):
+-- поза, а не движение. Руки вверх — можно, помахать рукой — нельзя.
+--
+-- СТАЛО. У анимации есть массив кадров:
+--     def.frames = { { dur = 0.4, bones = { [кость] = {p,yaw,r,px,py,pz} } }, ... }
+--     def.loop   = повторять по кругу
+--     def.speed  = множитель времени
+-- dur кадра — это время ПЕРЕХОДА от него к следующему, поэтому у
+-- последнего кадра dur учитывается только в цикле (возврат к первому).
+--
+-- Старые записи (только def.bones) продолжают работать: S.Frames
+-- превращает их в единственный кадр, и всё поведение прежнее. Ломать
+-- сохранённый каталог сервера нельзя — там уже есть рабочие позы.
+-----------------------------------------------------------------------
+S.MaxFrames = 48
+S.MaxBonesPerFrame = 96
+S.MinDur, S.MaxDur = 0.05, 10
+
+local function num(v, d)
+    v = tonumber(v)
+    if v == nil then return d or 0 end
+    return v
+end
+
+-- Явный выбор вместо `a or b`: ноль в Lua истинен, но nil-проверка
+-- читается однозначно и не ломается, если в поле вдруг окажется false.
+local function pick(a, b)
+    if a ~= nil then return a end
+    return b
+end
+
+--[[ Приводит запись кости к единому виду. На входе может быть Angle
+     (старый формат из кода), таблица из студии {p,yaw,r,px,py,pz} или
+     таблица после JSON-обхода {p,y,r,x,z}. ]]
+function S.NormBone(rec)
+    if isangle and isangle(rec) then
+        return { p = num(rec.p), yaw = num(rec.y), r = num(rec.r), px = 0, py = 0, pz = 0 }
+    end
+    if not istable(rec) then
+        return { p = 0, yaw = 0, r = 0, px = 0, py = 0, pz = 0 }
+    end
+    return {
+        p   = num(rec.p),
+        yaw = num(pick(rec.yaw, rec.y)),
+        r   = num(rec.r),
+        px  = num(pick(rec.px, rec.x)),
+        py  = num(rec.py),
+        pz  = num(pick(rec.pz, rec.z)),
+    }
+end
+
+--[[ Чистка кадров перед записью в каталог. Данные приходят по сети от
+     админа — но и админ может прислать мусор (или клиент с правкой).
+     Ограничиваем длину, число костей и длительность: иначе один кадр
+     на 10000 костей раздует файл каталога и рассылку всем игрокам. ]]
+function S.SanitizeFrames(frames)
+    local out = {}
+    if not istable(frames) then return out end
+    local limit = math.min(#frames, S.MaxFrames)
+    for i = 1, limit do
+        local f = frames[i]
+        if istable(f) then
+            local bones, n = {}, 0
+            for name, rec in pairs(f.bones or {}) do
+                if isstring(name) and n < S.MaxBonesPerFrame then
+                    n = n + 1
+                    bones[string.sub(name, 1, 64)] = S.NormBone(rec)
+                end
+            end
+            out[#out + 1] = {
+                dur = math.Clamp(num(f.dur, 0.5), S.MinDur, S.MaxDur),
+                bones = bones,
+            }
+        end
+    end
+    return out
+end
+
+-- Кадры анимации. Старая поза без frames — это один кадр.
+function S.Frames(def)
+    if not istable(def) then return {} end
+    if istable(def.frames) and #def.frames > 0 then return def.frames end
+    if istable(def.bones) then return { { dur = 0.5, bones = def.bones } } end
+    return {}
+end
+
+function S.IsAnimated(def)
+    return #S.Frames(def) > 1
+end
+
+function S.TotalTime(def)
+    local fr = S.Frames(def)
+    local n = #fr
+    if n < 2 then return 0 end
+    -- Без цикла последний кадр никуда не переходит: его dur не считаем.
+    local last = n - 1
+    if istable(def) and def.loop == true then last = n end
+    local t = 0
+    for i = 1, last do
+        t = t + math.Clamp(num(fr[i].dur, 0.5), S.MinDur, S.MaxDur)
+    end
+    return t
+end
+
+local function wrap180(a)
+    a = a % 360
+    if a > 180 then a = a - 360 end
+    return a
+end
+
+local function lerpNum(a, b, f) return a + (b - a) * f end
+
+--[[ Углы смешиваем по КРАТЧАЙШЕЙ дуге: переход 170° → -170° это 20°
+     через 180, а не 340° в обратную сторону. Без этого рука на стыке
+     кадров делала полный оборот. ]]
+local function lerpAng(a, b, f) return a + wrap180(b - a) * f end
+
+function S.Blend(a, b, f)
+    if not istable(a) then a = {} end
+    if not istable(b) then b = {} end
+    f = math.Clamp(num(f, 0), 0, 1)
+    local names = {}
+    for name in pairs(a) do names[name] = true end
+    for name in pairs(b) do names[name] = true end
+    local out = {}
+    for name in pairs(names) do
+        local x, y = S.NormBone(a[name]), S.NormBone(b[name])
+        out[name] = {
+            p   = lerpAng(x.p, y.p, f),
+            yaw = lerpAng(x.yaw, y.yaw, f),
+            r   = lerpAng(x.r, y.r, f),
+            px  = lerpNum(x.px, y.px, f),
+            py  = lerpNum(x.py, y.py, f),
+            pz  = lerpNum(x.pz, y.pz, f),
+        }
+    end
+    return out
+end
+
+--[[ Состояние скелета на момент времени t (секунды с начала показа). ]]
+function S.Sample(def, t)
+    local fr = S.Frames(def)
+    local n = #fr
+    if n == 0 then return {} end
+    if n == 1 then return fr[1].bones or {} end
+    local speed = math.Clamp(num(istable(def) and def.speed or 1, 1), 0.1, 4)
+    t = num(t, 0) * speed
+    if t < 0 then t = 0 end
+    local total = S.TotalTime(def)
+    if total <= 0 then return fr[1].bones or {} end
+    local loop = istable(def) and def.loop == true
+    if loop then
+        t = t % total
+    elseif t >= total then
+        -- Не циклическая анимация замирает на последнем кадре.
+        return fr[n].bones or {}
+    end
+    for i = 1, n do
+        local d = math.Clamp(num(fr[i].dur, 0.5), S.MinDur, S.MaxDur)
+        if t < d or i == n then
+            local j = i + 1
+            if j > n then j = 1 end
+            return S.Blend(fr[i].bones, fr[j].bones, t / d)
+        end
+        t = t - d
+    end
+    return fr[n].bones or {}
 end
 
 function S.CatName(id)
@@ -204,6 +469,7 @@ if SERVER then
         if not IsValid(ply) then return end
         ply:SetNWString("GRM_SocAnim", "")
         ply:SetNWBool("GRM_SocCrouch", false)
+        ply:SetNWFloat("GRM_SocStart", 0)
     end
 
     function S.Play(ply, id)
@@ -224,6 +490,24 @@ if SERVER then
         end
         ply:SetNWString("GRM_SocAnim", def.id)
         ply:SetNWBool("GRM_SocCrouch", def.crouch == true)
+        --[[ МОМЕНТ ЗАПУСКА. Кадры проигрываются от него, и время едино
+             для всех: свой клиент и чужие видят один и тот же кадр.
+             Без общей точки отсчёта каждый зритель начинал бы анимацию
+             с момента, когда К НЕМУ приехал сетевой флаг. ]]
+        ply:SetNWFloat("GRM_SocStart", CurTime())
+
+        --[[ Разовая анимация (не цикл, не «держать») сама снимается,
+             когда доиграла. Иначе игрок навсегда застревал бы в
+             последнем кадре приветствия. ]]
+        local total = S.TotalTime(def)
+        if total > 0 and def.loop ~= true and def.hold == false then
+            local id2 = def.id
+            timer.Simple(total + 0.05, function()
+                if IsValid(ply) and ply:GetNWString("GRM_SocAnim", "") == id2 then
+                    S.Stop(ply)
+                end
+            end)
+        end
         return true
     end
 
@@ -384,18 +668,41 @@ local function resetBones(ply)
     hook.Run("GRM_SocPoseCleared", ply)
 end
 
-local function applyPose(ply, def)
-    if not IsValid(ply) or not def then return end
-    if applied[ply] ~= def.id then resetBones(ply) end
-    for name, rec in pairs(def.bones or {}) do
+--[[ Применение НАБОРА КОСТЕЙ (уже посчитанного кадра). Отдельно от
+     выбора кадра: тем же кодом пользуется и предпросмотр в студии. ]]
+function S.ApplyBones(ply, bones)
+    if not IsValid(ply) or not istable(bones) then return end
+    for name, rec in pairs(bones) do
         local b = ply:LookupBone(name)
         if b then
             ply:ManipulateBoneAngles(b, S.BoneToAngle(rec))
             local pos = S.BoneToPos(rec)
-            if pos:LengthSqr() > 0.0001 then ply:ManipulateBonePosition(b, pos) end
+            if pos:LengthSqr() > 0.0001 then
+                ply:ManipulateBonePosition(b, pos)
+            else
+                -- Кадр без сдвига обязан ОБНУЛИТЬ сдвиг предыдущего,
+                -- иначе кость «уползает» и остаётся смещённой.
+                ply:ManipulateBonePosition(b, Vector(0, 0, 0))
+            end
         end
     end
+end
+
+local function applyPose(ply, def)
+    if not IsValid(ply) or not def then return end
+    if applied[ply] ~= def.id then resetBones(ply) end
     applied[ply] = def.id
+
+    if not S.IsAnimated(def) then
+        S.ApplyBones(ply, S.Frames(def)[1] and S.Frames(def)[1].bones or def.bones)
+        return
+    end
+    --[[ Анимация: кадр считаем от общего для всех момента запуска.
+         CurTime, а не RealTime: сетевое время у всех клиентов общее,
+         значит зрители видят игрока в том же кадре, что и он сам. ]]
+    local started = ply:GetNWFloat("GRM_SocStart", 0)
+    if started <= 0 then started = CurTime() end
+    S.ApplyBones(ply, S.Sample(def, CurTime() - started))
 end
 
 local function killClip(ply)
@@ -408,7 +715,26 @@ local function killClip(ply)
     clips[ply] = nil
 end
 
+--[[ Кто прямо сейчас проигрывает МНОГОКАДРОВУЮ анимацию.
+
+     Разделение на два темпа сделано намеренно. Опрос сетевых
+     переменных всех игроков — не бесплатная операция, поэтому он
+     остаётся на прежних 0.12 с. Но поза из кадров при 8 обновлениях в
+     секунду выглядит рывками, поэтому найденных «анимированных»
+     докручиваем каждый кадр. Пока никто не анимируется, таблица пуста
+     и цикл ничего не стоит. ]]
+local animating = {}
+
 hook.Add("Think", "GRM_Soc_Apply", function()
+    -- Плавность: тем, кто уже в анимации, пересчитываем кадр каждый тик.
+    for ply, def in pairs(animating) do
+        if IsValid(ply) and ply:GetNWString("GRM_SocAnim", "") == def.id then
+            applyPose(ply, def)
+        else
+            animating[ply] = nil
+        end
+    end
+
     if GRM.Perf and GRM.Perf.Throttle and not GRM.Perf.Throttle("soc.apply", 0.12) then return end
     local list = (GRM.Perf and GRM.Perf.Players and GRM.Perf.Players()) or player.GetAll()
     for i = 1, #list do
@@ -419,16 +745,24 @@ hook.Add("Think", "GRM_Soc_Apply", function()
         if id == "" and phoneMdl == "" then
             if applied[ply] then resetBones(ply) end
             if clips[ply] then killClip(ply) end
+            animating[ply] = nil
         elseif phoneMdl ~= "" then
+            animating[ply] = nil
             applyPose(ply, S.PhonePose)
         else
             local def = S.ByID(id)
-            if def then applyPose(ply, def) end
+            if def then
+                applyPose(ply, def)
+                animating[ply] = S.IsAnimated(def) and def or nil
+            end
         end
     end
 end)
 
 hook.Add("EntityRemoved", "GRM_Soc_EntGone", function(ent)
+    -- Утечка: без этой строки таблица анимируемых держала бы ссылку на
+    -- удалённого игрока вечно.
+    animating[ent] = nil
     if applied[ent] then resetBones(ent) end
     if clips[ent] then killClip(ent) end
 end)
@@ -528,6 +862,83 @@ function S.CloseMenu()
     gui.EnableScreenClicker(false)
 end
 
+-----------------------------------------------------------------------
+-- МЕНЮ ВЫБОРА АНИМАЦИЙ (переделано 31.08 по заказу владельца).
+--
+-- Было: серая сетка одинаковых кнопок с текстом — по названию не
+-- понять, что именно произойдёт. Стало: слева рельс категорий,
+-- в центре карточки, справа ЖИВОЙ предпросмотр на своей модели —
+-- та же функция S.Sample, что крутит анимацию в игре, поэтому
+-- показывается ровно то, что увидят окружающие.
+-----------------------------------------------------------------------
+surface.CreateFont("GRMSoc_Title", { font = "Roboto", size = 22, weight = 800, extended = true })
+surface.CreateFont("GRMSoc_Card", { font = "Roboto", size = 15, weight = 600, extended = true })
+
+local MC = {
+    bg     = Color(16, 20, 28, 250),
+    head   = Color(12, 15, 22, 255),
+    panel  = Color(24, 30, 41, 255),
+    card   = Color(33, 41, 55),
+    cardHl = Color(52, 118, 200),
+    cardOn = Color(46, 130, 88),
+    line   = Color(46, 56, 72),
+    text   = Color(234, 240, 248),
+    dim    = Color(146, 162, 180),
+    gold   = Color(245, 195, 65),
+}
+
+function S.CloseMenu()
+    S.RadialOpen = false
+    if IsValid(S._menu) then S._menu:Remove() end
+    S._menu = nil
+    gui.EnableScreenClicker(false)
+end
+
+--[[ Предпросмотр. Модель игрока крутится в DModelPanel, кости ей
+     ставит S.Sample — общий код воспроизведения. Если однажды логика
+     смешивания кадров поменяется, предпросмотр поедет вместе с игрой,
+     а не разойдётся с ней. ]]
+local function buildPreview(parent, getDef)
+    local mdl = vgui.Create("DModelPanel", parent)
+    mdl:SetFOV(38)
+    mdl:SetAnimated(true)
+    local lp = LocalPlayer()
+    mdl:SetModel(IsValid(lp) and lp:GetModel() or "models/player/kleiner.mdl")
+    mdl:SetCamPos(Vector(62, 26, 62))
+    mdl:SetLookAt(Vector(0, 0, 38))
+    mdl.start = RealTime()
+    mdl.lastID = nil
+    function mdl:LayoutEntity(ent)
+        if not IsValid(ent) then return end
+        local def = getDef()
+        if not def then
+            -- Нет выбора — просто вращаем модель, чтобы панель не была мёртвой.
+            ent:SetAngles(Angle(0, RealTime() * 30 % 360, 0))
+            return
+        end
+        if self.lastID ~= def.id then
+            self.lastID = def.id
+            self.start = RealTime()
+            -- Смена анимации: старые манипуляции надо снять, иначе
+            -- кости прошлой позы останутся висеть поверх новой.
+            for i = 0, (ent:GetBoneCount() or 1) - 1 do
+                ent:ManipulateBoneAngles(i, Angle(0, 0, 0))
+                ent:ManipulateBonePosition(i, Vector(0, 0, 0))
+            end
+        end
+        ent:SetAngles(Angle(0, 35, 0))
+        local bones = S.Sample(def, RealTime() - (self.start or RealTime()))
+        for name, rec in pairs(bones or {}) do
+            local b = ent:LookupBone(name)
+            if b then
+                ent:ManipulateBoneAngles(b, S.BoneToAngle(rec))
+                ent:ManipulateBonePosition(b, S.BoneToPos(rec))
+            end
+        end
+    end
+    return mdl
+end
+
 function S.OpenMenu()
     if IsValid(S._menu) then
         S._menu:SetVisible(true)
@@ -540,95 +951,153 @@ function S.OpenMenu()
     for i = 1, #cats do if cats[i].id == S._menuCat then have = true break end end
     if not have then S._menuCat = cats[1] and cats[1].id or "general" end
 
+    local W, H = 880, 540
     local f = vgui.Create("DFrame")
     S._menu = f
     S.RadialOpen = true
+    S._sel = nil
     f:SetTitle("")
-    f:SetSize(460, 420)
+    f:SetSize(W, H)
     f:Center()
     f:MakePopup()
     f:ShowCloseButton(false)
     f:SetKeyboardInputEnabled(false)
     f.Paint = function(_, w, h)
-        draw.RoundedBox(8, 0, 0, w, h, Color(16, 20, 28, 252))
-        draw.RoundedBox(8, 0, 0, w, 40, Color(12, 15, 22, 255))
-        draw.SimpleText("СОЦ. АНИМАЦИИ", "GRMSoc_Head", 14, 20, Color(245, 195, 65), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.RoundedBox(10, 0, 0, w, h, MC.bg)
+        draw.RoundedBox(10, 0, 0, w, 54, MC.head)
+        draw.RoundedBox(0, 0, 53, w, 1, MC.line)
+        draw.SimpleText("СОЦИАЛЬНЫЕ АНИМАЦИИ", "GRMSoc_Title", 20, 27, MC.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         local cur = LocalPlayer():GetNWString("GRM_SocAnim", "")
         local mine = S.ByID(cur)
         if mine then
-            draw.SimpleText("сейчас: " .. mine.name, "GRMSoc_Sm", w - 48, 20, Color(90, 200, 120), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("активна: " .. (mine.name or cur), "GRMSoc_Body", w - 56, 27,
+                Color(96, 208, 128), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
         end
     end
     f.OnRemove = function() S.RadialOpen = false S._menu = nil end
 
     local x = vgui.Create("DButton", f)
-    x:SetPos(426, 8) x:SetSize(24, 24) x:SetText("✕")
-    x:SetTextColor(Color(200, 210, 220))
-    x.Paint = function(s, w, h) if s:IsHovered() then draw.RoundedBox(4, 0, 0, w, h, Color(180, 60, 60)) end end
+    x:SetPos(W - 42, 13) x:SetSize(28, 28) x:SetText("✕")
+    x:SetFont("GRMSoc_Head")
+    x:SetTextColor(MC.text)
+    x.Paint = function(s, w, h)
+        draw.RoundedBox(5, 0, 0, w, h, s:IsHovered() and Color(178, 62, 58) or Color(38, 46, 60))
+    end
     x.DoClick = function() S.CloseMenu() end
 
-    local tabs = vgui.Create("DHorizontalScroller", f)
-    tabs:SetPos(10, 46) tabs:SetSize(440, 30)
-    tabs:SetOverlap(-4)
+    -- Рельс категорий слева: вертикальный список читается лучше, чем
+    -- горизонтальная лента, и не обрезает длинные названия.
+    local rail = vgui.Create("DScrollPanel", f)
+    rail:SetPos(12, 64) rail:SetSize(186, H - 76)
 
     local grid = vgui.Create("DScrollPanel", f)
-    grid:SetPos(10, 82) grid:SetSize(440, 292)
+    grid:SetPos(206, 64)
+    grid:SetSize(392, H - 130)
+
+    local side = vgui.Create("DPanel", f)
+    side:SetPos(606, 64) side:SetSize(262, H - 76)
+    side.Paint = function(_, w, h)
+        draw.RoundedBox(8, 0, 0, w, h, MC.panel)
+        local def = S._sel and S.ByID(S._sel)
+        draw.SimpleText(def and (def.name or def.id) or "Выберите анимацию", "GRMSoc_Card",
+            w / 2, h - 96, MC.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        if def then
+            local n = #S.Frames(def)
+            local info = n > 1 and (n .. " кадров · " .. string.format("%.1f с", S.TotalTime(def))) or "статичная поза"
+            if def.loop then info = info .. " · цикл" end
+            draw.SimpleText(info, "GRMSoc_Sm", w / 2, h - 76, MC.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+    end
+
+    local preview = buildPreview(side, function()
+        return S._sel and S.ByID(S._sel) or nil
+    end)
+    preview:SetPos(6, 8)
+    preview:SetSize(250, side:GetTall() - 116)
+
+    local function sendAndClose(id)
+        if surface and surface.PlaySound then surface.PlaySound("common/wpn_select.wav") end
+        sendPlay(id)
+        S.CloseMenu()
+    end
+
+    local playB = vgui.Create("DButton", side)
+    playB:SetPos(10, side:GetTall() - 62) playB:SetSize(242, 32) playB:SetText("")
+    playB.Paint = function(s, w, h)
+        local on = S._sel ~= nil
+        local c = on and (s:IsHovered() and Color(64, 168, 112) or MC.cardOn) or Color(40, 48, 62)
+        draw.RoundedBox(6, 0, 0, w, h, c)
+        draw.SimpleText(on and "ВКЛЮЧИТЬ" or "НИЧЕГО НЕ ВЫБРАНО", "GRMSoc_Card", w / 2, h / 2,
+            on and MC.text or MC.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
+    playB.DoClick = function()
+        if not S._sel then return end
+        sendAndClose(S._sel)
+    end
 
     local function fill()
         grid:Clear()
         local items = (isfunction(S.InCat) and S.InCat(S._menuCat)) or (S.List or {})
-        local col, bw, bh, gap = 2, 210, 36, 8
+        local bw, bh, gap = 188, 44, 8
         for i, def in ipairs(items) do
-            local r = math.floor((i - 1) / col)
-            local c = (i - 1) % col
+            local r = math.floor((i - 1) / 2)
+            local c = (i - 1) % 2
             local b = vgui.Create("DButton", grid)
             b:SetPos(c * (bw + gap), r * (bh + gap))
             b:SetSize(bw, bh)
-            b:SetText(def.name)
-            b:SetFont("GRMSoc_Body")
-            b:SetTextColor(Color(240, 244, 250))
+            b:SetText("")
             b.Paint = function(s, w, h)
-                local on = LocalPlayer():GetNWString("GRM_SocAnim", "") == def.id
-                local bg = on and Color(50, 130, 90) or (s:IsHovered() and Color(55, 120, 210) or Color(32, 40, 54))
-                draw.RoundedBox(5, 0, 0, w, h, bg)
+                local active = LocalPlayer():GetNWString("GRM_SocAnim", "") == def.id
+                local bg = MC.card
+                if active then bg = MC.cardOn
+                elseif S._sel == def.id then bg = MC.cardHl
+                elseif s:IsHovered() then bg = Color(44, 54, 72) end
+                draw.RoundedBox(6, 0, 0, w, h, bg)
+                draw.SimpleText(def.name or def.id, "GRMSoc_Card", 12, h / 2 - 8,
+                    MC.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                -- Значок отличает движение от статичной позы.
+                local n = #S.Frames(def)
+                draw.SimpleText(n > 1 and ("▶ анимация · " .. n .. " кадр." ) or "поза",
+                    "GRMSoc_Sm", 12, h / 2 + 10, MC.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             end
-            b.DoClick = function()
-                if surface and surface.PlaySound then surface.PlaySound("common/wpn_select.wav") end
-                sendPlay(def.id)
-                S.CloseMenu()
-            end
+            -- Один клик — предпросмотр, двойной — включить. Раньше
+            -- любой клик сразу применял позу вслепую.
+            b.DoClick = function() S._sel = def.id end
+            b.DoDoubleClick = function() sendAndClose(def.id) end
         end
         if #items == 0 then
             local empty = vgui.Create("DLabel", grid)
-            empty:SetPos(8, 8) empty:SetSize(400, 24)
-            empty:SetText("В этой категории нет поз. Добавьте в /animstudio.")
-            empty:SetTextColor(Color(160, 175, 190))
+            empty:SetPos(8, 8) empty:SetSize(360, 24)
+            empty:SetText("В этой категории пусто. Админ добавляет в /animstudio.")
+            empty:SetTextColor(MC.dim)
         end
     end
 
     for _, cat in ipairs(cats) do
-        local b = vgui.Create("DButton", tabs)
-        b:SetSize(math.max(88, utf8 and utf8.len(cat.name) and (#cat.name * 8 + 24) or (#cat.name * 8 + 24)), 28)
-        b:SetText(cat.name)
-        b:SetFont("GRMSoc_Sm")
-        b:SetTextColor(Color(240, 244, 250))
+        local b = vgui.Create("DButton", rail)
+        b:Dock(TOP) b:SetTall(34) b:DockMargin(0, 0, 0, 4) b:SetText("")
         b.Paint = function(s, w, h)
-            draw.RoundedBox(4, 0, 0, w, h, S._menuCat == cat.id and Color(65, 145, 235) or Color(36, 44, 58))
+            local on = S._menuCat == cat.id
+            draw.RoundedBox(6, 0, 0, w, h, on and MC.cardHl or (s:IsHovered() and Color(42, 52, 68) or MC.card))
+            draw.SimpleText(cat.name or cat.id, "GRMSoc_Body", 12, h / 2, MC.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
-        b.DoClick = function() S._menuCat = cat.id fill() end
-        tabs:AddPanel(b)
+        b.DoClick = function() S._menuCat = cat.id S._sel = nil fill() end
     end
     fill()
 
     local stop = vgui.Create("DButton", f)
-    stop:SetPos(10, 380) stop:SetSize(216, 30) stop:SetText("Снять позу")
-    stop:SetTextColor(Color(240, 244, 250))
-    stop.Paint = function(s, w, h) draw.RoundedBox(5, 0, 0, w, h, s:IsHovered() and Color(180, 80, 70) or Color(140, 60, 55)) end
+    stop:SetPos(206, H - 60) stop:SetSize(190, 32) stop:SetText("")
+    stop.Paint = function(s, w, h)
+        draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(184, 82, 72) or Color(142, 62, 56))
+        draw.SimpleText("СНЯТЬ АНИМАЦИЮ", "GRMSoc_Card", w / 2, h / 2, MC.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
     stop.DoClick = function() sendPlay("stop") S.CloseMenu() end
+
     local hint = vgui.Create("DLabel", f)
-    hint:SetPos(236, 384) hint:SetSize(210, 22)
-    hint:SetText("ПКМ / ✕ — закрыть")
-    hint:SetTextColor(Color(150, 165, 180))
+    hint:SetPos(406, H - 54) hint:SetSize(200, 22)
+    hint:SetText("клик — просмотр, 2×клик — включить")
+    hint:SetFont("GRMSoc_Sm")
+    hint:SetTextColor(MC.dim)
     if surface and surface.PlaySound then surface.PlaySound("common/wpn_hudon.wav") end
 end
 
