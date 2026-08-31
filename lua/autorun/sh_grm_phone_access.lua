@@ -53,9 +53,10 @@ local function getFactionInfo(ply)
     if not IsValid(ply) or not istable(Factions) then return nil, nil, nil end
     local sid = ply:SteamID()
     local sid64 = ply:SteamID64()
+    local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
     for factionName, f in pairs(Factions) do
         if istable(f) and istable(f.Members) then
-            local member = f.Members[sid] or f.Members[sid64]
+            local member = GRM.Identity.FactionMember(f, ply)
             if istable(member) then
                 return factionName, member.Role, member.Department
             end
@@ -93,16 +94,14 @@ if SERVER then
 
     function AM.Load()
         ensureDir()
-        if not file.Exists(ACCESS_FILE, "DATA") then
-            AM.Data = normalizeAccess({})
+        if GRM.Persistence and GRM.Persistence.LoadJSON then
+            local data = GRM.Persistence.LoadJSON(ACCESS_FILE, { version = 1 })
+            AM.Data = normalizeAccess(data)
             return AM.Data
         end
+        if not file.Exists(ACCESS_FILE, "DATA") then AM.Data = normalizeAccess({}) return AM.Data end
         local raw = file.Read(ACCESS_FILE, "DATA") or ""
-        if raw == "" then
-            AM.Data = normalizeAccess({})
-            return AM.Data
-        end
-        local ok, data = pcall(util.JSONToTable, raw)
+        local ok, data = pcall(util.JSONToTable, raw, false, true)
         AM.Data = normalizeAccess(ok and data or {})
         return AM.Data
     end
@@ -110,7 +109,13 @@ if SERVER then
     function AM.Save(data)
         ensureDir()
         AM.Data = normalizeAccess(data or AM.Data or {})
-        file.Write(ACCESS_FILE, util.TableToJSON(AM.Data, true))
+        AM.Data.version = 1
+        if GRM.Persistence and GRM.Persistence.SaveJSON then
+            return GRM.Persistence.SaveJSON(ACCESS_FILE, AM.Data, { version = 1 })
+        end
+        local encoded = util.TableToJSON(AM.Data, true)
+        file.Write(ACCESS_FILE, encoded)
+        return file.Read(ACCESS_FILE, "DATA") == encoded
     end
 
     AM.Load()
@@ -151,23 +156,35 @@ if SERVER then
         net.Send(ply)
     end
 
-    net.Receive(NET_REQ, function(_, ply)
-        sendData(ply)
+    local function adminGuard(ply, key, bits, maxBits)
+        if not (IsValid(ply) and ply:IsSuperAdmin()) then return false end
+        if GRM.Net and GRM.Net.Guard then
+            return GRM.Net.Guard(ply, key, { rate = .75, burst = 2, maxBits = maxBits,
+                permission = function(actor) return actor:IsSuperAdmin() end }, { bits = bits }) == true
+        end
+        return true
+    end
+    net.Receive(NET_REQ, function(bits, ply)
+        if adminGuard(ply, "phone.access.open", bits, 1024) then sendData(ply) end
     end)
 
-    net.Receive(NET_SAVE, function(_, ply)
-        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
-        local data = net.ReadTable() or {}
-        data = normalizeAccess(data)
-        AM.Save(data)
-        sendResult(ply, true, "Доступ к оборудованию телефонии сохранён.")
-        sendData(ply)
+    net.Receive(NET_SAVE, function(bits, ply)
+        if not adminGuard(ply, "phone.access.save", bits, 524288) then return end
+        local data = normalizeAccess(net.ReadTable() or {})
+        local ok = AM.Save(data)
+        if ok and GRM.Audit and GRM.Audit.Write then GRM.Audit.Write("access", "phone.legacy.save", ply, {}, {}) end
+        sendResult(ply, ok == true, ok and "Доступ к оборудованию телефонии сохранён." or "Ошибка записи доступа.")
+        if ok then sendData(ply) end
     end)
 
     local function hasAccessByData(ply)
         if not IsValid(ply) then return false, "invalid" end
         local cfg = AM.Config or {}
         if cfg.SuperAdminBypass ~= false and ply:IsSuperAdmin() then return true, "superadmin" end
+        if GRM.Access and GRM.Access.Explicit then
+            local decision, source = GRM.Access.Explicit(ply, "phone.equipment.use")
+            if decision ~= nil then return decision == true, source or "core_access" end
+        end
         if cfg.AdminBypass and ply:IsAdmin() then return true, "admin" end
 
         AM.Data = normalizeAccess(AM.Data or AM.Load())
@@ -198,7 +215,15 @@ if SERVER then
         GRM.Phone = GRM.Phone or {}
         GRM.Phone.HasEquipmentAccess = function(ply)
             local ok = hasAccessByData(ply)
-            return ok == true
+            if ok == true then return true end
+            --[[ Единый слой доступа — второй законный источник: право можно
+                 выдать в /admin (capability phone.equipment) или в доступах
+                 организации (phone_equipment). Так модуль «знает» об общих
+                 правах, а не только о своей таблице. ]]
+            if GRM.Access and GRM.Access.Can and GRM.Access.Can(ply, "phone.equipment") then
+                return true
+            end
+            return false
         end
         GRM.Phone.GetEquipmentAccessDebug = function(ply)
             local ok, reason = hasAccessByData(ply)
@@ -225,7 +250,7 @@ if SERVER then
         local target = ply
         local query = args[1]
         if query and query ~= "" then
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if string.find(string.lower(p:Nick()), string.lower(query), 1, true) or p:SteamID() == query or p:SteamID64() == query then
                     target = p
                     break
@@ -489,51 +514,67 @@ if CLIENT then
     end)
 
     -- Интеграция с меню фракций: добавляем вкладку, если OpenAdminMenu уже есть.
-    local function installFactionsMenuIntegration()
-        if not OpenAdminMenu or AM._wrappedOpenAdminMenu then return end
-        AM._oldOpenAdminMenu = OpenAdminMenu
-        AM._wrappedOpenAdminMenu = true
+    -- v18.08: вкладка встраивается штатным хуком меню организаций
+    -- (работает и в старом /factions, и в Unified UI). Раньше модуль
+    -- ПОДМЕНЯЛ глобальную OpenAdminMenu и искал DPropertySheet внутри окна —
+    -- в новом меню такого листа нет, поэтому вкладка просто не появлялась.
+    local function installFactionsMenuIntegration(sheet)
+        if not IsValid(sheet) then return end
 
-        OpenAdminMenu = function(...)
-            if AM._oldOpenAdminMenu then AM._oldOpenAdminMenu(...) end
-
-            timer.Simple(0.25, function()
-                if not ui or not IsValid(ui.currentFrame) then return end
-
-                local sheet
-                for _, child in ipairs(ui.currentFrame:GetChildren()) do
-                    if child.ClassName == "DPropertySheet" then sheet = child break end
-                end
-                if not IsValid(sheet) then return end
-
-                for _, item in ipairs(sheet.Items or {}) do
-                    if item.Tab and item.Tab:GetText() == "Телефония" then return end
-                end
-
-                local panel = vgui.Create("DPanel")
-                panel:SetPaintBackground(false)
-
-                local label = vgui.Create("DLabel", panel)
-                label:Dock(TOP)
-                label:SetTall(60)
-                label:DockMargin(12, 12, 12, 4)
-                label:SetWrap(true)
-                label:SetText("Настройка доступа фракций, рангов и отделов к оборудованию телефонии: АТС, прослушка, мониторинг связи.")
-                label:SetTextColor(Color(220, 220, 230))
-
-                local button = makeButton(panel, "Открыть настройку доступа телефонии", THEME.accent)
-                button:Dock(TOP)
-                button:SetTall(36)
-                button:DockMargin(12, 8, 12, 0)
-                button.DoClick = AM.OpenMenu
-
-                sheet:AddSheet("Телефония", panel, "icon16/telephone.png")
-            end)
+        for _, item in ipairs(sheet.Items or {}) do
+            if item.Tab and item.Tab:GetText() == "Телефония" then return end
         end
-    end
 
-    timer.Create("GRM_PhoneAccess_WaitFactionsMenu", 0.5, 20, installFactionsMenuIntegration)
-    timer.Simple(1, installFactionsMenuIntegration)
+        local panel = vgui.Create("DPanel")
+        panel:SetPaintBackground(false)
+
+        local label = vgui.Create("DLabel", panel)
+        label:Dock(TOP)
+        label:SetTall(60)
+        label:DockMargin(12, 12, 12, 4)
+        label:SetWrap(true)
+        label:SetText("Настройка доступа фракций, рангов и отделов к оборудованию телефонии: АТС, прослушка, мониторинг связи.")
+        label:SetTextColor(Color(220, 220, 230))
+
+        local button = makeButton(panel, "Открыть настройку доступа телефонии", THEME.accent)
+        button:Dock(TOP)
+        button:SetTall(36)
+        button:DockMargin(12, 8, 12, 0)
+        button.DoClick = AM.OpenMenu
+
+        sheet:AddSheet("Телефония", panel, "icon16/telephone.png")
+    end
+    -- Вкладка встраивается в меню фракций, как только оно появится.
+    -- Раньше здесь крутился собственный опрашивающий таймер (0.5 с × 20) —
+    -- и так в шести модулях доступов. Теперь единое ожидание условия
+    -- GRM.Boot.When: одна проверка на всех, с таймаутом и без «вечных» реп.
+    hook.Add("GRM_FactionsAdmin_BuildTabs", "GRM_PhoneAccess_Tab", installFactionsMenuIntegration)
 
     print("[GRM Phone] Access Manager client loaded")
+end
+
+
+if GRM.Access and GRM.Access.Register then
+    GRM.Access.Register("phone.equipment", {
+        label = "Связь: доступ к оборудованию (АТС, терминалы)", scope = "character",
+        factionPerm = "phone_equipment",
+        levels = { police = true, military = true, special = true, admin = true },
+    })
+    GRM.Access.Register("phone.wiretap", {
+        label = "Связь: прослушка телефонов и помещений", scope = "character",
+        factionPerm = "phone_wiretap",
+        levels = { police = true, military = true, special = true, justice = true, admin = true },
+    })
+end
+
+--[[ Модуль представляется общему реестру GRM.Modules: соседи знают, что он
+     есть, а шина обновлений сама позовёт его при смене прав, состава,
+     должности или персонажа. ]]
+if GRM.Modules and GRM.Modules.Register then
+    GRM.Modules.Register("phone_access", {
+        label = "Доступ к оборудованию связи",
+        version = (GRM.Phone and GRM.Phone.Version) or "1.0.0",
+        Depends = { "access", "mobile" },
+        Status = function() return "доступ к АТС, прослушке и терминалам связи" end,
+    })
 end

@@ -42,7 +42,12 @@ AS.Config = AS.Config or {
     -- Радиус поиска связанных сидений/транспорта.
     VehicleChildSearchRadius = 420,
     -- Мягкий толчок после переноса. 0 = вообще без толчка.
-    PushVelocity = 35,
+    PushVelocity = 0,
+    -- Максимальное горизонтальное удаление от позиции выхода/сиденья.
+    MaxExitDistance = 180,
+    -- Запрещаем поиск этажом выше. Допустим только небольшой подъём на порог.
+    MaxUpwardDelta = 24,
+    MaxDownwardDelta = 88,
     -- Безопасная высота над найденной землёй.
     GroundOffset = 3,
     -- Насколько расширять OBB машины при проверке "внутри".
@@ -55,12 +60,23 @@ AS.Config = AS.Config or {
     IgnoreNoclip = true,
     -- Временно делать игрока COLLISION_GROUP_DEBRIS_TRIGGER после выхода.
     TemporaryPlayerCollisionGroup = true,
+
+    --[[ Заказ владельца 21.08: игрока НИКОГДА не должно сталкивать
+         транспортом, и при выходе его нужно чуть отставлять вбок от КОРПУСА
+         машины (а не от сиденья — у simfphys сиденье это отдельный под,
+         который стоит внутри модели). ]]
+    -- Постоянное отключение столкновения «игрок ↔ транспорт».
+    AlwaysNoCollideWithVehicles = true,
+    -- На сколько юнитов отставить игрока от борта машины при выходе.
+    SideExitOffset = 10,
+    -- Ставить игрока сбоку от машины при каждом выходе.
+    SideExitOnLeave = true,
 }
 
 -- Если файл обновлён поверх старой версии через lua_refresh, мягко переводим старые настройки
 -- на новый адекватный профиль один раз.
 AS.Config.ProfileVersion = AS.Config.ProfileVersion or 0
-if AS.Config.ProfileVersion < 2 then
+if AS.Config.ProfileVersion < 3 then
     AS.Config.OnlyAfterVehicleExit = true
     AS.Config.ForceMoveOnExit = false
     AS.Config.NoCollideTime = 1.25
@@ -68,16 +84,22 @@ if AS.Config.ProfileVersion < 2 then
     AS.Config.ThinkInterval = 0.25
     AS.Config.ExitExtraDistance = 26
     AS.Config.VehicleChildSearchRadius = 420
-    AS.Config.PushVelocity = 35
+    AS.Config.PushVelocity = 0
+    AS.Config.MaxExitDistance = 180
+    AS.Config.MaxUpwardDelta = 24
+    AS.Config.MaxDownwardDelta = 88
     AS.Config.GroundOffset = 3
     AS.Config.InsideOBBExpand = 2
     AS.Config.UseHullStartSolidCheck = false
     AS.Config.IgnoreNoclip = true
     AS.Config.TemporaryPlayerCollisionGroup = true
-    AS.Config.ProfileVersion = 2
+    AS.Config.ProfileVersion = 3
 end
 
 -- Безопасные дефолты.
+AS.Config.AlwaysNoCollideWithVehicles = AS.Config.AlwaysNoCollideWithVehicles ~= false
+AS.Config.SideExitOnLeave = AS.Config.SideExitOnLeave ~= false
+AS.Config.SideExitOffset = tonumber(AS.Config.SideExitOffset) or 10
 AS.Config.Enabled = AS.Config.Enabled ~= false
 AS.Config.OnlyAfterVehicleExit = AS.Config.OnlyAfterVehicleExit ~= false
 AS.Config.ForceMoveOnExit = AS.Config.ForceMoveOnExit == true
@@ -86,7 +108,10 @@ AS.Config.PostExitCheckTime = AS.Config.PostExitCheckTime or 1.8
 AS.Config.ThinkInterval = AS.Config.ThinkInterval or 0.25
 AS.Config.ExitExtraDistance = AS.Config.ExitExtraDistance or 26
 AS.Config.VehicleChildSearchRadius = AS.Config.VehicleChildSearchRadius or 420
-AS.Config.PushVelocity = AS.Config.PushVelocity or 35
+AS.Config.PushVelocity = tonumber(AS.Config.PushVelocity) or 0
+AS.Config.MaxExitDistance = tonumber(AS.Config.MaxExitDistance) or 180
+AS.Config.MaxUpwardDelta = tonumber(AS.Config.MaxUpwardDelta) or 24
+AS.Config.MaxDownwardDelta = tonumber(AS.Config.MaxDownwardDelta) or 88
 AS.Config.GroundOffset = AS.Config.GroundOffset or 3
 AS.Config.InsideOBBExpand = AS.Config.InsideOBBExpand or 2
 AS.Config.UseHullStartSolidCheck = AS.Config.UseHullStartSolidCheck == true
@@ -100,15 +125,30 @@ local function cfg()
     return AS.Config or {}
 end
 
+--[[ РАСПОЗНАВАНИЕ ТРАНСПОРТА.
+
+     Тут была настоящая причина «сталкивает корпусом»: в списке стояло
+     «sim_fphys», а реальные классы simfphys называются `simfphys_*`
+     (например `simfphys_btr80`). Ни одна машина simfphys под проверку не
+     попадала — значит и корпус не считался транспортом: ни no-collide, ни
+     поиск базы под сиденьем не работали.
+
+     Теперь помимо классов смотрим на признаки самих аддонов: у simfphys это
+     поле `IsSimfphysCar`/`LVS`, их выставляет сам аддон. ]]
+local VEHICLE_CLASS_HINTS = {
+    "prop_vehicle", "gmod_sent_vehicle", "simfphys", "sim_fphys",
+    "lvs_", "lvs", "gred", "glide_",
+}
+
 local function isVehicleLike(ent)
     if not IsValid(ent) then return false end
     if ent:IsVehicle() then return true end
+    if ent.IsSimfphysCar or ent.LVS or ent.IsGlideVehicle then return true end
+    if ent.GetSeatIndex and ent.GetVehicle then return true end
     local class = string.lower(ent:GetClass() or "")
-    if string.find(class, "prop_vehicle", 1, true) then return true end
-    if string.find(class, "gmod_sent_vehicle", 1, true) then return true end
-    if string.find(class, "sim_fphys", 1, true) then return true end
-    if string.find(class, "lvs", 1, true) then return true end
-    if string.find(class, "gred", 1, true) then return true end
+    for _, hint in ipairs(VEHICLE_CLASS_HINTS) do
+        if string.find(class, hint, 1, true) then return true end
+    end
     return false
 end
 
@@ -188,97 +228,80 @@ local function isPointInsideVehicleOBB(pos, ent, expand)
        and localPos.z >= mins.z and localPos.z <= maxs.z
 end
 
-local function groundAndHullClear(pos, filter)
-    local start = pos + Vector(0, 0, 96)
-    local endpos = pos - Vector(0, 0, 160)
+local function horizontalDistSqr(a,b)
+    local dx,dy=a.x-b.x,a.y-b.y
+    return dx*dx+dy*dy
+end
 
-    local ground = util.TraceLine({
-        start = start,
-        endpos = endpos,
-        filter = filter,
-        mask = MASK_PLAYERSOLID,
-    })
+local function groundAndHullClear(pos, filter, anchor, referenceZ)
+    -- Короткая трасса вокруг текущего этажа. Старые +96/-160 могли начать
+    -- луч над потолком и выбрать пол следующего этажа.
+    local ground=util.TraceLine({start=pos+Vector(0,0,24),endpos=pos-Vector(0,0,72),filter=filter,mask=MASK_PLAYERSOLID})
+    if not ground.Hit or ground.StartSolid then return nil end
+    if ground.HitNormal and ground.HitNormal.z<0.55 then return nil end
+    local finalPos=ground.HitPos+Vector(0,0,cfg().GroundOffset or 3)
+    local dz=finalPos.z-referenceZ
+    if dz>(cfg().MaxUpwardDelta or 24) or dz<-(cfg().MaxDownwardDelta or 88) then return nil end
+    local maxDist=cfg().MaxExitDistance or 180
+    if horizontalDistSqr(finalPos,anchor)>maxDist*maxDist then return nil end
 
-    local finalPos = ground.Hit and (ground.HitPos + Vector(0, 0, cfg().GroundOffset or 4)) or pos
+    local hull=util.TraceHull({start=finalPos,endpos=finalPos,mins=PLAYER_MINS,maxs=PLAYER_MAXS,filter=filter,mask=MASK_PLAYERSOLID})
+    if hull.StartSolid or hull.Hit then return nil end
 
-    local hull = util.TraceHull({
-        start = finalPos,
-        endpos = finalPos,
-        mins = PLAYER_MINS,
-        maxs = PLAYER_MAXS,
-        filter = filter,
-        mask = MASK_PLAYERSOLID,
-    })
-
-    if hull.StartSolid or hull.Hit then
-        return nil
-    end
-
+    -- Проверяем путь на уровне корпуса: нельзя телепортироваться сквозь стену.
+    local path=util.TraceHull({start=anchor+Vector(0,0,36),endpos=finalPos+Vector(0,0,36),mins=Vector(-14,-14,-32),maxs=Vector(14,14,32),filter=filter,mask=MASK_PLAYERSOLID})
+    if path.StartSolid or path.Hit then return nil end
     return finalPos
 end
 
-local function candidateDirections(ply, base)
-    local dirs = {}
-    if IsValid(ply) and IsValid(base) then
-        local away = ply:GetPos() - base:GetPos()
-        away.z = 0
-        if away:LengthSqr() > 1 then
-            away:Normalize()
-            dirs[#dirs + 1] = away
-        end
-    end
-
-    if IsValid(base) then
-        dirs[#dirs + 1] = base:GetRight()
-        dirs[#dirs + 1] = -base:GetRight()
-        dirs[#dirs + 1] = -base:GetForward()
-        dirs[#dirs + 1] = base:GetForward()
-    end
-
-    if IsValid(ply) then
-        dirs[#dirs + 1] = ply:GetRight()
-        dirs[#dirs + 1] = -ply:GetRight()
-        dirs[#dirs + 1] = -ply:GetForward()
-        dirs[#dirs + 1] = ply:GetForward()
-    end
-
-    return dirs
+local function pushCandidate(out,pos,dir)
+    if not pos then return end
+    for _,old in ipairs(out)do if old.pos:DistToSqr(pos)<16 then return end end
+    out[#out+1]={pos=pos,dir=dir}
 end
 
-function AS.FindSafeExitPos(ply, vehicleOrSeat)
+local function buildCandidates(ply,base,seat)
+    local out={}
+    local anchor=IsValid(seat) and seat:GetPos() or ply:GetPos()
+    -- Сначала точки буквально рядом с сиденьем — это ожидаемое место выхода.
+    local seatDirs=IsValid(seat) and {seat:GetRight(),-seat:GetRight(),-seat:GetForward(),seat:GetForward()} or {}
+    for _,dir in ipairs(seatDirs)do dir.z=0;if dir:LengthSqr()>1 then dir:Normalize();pushCandidate(out,anchor+dir*46+Vector(0,0,18),dir)end end
+
+    if IsValid(base)then
+        local mins,maxs=base:OBBMins(),base:OBBMaxs();local center=(mins+maxs)*0.5;local extra=cfg().ExitExtraDistance or 26
+        local locals={
+            {Vector(maxs.x+extra,center.y,center.z),base:GetForward()},
+            {Vector(mins.x-extra,center.y,center.z),-base:GetForward()},
+            {Vector(center.x,maxs.y+extra,center.z),base:GetRight()},
+            {Vector(center.x,mins.y-extra,center.z),-base:GetRight()},
+        }
+        for _,v in ipairs(locals)do local dir=v[2];dir.z=0;if dir:LengthSqr()>1 then dir:Normalize()end;pushCandidate(out,base:LocalToWorld(v[1]),dir)end
+    end
+
+    -- Последними — небольшие кольца вокруг исходной позиции, но никогда
+    -- дальше MaxExitDistance и без необработанного fallback.
+    local dirs=IsValid(base) and {base:GetRight(),-base:GetRight(),base:GetForward(),-base:GetForward()} or {ply:GetRight(),-ply:GetRight(),ply:GetForward(),-ply:GetForward()}
+    for _,radius in ipairs({64,96,128})do for _,dir in ipairs(dirs)do dir.z=0;if dir:LengthSqr()>1 then dir:Normalize();pushCandidate(out,anchor+dir*radius+Vector(0,0,18),dir)end end end
+    return out,anchor
+end
+
+function AS.FindSafeExitPos(ply,vehicleOrSeat)
     if not IsValid(ply) or not IsValid(vehicleOrSeat) then return nil end
-
-    local base = getVehicleBase(vehicleOrSeat)
-    if not IsValid(base) then base = vehicleOrSeat end
-
-    local filter = collectRelatedEntities(base, vehicleOrSeat)
-    filter[#filter + 1] = ply
-
-    local radius = vehicleRadius(base) + (cfg().ExitExtraDistance or 54)
-    local origin = base:GetPos()
-
-    for _, dir in ipairs(candidateDirections(ply, base)) do
-        dir.z = 0
-        if dir:LengthSqr() > 1 then
-            dir:Normalize()
-            for _, mult in ipairs({ 1, 1.25, 1.55, 2.0 }) do
-                local pos = origin + dir * radius * mult + Vector(0, 0, 32)
-                local clear = groundAndHullClear(pos, filter)
-                if clear then
-                    return clear, dir, base
-                end
-            end
-        end
+    local base=getVehicleBase(vehicleOrSeat);if not IsValid(base)then base=vehicleOrSeat end
+    local filter=collectRelatedEntities(base,vehicleOrSeat);filter[#filter+1]=ply
+    local candidates,anchor=buildCandidates(ply,base,vehicleOrSeat)
+    local referenceZ=ply:GetPos().z
+    for _,candidate in ipairs(candidates)do
+        local clear=groundAndHullClear(candidate.pos,filter,anchor,referenceZ)
+        if clear then return clear,candidate.dir,base end
     end
-
-    -- Последний шанс: вверх и назад от машины.
-    local fallbackDir = IsValid(ply) and ply:GetForward() or Vector(1, 0, 0)
-    fallbackDir.z = 0
-    if fallbackDir:LengthSqr() < 1 then fallbackDir = Vector(1, 0, 0) end
-    fallbackDir:Normalize()
-
-    return origin + fallbackDir * (radius + 48) + Vector(0, 0, 24), fallbackDir, base
+    -- Нет безопасной точки рядом — не переносим вообще. Временный NoCollide
+    -- всё равно даст игроку выйти из модели без броска на улицу/этаж.
+    return nil,nil,base
 end
+
+AS._BuildCandidates=buildCandidates -- тестовый экспорт
+AS._GroundAndHullClear=groundAndHullClear
 
 AS.NoCollidePairs = AS.NoCollidePairs or {}
 
@@ -316,8 +339,42 @@ function AS.TempNoCollide(ply, base, seat, duration)
     end
 end
 
+--[[ ПОСТОЯННОЕ ОТСУТСТВИЕ СТОЛКНОВЕНИЯ «ИГРОК ↔ ТРАНСПОРТ».
+
+     Временного no-collide на полторы секунды не хватало: человека сталкивало
+     корпусом уже после того, как окно защиты закрылось (и особенно на
+     крупной технике вроде simfphys_btr80, где сиденье стоит глубоко внутри
+     модели). Проверка стоит ПЕРЕД разбором пар и стоит копейки: сначала
+     дешёвый IsPlayer, и только потом класс второго объекта. ]]
+local function otherIsVehicle(ent)
+    if not IsValid(ent) then return false end
+    if ent:IsVehicle() then return true end
+    return isVehicleLike(ent)
+end
+
+hook.Add("ShouldCollide", "GRM_VehicleAntiStuck_PlayerVehicle", function(a, b)
+    if not AS.Config or AS.Config.Enabled == false then return end
+    if AS.Config.AlwaysNoCollideWithVehicles == false then return end
+    if not (IsValid(a) and IsValid(b)) then return end
+
+    local ply, other
+    if a:IsPlayer() then ply, other = a, b
+    elseif b:IsPlayer() then ply, other = b, a
+    else return end
+
+    -- Водителя и пассажиров это не касается: они и так «внутри».
+    if otherIsVehicle(other) then return false end
+end)
+
 hook.Add("ShouldCollide", "GRM_VehicleAntiStuck_TempNoCollide", function(a, b)
     if not AS.Config or AS.Config.Enabled == false then return end
+    -- ГОРЯЧИЙ ПУТЬ: ShouldCollide вызывается движком для КАЖДОЙ пары
+    -- сталкивающихся объектов каждый тик. Раньше здесь всегда делался
+    -- pairKey() (2x EntIndex + конкатенация строк) даже когда активных
+    -- no-collide пар не было вообще — это давало постоянную нагрузку и
+    -- микрофризы на серверах с транспортом/пропами. Быстрый выход при пустой
+    -- таблице делает хук практически бесплатным в 99.99% случаев.
+    if next(AS.NoCollidePairs) == nil then return end
     local key = pairKey(a, b)
     if not key then return end
     local untilTime = AS.NoCollidePairs[key]
@@ -328,6 +385,67 @@ hook.Add("ShouldCollide", "GRM_VehicleAntiStuck_TempNoCollide", function(a, b)
     end
     return false
 end)
+
+--[[ ВЫХОД СБОКУ ОТ КОРПУСА (заказ 21.08).
+
+     Считаем габариты именно БАЗОВОЙ машины: у simfphys/LVS игрок сидит в
+     prop_vehicle_prisoner_pod, который стоит внутри модели, и «отойти от
+     сиденья» ничего не даёт — человек остаётся в корпусе.
+
+     Сторону выбираем ту, к которой игрок ближе (вышел слева — остался
+     слева), и отставляем на полшины корпуса плюс SideExitOffset. Если там
+     стена или другой объект — пробуем противоположный борт, потом корму и
+     нос. Не нашли ничего свободного — ничего не двигаем: лучше остаться на
+     месте, чем оказаться в стене. ]]
+function AS.SideExitPos(ply, base)
+    if not (IsValid(ply) and IsValid(base)) then return nil end
+
+    local offset = math.max(0, tonumber(cfg().SideExitOffset) or 10)
+    local mins, maxs = base:OBBMins(), base:OBBMaxs()
+    local center = base:LocalToWorld(base:OBBCenter())
+    local ang = base:GetAngles()
+    local right, forward = ang:Right(), ang:Forward()
+
+    local halfWidth = math.abs(maxs.y - mins.y) * 0.5
+    local halfLength = math.abs(maxs.x - mins.x) * 0.5
+
+    -- С какой стороны человек уже находится: туда и выпускаем.
+    local toPlayer = ply:GetPos() - center
+    local sideSign = (toPlayer:Dot(right) >= 0) and 1 or -1
+
+    local hull = { math.abs(offset) + 2, 0 }
+    local candidates = {
+        center + right * sideSign * (halfWidth + offset + 16),
+        center - right * sideSign * (halfWidth + offset + 16),
+        center - forward * (halfLength + offset + 16),
+        center + forward * (halfLength + offset + 16),
+    }
+
+    local filter = collectRelatedEntities(base, base)
+    filter[#filter + 1] = ply
+
+    for _, candidate in ipairs(candidates) do
+        -- Ставим на землю: борт машины может быть выше или ниже игрока.
+        local ground = util.TraceLine({
+            start = candidate + Vector(0, 0, 40),
+            endpos = candidate - Vector(0, 0, 120),
+            filter = filter,
+            mask = MASK_PLAYERSOLID,
+        })
+        local spot = ground.Hit and (ground.HitPos + Vector(0, 0, cfg().GroundOffset or 3)) or candidate
+
+        local room = util.TraceHull({
+            start = spot,
+            endpos = spot,
+            mins = ply:OBBMins(),
+            maxs = ply:OBBMaxs(),
+            filter = filter,
+            mask = MASK_PLAYERSOLID,
+        })
+        if not room.StartSolid then return spot end
+    end
+    return nil
+end
 
 function AS.MovePlayerOutOfVehicle(ply, vehicleOrSeat, reason)
     if not IsValid(ply) or not IsValid(vehicleOrSeat) then return false end
@@ -402,6 +520,21 @@ if SERVER then
         -- но НЕ переносим игрока, если он нормально вышел.
         AS.TempNoCollide(ply, base, vehicle, cfg().NoCollideTime or 1.25)
 
+        --[[ Ставим человека сбоку от КОРПУСА, а не от сиденья: 10 юнитов от
+             борта той стороны, к которой он ближе. Делается следующим тиком,
+             иначе движок ещё держит игрока в поде и SetPos перетрётся. ]]
+        if cfg().SideExitOnLeave and IsValid(base) then
+            timer.Simple(0, function()
+                if not (IsValid(ply) and IsValid(base)) then return end
+                if ply:InVehicle() then return end
+                if cfg().IgnoreNoclip and ply:GetMoveType() == MOVETYPE_NOCLIP then return end
+                local spot = AS.SideExitPos(ply, base)
+                if not spot then return end
+                ply:SetPos(spot)
+                ply:SetLocalVelocity(Vector(0, 0, 0))
+            end)
+        end
+
         if cfg().ForceMoveOnExit then
             timer.Simple(0, function()
                 if IsValid(ply) and IsValid(vehicle) then
@@ -434,22 +567,32 @@ if SERVER then
     hook.Add("PlayerDeath", "GRM_VehicleAntiStuck_CleanupDeath", cleanupPlayer)
     hook.Add("PlayerDisconnected", "GRM_VehicleAntiStuck_CleanupDisconnect", cleanupPlayer)
 
+    -- Периодическая чистка истёкших no-collide пар: иначе записи, которые
+    -- больше никогда не столкнутся (игрок ушёл/отключился), копились бы
+    -- в NoCollidePairs вечно. Редкий (раз в 2с) проход — дешёвый.
+    timer.Create("GRM_VehicleAntiStuck_Cleanup", 2, 0, function()
+        if next(AS.NoCollidePairs) == nil then return end
+        local now = CurTime()
+        for k, untilTime in pairs(AS.NoCollidePairs) do
+            if untilTime <= now then AS.NoCollidePairs[k] = nil end
+        end
+    end)
+
     timer.Create("GRM_VehicleAntiStuck_Think", AS.Config.ThinkInterval, 0, function()
         if not cfg().Enabled then return end
 
-        for _, ply in ipairs(player.GetAll()) do
-            if not IsValid(ply) or not ply:Alive() or ply:InVehicle() then continue end
-            if cfg().IgnoreNoclip and ply:GetMoveType() == MOVETYPE_NOCLIP then continue end
-
-            -- Новый режим: проверяем только игроков, которые недавно вышли из машины.
-            -- Игроков, которые просто подошли к машине, не трогаем.
-            if not ply.GRM_AntiStuck_PostExitUntil or CurTime() > ply.GRM_AntiStuck_PostExitUntil then
-                continue
-            end
-
-            local ent = IsValid(ply.GRM_AntiStuck_LastVehicle) and ply.GRM_AntiStuck_LastVehicle or nil
-            if IsValid(ent) and playerLooksStuckInVehicle(ply, ent) then
-                AS.MovePlayerOutOfVehicle(ply, ent, "post_exit_think")
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+            if IsValid(ply) and ply:Alive() and not ply:InVehicle() then
+                if not (cfg().IgnoreNoclip and ply:GetMoveType() == MOVETYPE_NOCLIP) then
+                    -- Новый режим: проверяем только игроков, которые недавно вышли из машины.
+                    -- Игроков, которые просто подошли к машине, не трогаем.
+                    if ply.GRM_AntiStuck_PostExitUntil and CurTime() <= ply.GRM_AntiStuck_PostExitUntil then
+                        local ent = IsValid(ply.GRM_AntiStuck_LastVehicle) and ply.GRM_AntiStuck_LastVehicle or nil
+                        if IsValid(ent) and playerLooksStuckInVehicle(ply, ent) then
+                            AS.MovePlayerOutOfVehicle(ply, ent, "post_exit_think")
+                        end
+                    end
+                end
             end
         end
     end)

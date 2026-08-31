@@ -57,6 +57,7 @@ end
 
 local function frame(title, w, h)
     local f = vgui.Create("DFrame")
+    GRM.UI.Track("factory", f)
     f:SetTitle("")
     f:SetSize(w, h)
     f:Center()
@@ -610,7 +611,7 @@ hook.Add("HUDPaint", "GRM_FC_Progress", function()
     if CurTime() >= nextScan then
         nextScan = CurTime() + 1; activeMachines = {}
         for _, class in ipairs({ "grm_fc_gpu_station", "grm_fc_components_station", "grm_fc_weapon_station", "grm_fc_furnace" }) do
-            for _, ent in ipairs(ents.FindByClass(class)) do if ent:GetIsWorking() then activeMachines[#activeMachines + 1] = ent end end
+            for _, ent in ipairs((GRM.Perf and GRM.Perf.Entities and GRM.Perf.Entities(class)or ents.FindByClass(class))) do if ent:GetIsWorking() then activeMachines[#activeMachines + 1] = ent end end
         end
     end
     local ply = LocalPlayer(); if not IsValid(ply) then return end
@@ -635,7 +636,7 @@ hook.Add("HUDPaint", "GRM_FC_ScrapBinLabel", function()
     if not IsValid(ply) then return end
     local maxDistance = 600
     local playerPos = ply:GetPos()
-    for _, bin in ipairs(ents.FindByClass("grm_fc_scrap_bin")) do
+    for _, bin in ipairs((GRM.Perf and GRM.Perf.Entities and GRM.Perf.Entities("grm_fc_scrap_bin")or ents.FindByClass("grm_fc_scrap_bin"))) do
         if IsValid(bin) then
             local distance = playerPos:Distance(bin:GetPos())
             if distance <= maxDistance then

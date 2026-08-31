@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    Factions Extended / sh_faction_fixes.lua
+    Factions Extended / sh_faction_fixes.lua  v3.1.1
     Полностью исправленная версия расширения фракций:
 
       • Комендантский час.
@@ -9,6 +9,20 @@
       • Исправлен выбор модели без DModelBrowser.
       • Исправлено удаление модели из списка по крестику.
       • GNewsAccess сохраняется и может использоваться только лидером, если ваш /gnews проверяет лидера.
+
+    v3.1.1 (заказ владельца «переработать и синхронизировать расш.настройки»):
+      - Вкладка «Расширенные настройки» /factions переехала с обезьяньего
+        патча OpenAdminMenu (мёртвого: sh_factions грузится позже и
+        перезаписывал глобал — вкладка пропадала) на хук-точку
+        GRM_FactionsAdmin_BuildTabs — как мост «Доступы».
+      - Синхронизация: buildSyncData теперь зеркалит Models/RoleModels/
+        DepartmentModels/Weapons/RoleWeapons/DepartmentWeapons/GNewsAccess —
+        вкладка показывает ЖИВЫЕ счётчики и статус ком.часа (активен/таймер/
+        кем объявлен + кнопка отмены), маскировку по отделам; авто-синк
+        1.5 с при любом изменении зеркал.
+      - ФИКС: списки оружия из /weapons_admin не писались на диск —
+        saveFactionExtras() теперь вызывается и для оружия (раньше после
+        рестарта слетало).
 
     Зависимость:
       Основная система фракций должна создавать глобальную таблицу Factions.
@@ -22,8 +36,15 @@
 
 if SERVER then
     AddCSLuaFile()
-    resource.AddFile("sound/kom_hour.wav")
-    Sound("kom_hour.wav")
+    -- Раздаём и прекэшируем kom_hour.wav ТОЛЬКО если файл реально лежит на
+    -- сервере: иначе движок ругается на старте и клиенты получают битую
+    -- запись в списке загрузок. Общий реестр звуков — GRM.Sound.
+    if file.Exists("sound/kom_hour.wav", "GAME") then
+        resource.AddFile("sound/kom_hour.wav")
+        Sound("kom_hour.wav")
+    else
+        print("[GRM] sound/kom_hour.wav не найден — комендантский час прозвучит фолбэком (grm_sound_check покажет список)")
+    end
 end
 
 GRM = GRM or {}
@@ -39,6 +60,8 @@ local NET_EXT_OPEN_MASK      = "FactionsExt_OpenMask"
 local NET_EXT_APPLY_MASK     = "FactionsExt_ApplyMask"
 local NET_EXT_REMOVE_MASK    = "FactionsExt_RemoveMask"
 local NET_EXT_CURFEW         = "FactionsExt_Curfew"
+local NET_CURFEW_MENU        = "GRM_Curfew_Menu"      -- запрос/выдача состояния меню
+local NET_CURFEW_ACT         = "GRM_Curfew_Act"       -- объявить/остановить из меню
 local NET_MODELS_SYNC        = "FactionsExt_ModelsSync"
 local NET_MODELS_REQUEST     = "FactionsExt_ModelsRequest"
 local NET_MODEL_SELECT       = "FactionsExt_ModelSelect"
@@ -181,11 +204,8 @@ local function normalizeExtDefaults()
 
             -- Миграция старого формата MaskRoles/MaskModels.
             if istable(cfg.MaskRoles) and istable(cfg.MaskModels) and #cfg.MaskModels > 0 then
-                local firstDept = "Основной"
-                if Factions and Factions[factionName] and istable(Factions[factionName].Departments) and Factions[factionName].Departments[1] then
-                    firstDept = Factions[factionName].Departments[1]
-                end
-                if not cfg.MaskDepartments[firstDept] then
+                local firstDept = (Factions and Factions[factionName] and istable(Factions[factionName].Departments) and Factions[factionName].Departments[1]) or ""
+                if firstDept ~= "" and not cfg.MaskDepartments[firstDept] then
                     cfg.MaskDepartments[firstDept] = {
                         Roles = cfg.MaskRoles,
                         Models = cfg.MaskModels,
@@ -206,9 +226,10 @@ local function getFactionMemberByPlayer(ply)
     if not IsValid(ply) or not Factions then return nil, nil, nil, nil end
     local sid = ply:SteamID()
     local sid64 = ply:SteamID64()
+    local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
     for factionName, f in pairs(Factions or {}) do
         if istable(f) and istable(f.Members) then
-            local member = f.Members[sid] or f.Members[sid64]
+            local member = GRM.Identity.FactionMember(f, ply)
             if istable(member) then
                 return factionName, member, f, sid
             end
@@ -236,6 +257,8 @@ if SERVER then
     util.AddNetworkString(NET_EXT_APPLY_MASK)
     util.AddNetworkString(NET_EXT_REMOVE_MASK)
     util.AddNetworkString(NET_EXT_CURFEW)
+    util.AddNetworkString(NET_CURFEW_MENU)
+    util.AddNetworkString(NET_CURFEW_ACT)
     util.AddNetworkString(NET_MODELS_SYNC)
     util.AddNetworkString(NET_MODELS_REQUEST)
     util.AddNetworkString(NET_MODEL_SELECT)
@@ -259,6 +282,8 @@ if SERVER then
     CurfewEndTime = CurfewEndTime or 0
     CurfewStartedBy = CurfewStartedBy or ""
     CurfewFaction = CurfewFaction or ""
+    CurfewReason = CurfewReason or ""
+    CurfewStartedAt = CurfewStartedAt or 0
     OriginalModels = OriginalModels or {}
     DefaultModels = DefaultModels or readJSON(DEFAULT_MODELS_FILE, {
         { path = "models/player/Group01/male_07.mdl", skin = 0, bodygroups = {} },
@@ -377,6 +402,11 @@ if SERVER then
 
     local function broadcastExt()
         normalizeExtDefaults()
+        -- Расширенные настройки организаций — второй по объёму пакет после
+        -- снимка фракций (~10 КБ). Шлём частями, чтобы не занимать канал.
+        if GRM.Net and GRM.Net.Stream then
+            if GRM.Net.Stream("factions.ext", FactionsExt, nil, { chunk = 6144, interval = 0.05 }) then return end
+        end
         net.Start(NET_EXT_SYNC)
             net.WriteTable(FactionsExt)
         net.Broadcast()
@@ -387,8 +417,13 @@ if SERVER then
             net.WriteBool(CurfewActive == true)
             net.WriteFloat(tonumber(CurfewEndTime) or 0)
             net.WriteString(CurfewFaction or "")
+            net.WriteString(CurfewStartedBy or "")
+            net.WriteString(CurfewReason or "")
+            net.WriteFloat(tonumber(CurfewStartedAt) or 0)
         net.Broadcast()
     end
+    GRM.FactionsExt = GRM.FactionsExt or {}
+    GRM.FactionsExt.BroadcastCurfew = broadcastCurfew
 
     local function getFactionDepartments(factionName)
         if not Factions or not Factions[factionName] then return {} end
@@ -400,11 +435,13 @@ if SERVER then
             CurfewRoles = {},
             MaskDepartments = {},
             GNewsAccess = false,
+            ChipDeathAlert = false,
         }
         local cfg = FactionsExt[factionName]
         cfg.CurfewRoles = istable(cfg.CurfewRoles) and cfg.CurfewRoles or {}
         cfg.MaskDepartments = istable(cfg.MaskDepartments) and cfg.MaskDepartments or {}
         cfg.GNewsAccess = cfg.GNewsAccess == true
+        cfg.ChipDeathAlert = cfg.ChipDeathAlert == true
         return cfg
     end
 
@@ -423,16 +460,32 @@ if SERVER then
         return tableHasValue(cfg.CurfewRoles, member.Role)
     end
 
-    local function startCurfew(ply, duration)
+    local function startCurfew(ply, duration, reason)
+        reason = string.sub(string.Trim(tostring(reason or "")), 1, 140)
+        reason = string.gsub(reason, "[%c]", "")
         CurfewActive = true
         CurfewEndTime = CurTime() + duration
-        CurfewStartedBy = IsValid(ply) and ply:Nick() or "Система"
+        CurfewStartedAt = CurTime()
+        CurfewStartedBy = IsValid(ply) and (ply:GetNWString("GRM_RPName", "") ~= "" and ply:GetNWString("GRM_RPName", "") or ply:Nick()) or "Система"
         CurfewFaction = select(1, getFactionMemberByPlayer(ply)) or ""
+        CurfewReason = reason
         broadcastCurfew()
-        for _, p in ipairs(player.GetAll()) do
+        if reason ~= "" then
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+                if IsValid(p) then p:PrintMessage(HUD_PRINTTALK, "[Комендантский час] Причина: " .. reason) end
+            end
+        end
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             p:PrintMessage(HUD_PRINTCENTER, "=== ОБЪЯВЛЕН КОМЕНДАНТСКИЙ ЧАС ===\nВсе граждане должны покинуть улицы!")
             p:EmitSound("ambient/alarms/scanner_alert_pass1.wav", 100, 100)
-            p:EmitSound("kom_hour.wav", 127, 110)
+            -- Комендантский час: kom_hour.wav — кастомный файл, которого на
+            -- сервере может не быть. GRM.Sound проверяет наличие ОДИН раз и
+            -- играет фолбэк вместо потока ошибок движка на каждого игрока.
+            if GRM.Sound and GRM.Sound.Emit then
+                GRM.Sound.Emit(p, "kom_hour.wav", 127, 110)
+            else
+                p:EmitSound("kom_hour.wav", 127, 110)
+            end
         end
     end
 
@@ -440,18 +493,117 @@ if SERVER then
         CurfewActive = false
         CurfewEndTime = 0
         CurfewFaction = ""
+        CurfewReason = ""
+        CurfewStartedAt = 0
         broadcastCurfew()
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             p:PrintMessage(HUD_PRINTCENTER, "=== КОМЕНДАНТСКИЙ ЧАС ОТМЕНЁН ===")
         end
     end
 
+    ----------------------------------------------------------------
+    -- МЕНЮ КОМЕНДАНТСКОГО ЧАСА (/kom_hour без аргументов)
+    -- Клиент не решает ничего сам: сервер отдаёт состояние + флаг доступа,
+    -- и сам же валидирует каждое действие (доступ, состояние, лимиты).
+    ----------------------------------------------------------------
+    local CURFEW_MIN_MINUTES, CURFEW_MAX_MINUTES = 1, 120
+
+    local function sendCurfewState(ply)
+        if not IsValid(ply) then return end
+        local can = ply:IsSuperAdmin() or hasCurfewAccess(ply)
+        net.Start(NET_CURFEW_MENU)
+            net.WriteBool(can == true)
+            net.WriteBool(CurfewActive == true)
+            net.WriteFloat(tonumber(CurfewEndTime) or 0)
+            net.WriteFloat(tonumber(CurfewStartedAt) or 0)
+            net.WriteString(CurfewStartedBy or "")
+            net.WriteString(CurfewFaction or "")
+            net.WriteString(CurfewReason or "")
+            net.WriteUInt(CURFEW_MIN_MINUTES, 8)
+            net.WriteUInt(CURFEW_MAX_MINUTES, 8)
+        net.Send(ply)
+    end
+    GRM.FactionsExt.SendCurfewState = sendCurfewState
+
+    -- Состояние ушло всем — обновим и открытые меню.
+    local oldBroadcast = broadcastCurfew
+    broadcastCurfew = function()
+        oldBroadcast()
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+            if IsValid(p) and p._grmCurfewMenuOpen then sendCurfewState(p) end
+        end
+    end
+    GRM.FactionsExt.BroadcastCurfew = broadcastCurfew
+
+    net.Receive(NET_CURFEW_MENU, function(bits, ply)
+        if not IsValid(ply) then return end
+        if GRM.Net and GRM.Net.Guard and not GRM.Net.Guard(ply, "curfew.menu", { rate = .5, burst = 3, maxBits = 64 }, { bits = bits }) then return end
+        ply._grmCurfewMenuOpen = true
+        sendCurfewState(ply)
+    end)
+
+    net.Receive(NET_CURFEW_ACT, function(bits, ply)
+        if not IsValid(ply) then return end
+        if GRM.Net and GRM.Net.Guard and not GRM.Net.Guard(ply, "curfew.act", { rate = 1, burst = 2, maxBits = 2048 }, { bits = bits }) then return end
+        local act = net.ReadString()
+        local minutes = net.ReadUInt(8)
+        local reason = net.ReadString()
+
+        if act == "close" then ply._grmCurfewMenuOpen = nil return end
+
+        if not (ply:IsSuperAdmin() or hasCurfewAccess(ply)) then
+            sendExtResult(ply, false, "Нет доступа к комендантскому часу")
+            sendCurfewState(ply)
+            return
+        end
+
+        if act == "start" then
+            if CurfewActive then
+                sendExtResult(ply, false, "Комендантский час уже идёт")
+                sendCurfewState(ply)
+                return
+            end
+            minutes = math.Clamp(math.floor(tonumber(minutes) or 10), CURFEW_MIN_MINUTES, CURFEW_MAX_MINUTES)
+            startCurfew(ply, minutes * 60, reason)
+            if GRM.Audit and GRM.Audit.Write then
+                GRM.Audit.Write("curfew", "start", ply, {}, { minutes = minutes, reason = reason })
+            end
+            sendExtResult(ply, true, "Комендантский час объявлен на " .. minutes .. " мин.")
+        elseif act == "stop" then
+            if not CurfewActive then
+                sendExtResult(ply, false, "Комендантский час не активен")
+                sendCurfewState(ply)
+                return
+            end
+            stopCurfew()
+            if GRM.Audit and GRM.Audit.Write then
+                GRM.Audit.Write("curfew", "stop", ply, {}, {})
+            end
+            sendExtResult(ply, true, "Комендантский час отменён")
+        else
+            sendCurfewState(ply)
+        end
+    end)
+
+    hook.Add("PlayerDisconnected", "GRM_Curfew_MenuCleanup", function(ply) if ply then ply._grmCurfewMenuOpen = nil end end)
+
     function GetModelsForPlayer(ply)
+        -- Сотрудник вне службы выглядит как гражданский. Этот флаг выставляет
+        -- GRM.FactionDuty; без модуля поведение фракций остаётся прежним.
+        if IsValid(ply) and ply:GetNWBool("GRM_FactionOffDuty", false) then return DefaultModels end
         local factionName, member, f = getFactionMemberByPlayer(ply)
         if not factionName or not f then return DefaultModels end
         local role = member.Role
         local dept = member.Department
-        if dept and istable(f.DepartmentModels) and istable(f.DepartmentModels[dept]) and #f.DepartmentModels[dept] > 0 then
+        local sub = tostring(member.Subdepartment or member.Subdept or "")
+        -- Приоритет: ПОДОТДЕЛ → ОТДЕЛ → роль → фракция.
+        -- Перевод в отдел/подотдел должен надевать их форму, даже если
+        -- у должности тоже есть модели (иначе перевод «ничего не меняет»).
+        if sub ~= "" and istable(f.Subdepartments) and istable(f.Subdepartments[sub])
+            and istable(f.Subdepartments[sub].models) and #f.Subdepartments[sub].models > 0 then
+            return f.Subdepartments[sub].models
+        end
+        if dept and dept ~= "" and istable(f.DepartmentModels) and istable(f.DepartmentModels[dept]) and #f.DepartmentModels[dept] > 0 then
             return f.DepartmentModels[dept]
         end
         if role and istable(f.RoleModels) and istable(f.RoleModels[role]) and #f.RoleModels[role] > 0 then
@@ -478,7 +630,7 @@ if SERVER then
     end
 
     local function applyStrictBodygroupsToPlayer(ply, modelData)
-        if not IsValid(ply) then return end
+        if not IsValid(ply) or ply:GetNWBool("GRM_Arrested", false) then return end
         modelData = normalizeModelEntry(modelData)
 
         -- Если модель ещё не успела примениться или другой аддон перебил её,
@@ -504,7 +656,7 @@ if SERVER then
     end
 
     local function scheduleStrictModelApply(ply, modelData, reason)
-        if not IsValid(ply) then return end
+        if not IsValid(ply) or ply:GetNWBool("GRM_Arrested", false) then return end
         modelData = normalizeModelEntry(modelData)
         if not modelData.path or modelData.path == "" then return end
 
@@ -530,7 +682,7 @@ if SERVER then
     end
 
     function ApplyModelSettings(ply, modelData)
-        if not IsValid(ply) then return end
+        if not IsValid(ply) or ply:GetNWBool("GRM_Arrested", false) then return end
         modelData = normalizeModelEntry(modelData)
         if not modelData.path or modelData.path == "" then return end
         ply:SetModel(modelData.path)
@@ -549,10 +701,20 @@ if SERVER then
     end
 
     function GetWeaponsForPlayer(ply)
+        if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false) then return {} end
+        if IsValid(ply) and ply:GetNWBool("GRM_FactionOffDuty", false) then return DEFAULT_WEAPONS end
         local factionName, member, f = getFactionMemberByPlayer(ply)
         if not factionName or not f then return DEFAULT_WEAPONS end
         local role = member.Role
         local dept = member.Department
+        local sub = member.Subdepartment
+        -- Приоритет: ПОДОТДЕЛ → отдел → роль → фракция. Исторический порядок
+        -- «отдел выше роли» для оружия сохранён, чтобы не менять поведение
+        -- живых серверов; подотдел добавлен сверху как самый частный уровень.
+        if sub and sub ~= "" and istable(f.Subdepartments) and istable(f.Subdepartments[sub])
+            and istable(f.Subdepartments[sub].weapons) and #f.Subdepartments[sub].weapons > 0 then
+            return f.Subdepartments[sub].weapons
+        end
         if dept and istable(f.DepartmentWeapons) and istable(f.DepartmentWeapons[dept]) and #f.DepartmentWeapons[dept] > 0 then
             return f.DepartmentWeapons[dept]
         end
@@ -566,6 +728,18 @@ if SERVER then
     function ApplyWeaponsToPlayer(ply)
         if not IsValid(ply) then return end
         ply:StripWeapons()
+        --[[ Персонаж ещё не выбран — игрок сидит в лимбе за картой, и
+             оружия у него быть не должно вообще (заказ владельца 22.08).
+             Набор из /weapons_admin выдаётся только после подтверждения
+             персонажа и появления на точке спавна. ]]
+        if ply:GetNWBool("GRM_CharacterPending", false) then
+            if ply.RemoveAllAmmo then ply:RemoveAllAmmo() end
+            return
+        end
+        if ply:GetNWBool("GRM_Arrested", false) then
+            if ply.RemoveAllAmmo then ply:RemoveAllAmmo() end
+            return
+        end
         for _, class in ipairs(GetWeaponsForPlayer(ply)) do
             if isstring(class) and class ~= "" then
                 ply:Give(class)
@@ -573,9 +747,69 @@ if SERVER then
         end
     end
 
-    local function applyWeaponsToAll()
-        for _, ply in ipairs(player.GetAll()) do
-            ApplyWeaponsToPlayer(ply)
+    local function applyUniformForCharacter(key)
+        key = tostring(key or "")
+        if key == "" then return end
+        local ply
+        if GRM.Identity and GRM.Identity.ResolveCharacter then
+            ply = GRM.Identity.ResolveCharacter(key)
+        end
+        if not IsValid(ply) then
+            for _, p in ipairs(player.GetAll()) do
+                local ck = GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)
+                if ck == key then ply = p break end
+            end
+        end
+        if not IsValid(ply) or not ply:Alive() then return end
+        if ply:GetNWBool("GRM_CharacterPending", false) then return end
+        if ply:GetNWBool("IsMasked", false) then return end
+        if ply:GetNWBool("GRM_Arrested", false) then return end
+        local fname, member = getFactionMemberByPlayer(ply)
+        if fname and member then
+            ply:SetNWString("GRM_Department", tostring(member.Department or ""))
+            ply:SetNWString("GRM_Subdepartment", tostring(member.Subdepartment or member.Subdept or ""))
+        end
+        local list = GetModelsForPlayer(ply)
+        local entry = istable(list) and list[1] and normalizeModelEntry(list[1]) or nil
+        if entry and entry.path ~= "" then
+            ply.FactionsExt_DesiredModelData = nil
+            ApplyModelSettings(ply, entry)
+            if GRM.Char and isfunction(GRM.Char.ApplyAppearance) then
+                pcall(GRM.Char.ApplyAppearance, ply, { path = entry.path, skin = entry.skin, bodygroups = entry.bodygroups })
+            end
+        end
+        ApplyWeaponsToPlayer(ply)
+        sendModelsToPlayer(ply)
+    end
+
+    hook.Add("GRM_FactionMemberDepartmentChanged", "FactionsExt_ApplyDeptUniform", function(_, key)
+        timer.Simple(0, function() applyUniformForCharacter(key) end)
+    end)
+    hook.Add("GRM_FactionMemberSubdepartmentChanged", "FactionsExt_ApplySubUniform", function(_, key)
+        timer.Simple(0, function() applyUniformForCharacter(key) end)
+    end)
+    hook.Add("GRM_FactionMemberRoleChanged", "FactionsExt_ApplyRoleUniform", function(_, key)
+        timer.Simple(0, function() applyUniformForCharacter(key) end)
+    end)
+    hook.Add("GRM_FactionMemberJoined", "FactionsExt_ApplyJoinUniform", function(_, key)
+        timer.Simple(0.1, function() applyUniformForCharacter(key) end)
+    end)
+
+    local function applyWeaponsToTargetGroup(targetFaction, targetRole, targetDept, targetSub)
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+            if IsValid(ply) then
+                local factionName, member = getFactionMemberByPlayer(ply)
+                if targetFaction and targetFaction ~= "" and factionName == targetFaction then
+                    local roleMatch = (not targetRole or targetRole == "") or (member and member.Role == targetRole)
+                    local deptMatch = (not targetDept or targetDept == "") or (member and member.Department == targetDept)
+                    local subMatch = (not targetSub or targetSub == "") or (member and member.Subdepartment == targetSub)
+                    if roleMatch and deptMatch and subMatch then
+                        ApplyWeaponsToPlayer(ply)
+                    end
+                elseif not targetFaction or targetFaction == "" then
+                    ApplyWeaponsToPlayer(ply)
+                end
+            end
         end
     end
 
@@ -603,6 +837,7 @@ if SERVER then
         ply:SetNWBool("IsMasked", true)
         ply:SetNWString("MaskModel", entry.path or "")
         ply:SetNWString("MaskName", entry.name or "")
+        ply:SetNWString("GRM_MaskDesc", ply:GetNWString("GRM_MaskDesc", ""))
         ApplyModelSettings(ply, entry)
     end
 
@@ -611,6 +846,7 @@ if SERVER then
         ply:SetNWBool("IsMasked", false)
         ply:SetNWString("MaskModel", "")
         ply:SetNWString("MaskName", "")
+        ply:SetNWString("GRM_MaskDesc", "")
         ply.FactionsExt_MaskEntry = nil
         local factionName = getFactionMemberByPlayer(ply)
         if factionName then
@@ -679,17 +915,67 @@ if SERVER then
         ply:PrintMessage(HUD_PRINTTALK, "[Маскировка] Снята.")
     end)
 
+    --[[ Структура фракции для админ-меню экипировки: роли, отделы И ПОДОТДЕЛЫ
+         вместе с публичными названиями. Раньше меню /models_admin и
+         /weapons_admin знали только про роли и отделы, хотя Faction Core v5
+         давно ввёл иерархию «Отдел ➔ Подотдел», и у подотдела есть
+         собственные списки моделей и оружия. ]]
+    local function factionStructureFor(f, factionName, kind)
+        local roleNames, deptNames = {}, {}
+        for _, key in ipairs(f.Roles or {}) do
+            roleNames[key] = GRM.Factions and GRM.Factions.RoleDisplayName
+                and GRM.Factions.RoleDisplayName(f, key) or key
+        end
+        for _, key in ipairs(f.Departments or {}) do
+            deptNames[key] = GRM.Factions and GRM.Factions.DepartmentDisplayName
+                and GRM.Factions.DepartmentDisplayName(f, key) or key
+        end
+
+        local subs, subList = {}, {}
+        for subKey, sub in pairs(istable(f.Subdepartments) and f.Subdepartments or {}) do
+            if istable(sub) then
+                local list = (kind == "weapons") and sub.weapons or sub.models
+                subs[subKey] = istable(list) and list or {}
+                subList[#subList + 1] = {
+                    id = subKey,
+                    name = tostring(sub.name or subKey),
+                    parent = tostring(sub.parentDept or ""),
+                }
+            end
+        end
+        table.sort(subList, function(a, b)
+            if a.parent ~= b.parent then return a.parent < b.parent end
+            return a.name < b.name
+        end)
+
+        return {
+            displayName = GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(factionName) or factionName,
+            rolesList = f.Roles or {},
+            deptsList = f.Departments or {},
+            roleNames = roleNames,
+            deptNames = deptNames,
+            subList = subList,
+            subdepartments = subs,
+        }
+    end
+
     net.Receive(NET_ADMIN_MODELS_OPEN, function(_, ply)
         if not IsValid(ply) or not ply:IsSuperAdmin() then return end
         loadFactionExtras()
         local data = { factions = {}, default = DefaultModels }
         for factionName, f in pairs(Factions or {}) do
+            local st = factionStructureFor(f, factionName, "models")
             data.factions[factionName] = {
                 general = f.Models or {},
                 roles = f.RoleModels or {},
                 departments = f.DepartmentModels or {},
-                rolesList = f.Roles or {},
-                deptsList = f.Departments or {},
+                subdepartments = st.subdepartments,
+                rolesList = st.rolesList,
+                deptsList = st.deptsList,
+                subList = st.subList,
+                roleNames = st.roleNames,
+                deptNames = st.deptNames,
+                displayName = st.displayName,
             }
         end
         net.Start(NET_ADMIN_MODELS_DATA)
@@ -728,6 +1014,14 @@ if SERVER then
         elseif saveType == "department" then
             f.DepartmentModels = f.DepartmentModels or {}
             f.DepartmentModels[key] = models
+        elseif saveType == "subdepartment" then
+            -- Списки подотдела живут внутри самой записи подотдела
+            -- (f.Subdepartments[key].models), как их читает GetSubdepartments.
+            f.Subdepartments = istable(f.Subdepartments) and f.Subdepartments or {}
+            if istable(f.Subdepartments[key]) then
+                f.Subdepartments[key].models = models
+            end
+            if FactionsAPI and FactionsAPI.Save then pcall(FactionsAPI.Save) end
         end
 
         saveFactionExtras()
@@ -740,12 +1034,18 @@ if SERVER then
         loadFactionExtras()
         local data = { factions = {}, default = DEFAULT_WEAPONS }
         for factionName, f in pairs(Factions or {}) do
+            local st = factionStructureFor(f, factionName, "weapons")
             data.factions[factionName] = {
                 general = f.Weapons or {},
                 roles = f.RoleWeapons or {},
                 departments = f.DepartmentWeapons or {},
-                rolesList = f.Roles or {},
-                deptsList = f.Departments or {},
+                subdepartments = st.subdepartments,
+                rolesList = st.rolesList,
+                deptsList = st.deptsList,
+                subList = st.subList,
+                roleNames = st.roleNames,
+                deptNames = st.deptNames,
+                displayName = st.displayName,
             }
         end
         net.Start(NET_ADMIN_WEAPONS_DATA)
@@ -775,16 +1075,25 @@ if SERVER then
         local f = Factions[factionName]
         if saveType == "faction" then
             f.Weapons = weapons
+            applyWeaponsToTargetGroup(factionName, nil, nil)
         elseif saveType == "role" then
             f.RoleWeapons = f.RoleWeapons or {}
             f.RoleWeapons[key] = weapons
+            applyWeaponsToTargetGroup(factionName, key, nil)
         elseif saveType == "department" then
             f.DepartmentWeapons = f.DepartmentWeapons or {}
             f.DepartmentWeapons[key] = weapons
+            applyWeaponsToTargetGroup(factionName, nil, key)
+        elseif saveType == "subdepartment" then
+            f.Subdepartments = istable(f.Subdepartments) and f.Subdepartments or {}
+            if istable(f.Subdepartments[key]) then
+                f.Subdepartments[key].weapons = weapons
+                applyWeaponsToTargetGroup(factionName, nil, nil, key)
+            end
         end
-
+        -- фикс v3.1.1: оружейные списки раньше НЕ сохранялись на диск
+        -- (только модели) — после рестарта слетали; пишем в fw_faction_extras.json
         saveFactionExtras()
-        applyWeaponsToAll()
         if broadcastFactionData then pcall(broadcastFactionData) end
         ply:PrintMessage(HUD_PRINTTALK, "[Оружие] Сохранено.")
     end)
@@ -846,13 +1155,45 @@ if SERVER then
         broadcastExt()
     end)
 
+    -- Проверка лидерства в конкретной фракции (для доступов, открытых лидерам).
+    local function isLeaderOfFaction(ply, factionName)
+        if not IsValid(ply) or not istable(Factions) or not Factions[factionName] then return false end
+        local f = Factions[factionName]
+        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64()
+        local ldr = tostring(f.Leader or "")
+        if ldr ~= "" and (ldr == ck or ldr == ply:SteamID() or ldr == ply:SteamID64()) then return true end
+        local member = istable(f.Members) and (GRM.Identity.FactionMember(f, ply) or f.Members[ck] or f.Members[ply:SteamID()] or f.Members[ply:SteamID64()]) or nil
+        if istable(member) then
+            local leaderRole = f.LeaderRoleName or "Лидер"
+            if member.Role == leaderRole or member.Role == "Лидер" then return true end
+        end
+        return false
+    end
+
     net.Receive(NET_EXT_ACTION, function(_, ply)
-        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        if not IsValid(ply) then return end
         local action = net.ReadString()
         local args = net.ReadTable() or {}
-        local factionName = trim(args[1])
+
+        -- Комендантский час: доступ суперадмину и ролям с допуском (/kom_hour).
+        -- Обрабатывается ДО гейта «только суперадмин», чтобы лидеры могли
+        -- объявлять/снимать ком.час прямо из меню фракций.
+        if action == "startCurfew" then
+            if not ply:IsSuperAdmin() and not hasCurfewAccess(ply) then
+                sendExtResult(ply, false, "Нет доступа к комендантскому часу")
+                return
+            end
+            local duration = math.Clamp(tonumber(args[1]) or 600, 60, 7200)
+            startCurfew(ply, duration, args[2])
+            sendExtResult(ply, true, "Комендантский час объявлен на " .. math.floor(duration / 60) .. " мин.")
+            return
+        end
 
         if action == "stopCurfew" then
+            if not ply:IsSuperAdmin() and not hasCurfewAccess(ply) then
+                sendExtResult(ply, false, "Нет доступа к комендантскому часу")
+                return
+            end
             if CurfewActive then
                 stopCurfew()
                 sendExtResult(ply, true, "Комендантский час отменён")
@@ -861,6 +1202,44 @@ if SERVER then
             end
             return
         end
+
+        -- Госновости (/gnews): суперадмин или лидер СВОЕЙ фракции.
+        -- Вынесено до гейта «только суперадмин», чтобы лидеры могли
+        -- переключать доступ к госновостям своей организации.
+        if action == "setGNewsAccess" then
+            local fname = trim(args[1])
+            if fname == "" or not Factions or not Factions[fname] then
+                sendExtResult(ply, false, "Фракция не найдена")
+                return
+            end
+            if not ply:IsSuperAdmin() and not isLeaderOfFaction(ply, fname) then
+                sendExtResult(ply, false, "Недостаточно прав")
+                return
+            end
+            if GRM.MenuAccess and GRM.MenuAccess.PlayerCan
+                and not GRM.MenuAccess.PlayerCan(ply, "access", fname) then
+                sendExtResult(ply, false, "Раздел доступов закрыт администрацией")
+                return
+            end
+            local enabled = args[2] and true or false
+            local cfg = getExtConfig(fname)
+            cfg.GNewsAccess = enabled
+            Factions[fname].GNewsAccess = enabled
+            saveExt()
+            local factionsFromFile = readJSON("factions.json", Factions or {})
+            if factionsFromFile[fname] then
+                factionsFromFile[fname].GNewsAccess = enabled
+                writeJSON("factions.json", factionsFromFile)
+            end
+            broadcastExt()
+            if broadcastFactionData then pcall(broadcastFactionData) end
+            sendExtResult(ply, true, enabled and "Доступ к /gnews выдан лидеру фракции" or "Доступ к /gnews снят")
+            return
+        end
+
+        if not ply:IsSuperAdmin() then return end
+
+        local factionName = trim(args[1])
 
         if factionName == "" or not Factions or not Factions[factionName] then
             sendExtResult(ply, false, "Фракция не найдена")
@@ -946,21 +1325,14 @@ if SERVER then
             return
         end
 
-        if action == "setGNewsAccess" then
+        -- Контроль чипов (находка 169): уведомлять членов фракции о смерти
+        -- носителей экспериментальных чипов (звук+текст+GPS-метка)
+        if action == "setChipDeathAlert" then
             local enabled = args[2] and true or false
-            cfg.GNewsAccess = enabled
-            if Factions[factionName] then
-                Factions[factionName].GNewsAccess = enabled
-            end
+            cfg.ChipDeathAlert = enabled
             saveExt()
-            local factionsFromFile = readJSON("factions.json", Factions or {})
-            if factionsFromFile[factionName] then
-                factionsFromFile[factionName].GNewsAccess = enabled
-                writeJSON("factions.json", factionsFromFile)
-            end
             broadcastExt()
-            if broadcastFactionData then pcall(broadcastFactionData) end
-            sendExtResult(ply, true, enabled and "Доступ к /gnews выдан лидеру фракции" or "Доступ к /gnews снят")
+            sendExtResult(ply, true, enabled and "Уведомления о смерти носителей экспериментальных чипов ВКЛЮЧЕНЫ для «" .. factionName .. "»" or "Уведомления о смерти носителей экспериментальных чипов ВЫКЛЮЧЕНЫ для «" .. factionName .. "»")
             return
         end
 
@@ -973,8 +1345,14 @@ if SERVER then
             if ply:GetNWBool("IsMasked", false) and ply.FactionsExt_MaskEntry then
                 ApplyModelSettings(ply, ply.FactionsExt_MaskEntry)
             else
+                local desired = ply.FactionsExt_DesiredModelData
                 local models = GetModelsForPlayer(ply)
-                if models and models[1] then ApplyModelSettings(ply, models[1]) end
+                if istable(desired) and desired.path and desired.path ~= ""
+                    and IsModelAllowedForPlayer(ply, desired.path) then
+                    ApplyModelSettings(ply, desired)
+                elseif models and models[1] then
+                    ApplyModelSettings(ply, models[1])
+                end
             end
             ApplyWeaponsToPlayer(ply)
         end)
@@ -1018,21 +1396,18 @@ if SERVER then
     end
 
     timer.Create("FactionsExt_ModelCheck", 2, 0, function()
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) and ply:Alive() then
                 if ply:GetNWBool("IsMasked", false) then
                     -- Маскировка должна строго держать свои skin/bodygroups.
                     if ply.FactionsExt_MaskEntry then
                         applyStrictBodygroupsToPlayer(ply, ply.FactionsExt_MaskEntry)
                     end
-                    continue
-                end
-
-                local models = GetModelsForPlayer(ply)
-                if not istable(models) or not models[1] then continue end
-
-                local allowedCurrent = getAllowedModelEntryForCurrentPlayerModel(ply, models)
-                if allowedCurrent then
+                else
+                    local models = GetModelsForPlayer(ply)
+                    if istable(models) and models[1] then
+                        local allowedCurrent = getAllowedModelEntryForCurrentPlayerModel(ply, models)
+                        if allowedCurrent then
                     -- Не сбиваем модель, но строго возвращаем её сохранённые bodygroups.
                     -- Если игрок выбирал модель через /model, предпочтительнее его сохранённые настройки.
                     local desired = ply.FactionsExt_DesiredModelData
@@ -1042,8 +1417,10 @@ if SERVER then
                         applyStrictBodygroupsToPlayer(ply, allowedCurrent)
                     end
                 else
-                    -- Текущая модель не разрешена — ставим первую доступную.
-                    ApplyModelSettings(ply, models[1])
+                            -- Текущая модель не разрешена — ставим первую доступную.
+                            ApplyModelSettings(ply, models[1])
+                        end
+                    end
                 end
             end
         end
@@ -1058,40 +1435,117 @@ if SERVER then
         end
     end)
 
-    hook.Add("PlayerSay", "FactionsExt_Commands", function(ply, text)
+    local function handleMaskChatCommand(ply, text)
         local lower = safeLower(trim(text))
-
-        if string.sub(lower, 1, 9) == "/kom_hour" then
-            local arg = trim(string.sub(text, 10))
-            if safeLower(arg) == "off" then
-                if not ply:IsSuperAdmin() and not hasCurfewAccess(ply) then
-                    ply:PrintMessage(HUD_PRINTTALK, "[Комендантский час] Нет доступа к отмене.")
-                    return ""
-                end
-                if not CurfewActive then
-                    ply:PrintMessage(HUD_PRINTTALK, "[Комендантский час] Не активен.")
-                    return ""
-                end
-                stopCurfew()
-                return ""
-            end
-            if not ply:IsSuperAdmin() and not hasCurfewAccess(ply) then
-                ply:PrintMessage(HUD_PRINTTALK, "[Комендантский час] Нет доступа.")
-                return ""
-            end
-            local duration = math.Clamp(tonumber(arg) or 600, 60, 7200)
-            startCurfew(ply, duration)
-            return ""
-        end
 
         if lower == "/mask" or lower == "!mask" then
             sendMaskMenu(ply)
-            return ""
+            return true
         end
 
         if lower == "/mask off" or lower == "!mask off" then
             removeMask(ply)
             ply:PrintMessage(HUD_PRINTTALK, "[Маскировка] Снята.")
+            return true
+        end
+
+        return false
+    end
+
+    -- ВАЖНО: обработчик объявлен ниже по файлу, поэтому здесь нужна
+    -- форвард-декларация. Без неё замыкание хука читало ГЛОБАЛЬНУЮ
+    -- переменную (nil) и падало при первом же сообщении в EasyChat:
+    -- "attempt to call global 'handleCurfewChat' (a nil value)".
+    local handleCurfewChat
+
+    hook.Add("PlayerSayTransform", "FactionsExt_CurfewCommands", function(ply, datapack)
+        if not istable(datapack) or not isstring(datapack[1]) then return end
+        if not handleCurfewChat(ply, datapack[1]) then return end
+        datapack[1] = ""
+        datapack.SkipPlayerSay = true
+    end)
+
+    hook.Add("PlayerSayTransform", "FactionsExt_MaskCommands", function(ply, datapack)
+        if not istable(datapack) or not isstring(datapack[1]) then return end
+        if not handleMaskChatCommand(ply, datapack[1]) then return end
+        datapack[1] = ""
+        datapack.SkipPlayerSay = true
+    end)
+
+    -- Комендантский час доступен и через PlayerSay, и через PlayerSayTransform
+    -- (правило сборки: EasyChat перехватывает ввод и обычный PlayerSay может
+    -- не сработать). Обе точки входа зовут ОДИН обработчик.
+    handleCurfewChat = function(ply, text)
+        local lower = safeLower(trim(text))
+        -- Русский алиас: длина «/комчас» в БАЙТАХ — 13, safeLower кириллицу
+        -- не трогает, поэтому сравниваем исходную строку.
+        local rawTrim = trim(text)
+        local komPrefix = nil
+        if string.sub(lower, 1, 9) == "/kom_hour" then komPrefix = 9
+        elseif string.sub(rawTrim, 1, 13) == "/комчас" then komPrefix = 13 end
+        if not komPrefix then return false end
+        local arg = trim(string.sub(rawTrim, komPrefix + 1))
+        -- Без аргументов — открываем меню (кнопки, ползунок, причина).
+        if arg == "" then
+            if not ply:IsSuperAdmin() and not hasCurfewAccess(ply) then
+                ply:PrintMessage(HUD_PRINTTALK, "[Комендантский час] Нет доступа.")
+                return true
+            end
+            ply._grmCurfewMenuOpen = true
+            -- Тот же пакет состояния, что и у кнопки «Обновить» в меню:
+            -- один источник правды, никакого дублирования полей.
+            sendCurfewState(ply)
+            return true
+        end
+        if safeLower(arg) == "off" then
+            if not ply:IsSuperAdmin() and not hasCurfewAccess(ply) then
+                ply:PrintMessage(HUD_PRINTTALK, "[Комендантский час] Нет доступа к отмене.")
+                return true
+            end
+            if not CurfewActive then
+                ply:PrintMessage(HUD_PRINTTALK, "[Комендантский час] Не активен.")
+                return true
+            end
+            stopCurfew()
+            return true
+        end
+        if not ply:IsSuperAdmin() and not hasCurfewAccess(ply) then
+            ply:PrintMessage(HUD_PRINTTALK, "[Комендантский час] Нет доступа.")
+            return true
+        end
+        -- «/kom_hour 15» — минуты (совместимость со старым «/kom_hour 900»
+        -- в секундах сохранена: значения больше 120 считаем секундами).
+        local num = tonumber(arg)
+        local duration
+        if num and num > 0 and num <= 120 then duration = num * 60 else duration = num or 600 end
+        duration = math.Clamp(duration, 60, 7200)
+        startCurfew(ply, duration)
+        ply:PrintMessage(HUD_PRINTTALK, "[Комендантский час] Объявлен на " .. math.floor(duration / 60) .. " мин. Меню: /kom_hour без аргументов.")
+        return true
+    end
+
+    hook.Add("PlayerSay", "FactionsExt_Commands", function(ply, text)
+        local lower = safeLower(trim(text))
+
+        if handleMaskChatCommand(ply, text) then return "" end
+
+        if handleCurfewChat(ply, text) then return "" end
+
+        if lower:sub(1, 10) == "/maskdesc " or lower:sub(1, 10) == "!maskdesc " then
+            if not ply:GetNWBool("IsMasked", false) then
+                ply:PrintMessage(HUD_PRINTTALK, "[Маскировка] Сначала наденьте маскировку: /mask")
+                return ""
+            end
+            local desc = string.Trim(text:sub(11))
+            desc = string.gsub(desc, "[%c]", "")
+            desc = string.sub(desc, 1, 180)
+            ply:SetNWString("GRM_MaskDesc", desc)
+            ply:PrintMessage(HUD_PRINTTALK, desc ~= "" and "[Маскировка] Описание установлено." or "[Маскировка] Описание очищено.")
+            return ""
+        end
+
+        if lower == "/maskdesc" or lower == "!maskdesc" then
+            ply:PrintMessage(HUD_PRINTTALK, "[Маскировка] Установить описание: /maskdesc текст")
             return ""
         end
 
@@ -1116,12 +1570,11 @@ if SERVER then
     -- ============================================================
     local function isFactionLeader(ply, f)
         if not IsValid(ply) or not istable(f) then return false end
-        local sid = ply:SteamID()
-        local sid64 = ply:SteamID64()
-        if f.Leader and (f.Leader == sid or f.Leader == sid64) then return true end
-        local member = f.Members and (f.Members[sid] or f.Members[sid64])
+        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64()
+        if f.Leader and f.Leader == ck then return true end
+        local member = f.Members and GRM.Identity.FactionMember(f, ply)
         local leaderRole = f.LeaderRoleName or "Лидер"
-        return istable(member) and member.Role == leaderRole
+        return istable(member) and (member.Role == leaderRole or member.Role == "Лидер")
     end
 
     local function hasGNewsAccess(ply)
@@ -1155,11 +1608,12 @@ if SERVER then
 
             factionName = factionName or "Гос. новости"
             f = f or {}
-            local tag = (f.Tag and f.Tag ~= "") and f.Tag or factionName
-            local sid = ply:SteamID()
-            local sid64 = ply:SteamID64()
-            local member = f.Members and (f.Members[sid] or f.Members[sid64])
-            local role = (member and member.Role) or f.LeaderRoleName or "Лидер"
+            local tag = GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(factionName) or factionName
+            local rpName = ply:GetNWString("GRM_RPName", "")
+            if rpName == "" then rpName = ply:Nick() end
+            local member = f.Members and GRM.Identity and GRM.Identity.FactionMember and GRM.Identity.FactionMember(f, ply)
+            local roleKey = (member and member.Role) or f.LeaderRoleName or "Лидер"
+            local role = GRM.Factions and GRM.Factions.RoleDisplayName and GRM.Factions.RoleDisplayName(f, roleKey) or roleKey
             local color = f.Color or { r = 255, g = 200, b = 50 }
 
             net.Start("GNews_Message")
@@ -1167,21 +1621,62 @@ if SERVER then
                 net.WriteUInt(tonumber(color.g) or 200, 8)
                 net.WriteUInt(tonumber(color.b) or 50, 8)
                 net.WriteString(tag)
-                net.WriteString(ply:Nick())
+                net.WriteString(rpName)
                 net.WriteString(role)
                 net.WriteString(text)
             net.Broadcast()
 
-            file.Append("gnews_log.txt", os.date("%Y-%m-%d %H:%M:%S") .. " " .. ply:Nick() .. " (" .. ply:SteamID() .. "): " .. text .. "\n")
-            print("[GNews] [" .. tag .. "] " .. ply:Nick() .. " (" .. role .. "): " .. text)
+            file.Append("gnews_log.txt", os.date("%Y-%m-%d %H:%M:%S") .. " " .. rpName .. " (" .. ply:SteamID() .. "): " .. text .. "\n")
+            print("[GNews] [" .. tag .. "]\n" .. rpName .. " (" .. role .. "): " .. text)
         end)
     end
     installGNewsReceiver()
     timer.Create("FactionsExt_GNews_LeaderOnly_Reinstall", 1, 10, installGNewsReceiver)
 
+    hook.Add("PlayerSay", "FactionsExt_GNews_ServerChat", function(ply, text)
+        if not IsValid(ply) then return end
+        local trimmed = string.Trim(tostring(text or ""))
+        if string.sub(trimmed:lower(), 1, 7) == "/gnews " then
+            local msg = string.Trim(string.sub(trimmed, 8))
+            if msg ~= "" then
+                local ok, factionName, f = hasGNewsAccess(ply)
+                if not ok then
+                    if f and f.GNewsAccess == true then
+                        ply:PrintMessage(HUD_PRINTTALK, "[GNews] /gnews доступен только лидеру вашей фракции.")
+                    else
+                        ply:PrintMessage(HUD_PRINTTALK, "[GNews] У вашей фракции нет доступа к государственным новостям.")
+                    end
+                    return ""
+                end
+                factionName = factionName or "Гос. новости"
+                f = f or {}
+                local tag = GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(factionName) or factionName
+                local rpName = ply:GetNWString("GRM_RPName", "")
+                if rpName == "" then rpName = ply:Nick() end
+                local member = f.Members and GRM.Identity and GRM.Identity.FactionMember and GRM.Identity.FactionMember(f, ply)
+                local roleKey = (member and member.Role) or f.LeaderRoleName or "Лидер"
+                local role = GRM.Factions and GRM.Factions.RoleDisplayName and GRM.Factions.RoleDisplayName(f, roleKey) or roleKey
+                local color = f.Color or { r = 255, g = 200, b = 50 }
+
+                net.Start("GNews_Message")
+                    net.WriteUInt(tonumber(color.r) or 255, 8)
+                    net.WriteUInt(tonumber(color.g) or 200, 8)
+                    net.WriteUInt(tonumber(color.b) or 50, 8)
+                    net.WriteString(tag)
+                    net.WriteString(rpName)
+                    net.WriteString(role)
+                    net.WriteString(msg)
+                net.Broadcast()
+                file.Append("gnews_log.txt", os.date("%Y-%m-%d %H:%M:%S") .. " " .. rpName .. " (" .. ply:SteamID() .. "): " .. msg .. "\n")
+                print("[GNews] [" .. tag .. "]\n" .. rpName .. " (" .. role .. "): " .. msg)
+            end
+            return ""
+        end
+    end)
+
     timer.Simple(5, function()
         ensureFactionRuntimeDefaults()
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) then
                 ApplyWeaponsToPlayer(ply)
                 sendModelsToPlayer(ply)
@@ -1208,6 +1703,7 @@ if CLIENT then
     local THEME = {
         bg = Color(25, 25, 30, 245),
         bgLight = Color(35, 35, 42, 240),
+        panel = Color(30, 35, 48, 240),
         bgHover = Color(50, 50, 60, 250),
         accent = Color(80, 160, 255),
         accentDark = Color(50, 120, 200),
@@ -1654,10 +2150,34 @@ if CLIENT then
         FactionsExtData = net.ReadTable() or {}
     end)
 
+    -- Тот же снимок, пришедший частями.
+    if GRM.Net and GRM.Net.Receive then
+        GRM.Net.Receive("factions.ext", function(data)
+            FactionsExtData = istable(data) and data or {}
+            hook.Run("GRM_FactionExtUpdated", FactionsExtData)
+        end)
+    end
+
     net.Receive(NET_EXT_CURFEW, function()
         CurfewState.active = net.ReadBool()
         CurfewState.endTime = net.ReadFloat()
         CurfewState.faction = net.ReadString()
+        CurfewState.startedBy = net.ReadString()
+        CurfewState.reason = net.ReadString()
+        CurfewState.startedAt = net.ReadFloat()
+
+        -- Открытое меню комендантского часа обновляется тем же пакетом:
+        -- отдельный опрос сервера по таймеру не нужен.
+        if GRM.Curfew and GRM.Curfew.State then
+            local st = GRM.Curfew.State
+            st.active    = CurfewState.active
+            st.endTime   = CurfewState.endTime
+            st.faction   = CurfewState.faction
+            st.startedBy = CurfewState.startedBy
+            st.reason    = CurfewState.reason
+            st.startedAt = CurfewState.startedAt
+            if GRM.Curfew._apply then GRM.Curfew._apply() end
+        end
     end)
 
     net.Receive(NET_EXT_RESULT, function()
@@ -1759,8 +2279,7 @@ if CLIENT then
             end
 
             for idx, entry in ipairs(available[deptName] or {}) do
-                entry = normalizeMaskEntry(entry, "Маскировка")
-
+                entry = normalizeMaskEntry(entry, "Маскировка " .. idx)
                 local row = scroll:Add("DPanel")
                 row:Dock(TOP)
                 row:SetTall(116)
@@ -1809,6 +2328,11 @@ if CLIENT then
     local pendingModelsCb = nil
     net.Receive(NET_ADMIN_MODELS_DATA, function()
         local data = net.ReadTable() or {}
+        if GRM.LoadoutAdmin and GRM.LoadoutAdmin._pendingModels and GRM.LoadoutAdmin.Open then
+            GRM.LoadoutAdmin._pendingModels = nil
+            GRM.LoadoutAdmin.Open("models", data)
+            return
+        end
         if pendingModelsCb then local cb = pendingModelsCb pendingModelsCb = nil cb(data) end
     end)
 
@@ -1891,11 +2415,20 @@ if CLIENT then
         end
     end
 
+    -- v2.1: интерактивное админ-меню моделей с живым превью (GRM v2 refresh)
+    --[[ Меню одежды переехало в GRM Loadout Admin (cl_grm_faction_loadout_admin):
+         новый дизайн GRM + структура фракции целиком (должности, отделы И
+         ПОДОТДЕЛЫ). Старая реализация оставлена как фолбэк на случай, если
+         клиентский файл почему-то не загрузился. ]]
     local function openAdminModelsMenu()
+        if GRM.LoadoutAdmin and GRM.LoadoutAdmin.OpenModels then
+            GRM.LoadoutAdmin.OpenModels()
+            return
+        end
         pendingModelsCb = function(data)
             local frame = vgui.Create("DFrame")
             frame:SetTitle("Управление моделями")
-            frame:SetSize(900, 680)
+            frame:SetSize(1100, 700)
             frame:Center()
             frame:MakePopup()
             ui.currentModelsFrame = frame
@@ -1906,20 +2439,114 @@ if CLIENT then
             local function addModelPanel(title, modelList, saveFunc)
                 local panel = vgui.Create("DPanel")
                 panel:SetPaintBackground(false)
-                local scroll = vgui.Create("DScrollPanel", panel)
+
+                -- ЛЕВО: список моделей
+                local left = vgui.Create("DPanel", panel)
+                left:Dock(LEFT) left:SetWide(560) left:DockMargin(5, 5, 2, 42)
+                left:SetPaintBackground(false)
+
+                local scroll = vgui.Create("DScrollPanel", left)
                 scroll:Dock(FILL)
-                scroll:DockMargin(5, 5, 5, 42)
-                buildModelList(scroll, modelList, saveFunc)
+
+                -- ПРАВО: живое превью
+                local previewPanel = vgui.Create("DPanel", panel)
+                previewPanel:Dock(FILL) previewPanel:DockMargin(2, 5, 5, 42)
+                previewPanel.Paint = function(_, w, h)
+                    draw.RoundedBox(6, 0, 0, w, h, THEME.bgLight)
+                    draw.SimpleText("Предпросмотр", "DermaDefaultBold", 10, 14, THEME.dim or Color(160,165,175), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                end
+
+                local preview = vgui.Create("DAdjustableModelPanel", previewPanel)
+                preview:Dock(FILL) preview:DockMargin(6, 24, 6, 6)
+                preview:SetFOV(38)
+
+                local info = vgui.Create("DLabel", previewPanel)
+                info:Dock(BOTTOM) info:SetTall(34) info:DockMargin(6, 0, 6, 4)
+                info:SetText("") info:SetWrap(true) info:SetAutoStretchVertical(true)
+
+                local function showInPreview(entry)
+                    entry = normalizeModelEntry(entry)
+                    if not IsValid(preview) or entry.path == "" then return end
+                    preview:SetModel(entry.path)
+                    local ent = preview:GetEntity()
+                    if IsValid(ent) then
+                        ent:SetSkin(tonumber(entry.skin) or 0)
+                        for i = 0, (ent:GetNumBodyGroups() or 1) - 1 do ent:SetBodygroup(i, 0) end
+                        for g, v in pairs(entry.bodygroups or {}) do
+                            ent:SetBodygroup(tonumber(g) or 0, tonumber(v) or 0)
+                        end
+                    end
+                    info:SetText(entry.path .. "\nskin " .. tostring(entry.skin) .. " | bg " .. bodygroupsToText(entry.bodygroups))
+                end
+
+                local selected = nil
+                local function rebuild()
+                    scroll:Clear()
+                    for idx, entry in ipairs(modelList) do
+                        entry = normalizeModelEntry(entry)
+                        modelList[idx] = entry
+
+                        local row = scroll:Add("DPanel")
+                        row:Dock(TOP) row:SetTall(70) row:DockMargin(0, 0, 0, 5)
+                        row.Paint = function(_, w, h)
+                            draw.RoundedBox(5, 0, 0, w, h, (selected == row) and Color(44, 66, 96) or THEME.bgLight)
+                        end
+                        row:SetCursor("hand")
+                        row.OnMousePressed = function()
+                            selected = row
+                            showInPreview(entry)
+                            surface.PlaySound("buttons/button14.wav")
+                            for _, sib in ipairs(scroll:GetCanvas():GetChildren()) do if sib.InvalidateLayout then sib:InvalidateLayout() end end
+                        end
+
+                        local ico = vgui.Create("SpawnIcon", row)
+                        ico:Dock(LEFT) ico:SetWide(64) ico:DockMargin(3, 3, 0, 3)
+                        ico:SetModel(entry.path, tonumber(entry.skin) or 0)
+                        ico:SetMouseInputEnabled(false) ico:SetTooltip(false)
+
+                        local lbl = vgui.Create("DLabel", row)
+                        lbl:Dock(FILL) lbl:DockMargin(4, 0, 0, 0)
+                        lbl:SetText(entry.path .. "\nskin " .. tostring(entry.skin) .. " | bg " .. bodygroupsToText(entry.bodygroups))
+                        lbl:SetTextColor(THEME.text) lbl:SetWrap(true)
+                        lbl:SetMouseInputEnabled(false)
+
+                        local bgBtn = styledButton(row, "Боди", Color(110, 120, 210))
+                        bgBtn:Dock(RIGHT) bgBtn:SetWide(52) bgBtn:DockMargin(2, 20, 2, 20)
+                        bgBtn.DoClick = function()
+                            openBodygroupsEditor(entry, function(updated)
+                                modelList[idx] = normalizeModelEntry(updated)
+                                rebuild() saveFunc(modelList)
+                                showInPreview(modelList[idx] or entry)
+                            end)
+                        end
+
+                        local editBtn = styledButton(row, "Ред.", THEME.accent)
+                        editBtn:Dock(RIGHT) editBtn:SetWide(50) editBtn:DockMargin(2, 20, 2, 20)
+                        editBtn.DoClick = function()
+                            openModelEntryEditor(entry, function(updated)
+                                modelList[idx] = normalizeModelEntry(updated)
+                                rebuild() saveFunc(modelList)
+                                showInPreview(modelList[idx] or entry)
+                            end, false)
+                        end
+
+                        local del = styledButton(row, "X", THEME.danger)
+                        del:Dock(RIGHT) del:SetWide(38) del:DockMargin(2, 20, 4, 20)
+                        del.DoClick = function()
+                            table.remove(modelList, idx)
+                            rebuild() saveFunc(modelList)
+                        end
+                    end
+                    if modelList[1] then showInPreview(modelList[1]) end
+                end
+                rebuild()
 
                 local add = vgui.Create("DButton", panel)
-                add:Dock(BOTTOM)
-                add:SetTall(34)
-                add:SetText("+ Добавить модель")
+                add:Dock(BOTTOM) add:SetTall(34) add:SetText("+ Добавить модель")
                 add.DoClick = function()
                     openModelEntryEditor({ path = "models/player/Group01/male_07.mdl" }, function(entry)
                         table.insert(modelList, normalizeModelEntry(entry))
-                        buildModelList(scroll, modelList, saveFunc)
-                        saveFunc(modelList)
+                        rebuild() saveFunc(modelList)
                     end, false)
                 end
                 return panel
@@ -1984,14 +2611,25 @@ if CLIENT then
     local pendingWeaponsCb = nil
     net.Receive(NET_ADMIN_WEAPONS_DATA, function()
         local data = net.ReadTable() or {}
+        if GRM.LoadoutAdmin and GRM.LoadoutAdmin._pendingWeapons and GRM.LoadoutAdmin.Open then
+            GRM.LoadoutAdmin._pendingWeapons = nil
+            GRM.LoadoutAdmin.Open("weapons", data)
+            return
+        end
         if pendingWeaponsCb then local cb = pendingWeaponsCb pendingWeaponsCb = nil cb(data) end
     end)
 
+    -- v2.1: интерактивное админ-меню оружия с каталогом и поиском (GRM v2 refresh)
+    -- Аналогично одежде: основной интерфейс — GRM Loadout Admin.
     local function openWeaponsAdminMenu()
+        if GRM.LoadoutAdmin and GRM.LoadoutAdmin.OpenWeapons then
+            GRM.LoadoutAdmin.OpenWeapons()
+            return
+        end
         pendingWeaponsCb = function(data)
             local frame = vgui.Create("DFrame")
             frame:SetTitle("Управление оружием")
-            frame:SetSize(860, 640)
+            frame:SetSize(1100, 680)
             frame:Center()
             frame:MakePopup()
             ui.currentWeaponsFrame = frame
@@ -1999,35 +2637,133 @@ if CLIENT then
             local tabs = vgui.Create("DPropertySheet", frame)
             tabs:Dock(FILL)
 
+            -- полный каталог оружия из зарегистрированных SWEP'ов
+            local function weaponCatalog()
+                local out, seen = {}, {}
+                for _, w in ipairs(weapons.GetList() or {}) do
+                    local cls = w.ClassName or ""
+                    if cls ~= "" and not seen[cls] then
+                        seen[cls] = true
+                        out[#out + 1] = { class = cls, name = (w.PrintName and w.PrintName ~= "") and w.PrintName or cls, cat = w.Category or "Прочее" }
+                    end
+                end
+                table.sort(out, function(a, b)
+                    if a.cat == b.cat then return a.name < b.name end
+                    return a.cat < b.cat
+                end)
+                return out
+            end
+            local CATALOG = weaponCatalog()
+
             local function addWeaponPanel(list, saveFunc)
+                list = istable(list) and list or {}
                 local panel = vgui.Create("DPanel")
                 panel:SetPaintBackground(false)
-                local scroll = vgui.Create("DScrollPanel", panel)
+
+                local function inList(cls)
+                    for _, c in ipairs(list) do if c == cls then return true end end
+                    return false
+                end
+
+                -- ЛЕВО: текущий набор
+                local left = vgui.Create("DPanel", panel)
+                left:Dock(LEFT) left:SetWide(430) left:DockMargin(5, 5, 2, 40)
+                left:SetPaintBackground(false)
+                local leftTitle = vgui.Create("DLabel", left)
+                leftTitle:Dock(TOP) leftTitle:SetTall(20)
+                leftTitle:SetText("В наборе (удалить ✕):") leftTitle:SetTextColor(THEME.text)
+                local scroll = vgui.Create("DScrollPanel", left)
                 scroll:Dock(FILL)
-                scroll:DockMargin(5, 5, 5, 40)
-                buildWeaponList(scroll, list, saveFunc)
 
+                -- ПРАВО: каталог с поиском
+                local right = vgui.Create("DPanel", panel)
+                right:Dock(FILL) right:DockMargin(2, 5, 5, 40)
+                right:SetPaintBackground(false)
+                local search = vgui.Create("DTextEntry", right)
+                search:Dock(TOP) search:SetTall(24)
+                search:SetPlaceholderText("Поиск по имени/классу в каталоге...")
+                local catScroll = vgui.Create("DScrollPanel", right)
+                catScroll:Dock(FILL)
+
+                local function rebuildList()
+                    scroll:Clear()
+                    for idx, class in ipairs(list) do
+                        local wpn = weapons.Get(class)
+                        local row = scroll:Add("DPanel")
+                        row:Dock(TOP) row:SetTall(30) row:DockMargin(0, 0, 0, 3)
+                        row:SetPaintBackground(false)
+                        row.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, THEME.bgLight) end
+
+                        local lbl = vgui.Create("DLabel", row)
+                        lbl:Dock(FILL) lbl:DockMargin(6, 0, 0, 0)
+                        lbl:SetText((wpn and wpn.PrintName and wpn.PrintName ~= "") and (wpn.PrintName .. "  (" .. class .. ")") or class)
+                        lbl:SetTextColor(THEME.text)
+
+                        local del = styledButton(row, "X", THEME.danger)
+                        del:Dock(RIGHT) del:SetWide(56) del:DockMargin(0, 3, 3, 3)
+                        del.DoClick = function()
+                            table.remove(list, idx)
+                            saveFunc(list)
+                            rebuildList()
+                        end
+                    end
+                end
+
+                local function rebuildCatalog(filter)
+                    catScroll:Clear()
+                    filter = string.lower(trim(filter))
+                    local lastCat = nil
+                    for _, w in ipairs(CATALOG) do
+                        if filter == "" or string.find(string.lower(w.name .. " " .. w.class), filter, 1, true) then
+                            if w.cat ~= lastCat then
+                                lastCat = w.cat
+                                local hdr = catScroll:Add("DLabel")
+                                hdr:Dock(TOP) hdr:SetTall(18)
+                                hdr:SetText("— " .. tostring(lastCat) .. " —")
+                                hdr:SetTextColor(THEME.accent or Color(70,150,240))
+                                hdr:SetContentAlignment(5)
+                            end
+                            local has = inList(w.class)
+                            local rowBtn = catScroll:Add("DButton")
+                            rowBtn:Dock(TOP) rowBtn:SetTall(24) rowBtn:DockMargin(0, 0, 0, 2)
+                            rowBtn:SetText("")
+                            rowBtn.Paint = function(_, pw, ph)
+                                draw.RoundedBox(4, 0, 0, pw, ph, has and Color(44, 80, 60) or THEME.bgLight)
+                                draw.SimpleText(w.name, "DermaDefault", 8, ph / 2, has and Color(120, 230, 150) or THEME.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                                draw.SimpleText(w.class, "DermaDefault", pw - 8, ph / 2, THEME.dim or Color(150,155,165), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                            end
+                            rowBtn.DoClick = function()
+                                if inList(w.class) then
+                                    for i, c in ipairs(list) do if c == w.class then table.remove(list, i) break end end
+                                else
+                                    list[#list + 1] = w.class
+                                end
+                                saveFunc(list)
+                                rebuildList()
+                                rebuildCatalog(search:GetText())
+                            end
+                        end
+                    end
+                end
+                search.OnChange = function() rebuildCatalog(search:GetText()) end
+
+                rebuildList() rebuildCatalog("")
+
+                -- ручное добавление по классу (как раньше)
                 local row = vgui.Create("DPanel", panel)
-                row:Dock(BOTTOM)
-                row:SetTall(34)
-                row:SetPaintBackground(false)
-
+                row:Dock(BOTTOM) row:SetTall(34) row:SetPaintBackground(false)
                 local entry = vgui.Create("DTextEntry", row)
                 entry:Dock(FILL)
-                entry:SetPlaceholderText("classname оружия...")
-
+                entry:SetPlaceholderText("или вручную: classname оружия...")
                 local add = vgui.Create("DButton", row)
-                add:Dock(RIGHT)
-                add:SetWide(100)
-                add:SetText("+ Добавить")
-
+                add:Dock(RIGHT) add:SetWide(100) add:SetText("+ Добавить")
                 local function confirm()
                     local class = trim(entry:GetText())
-                    if class == "" then return end
+                    if class == "" or inList(class) then return end
                     table.insert(list, class)
                     entry:SetText("")
-                    buildWeaponList(scroll, list, saveFunc)
                     saveFunc(list)
+                    rebuildList() rebuildCatalog(search:GetText())
                 end
                 entry.OnEnter = confirm
                 add.DoClick = confirm
@@ -2332,7 +3068,32 @@ if CLIENT then
         net.SendToServer()
     end
 
+    -- ============================================================================
+    -- Вкладка «Расширенные настройки» админ-меню /factions (v3.1.1, переработка)
+    --
+    -- Раньше вкладка вставлялась обезьяньим патчем глобала OpenAdminMenu —
+    -- sh_factions.lua грузится ПОЗЖЕ и перезаписывал его, поэтому вкладка тихо
+    -- пропадала («раньше была — сейчас нет»). Теперь честная точка расширения:
+    -- hook GRM_FactionsAdmin_BuildTabs (вызывается sh_factions при построении
+    -- вкладок админ-меню, тот же механизм, что у моста «Доступы»).
+    --
+    -- СИНХРОНИЗАЦИЯ состояния (заказ владельца «переработать и синхронизировать»):
+    --   ком.час доступ:  cfg.CurfewRoles   → проверяет hasCurfewAccess (/kom_hour)
+    --   гос.новости:     f.GNewsAccess     → hasGNewsAccess (/gnews) — зеркало в
+    --                                          FactionsData с v3.1.1 (buildSyncData)
+    --   модели/оружие:   f.Models/RoleModels/DepartmentModels, f.Weapons/...
+    --                    → читают GetModelsForPlayer (/model) и ApplyWeaponsToPlayer
+    --                      (спавн); во вкладке — ЖИВЫЕ счётчики из NET_SYNC_ALL
+    --   маскировка v2:   cfg.MaskDepartments → getAvailableMasks (/mask)
+    -- Таймер-синк 1.5 c: панель сама пересобирается при изменении зеркал.
+    -- ============================================================================
     function OpenExtendedSettings(parentFrame)
+        -- Синхронизировать доступы по ролям (FactionPerms), чтобы чекбоксы
+        -- законодательства отображали актуальное состояние.
+        if GRM and GRM.FactionPerms and GRM.FactionPerms.Request then
+            GRM.FactionPerms.Request()
+        end
+
         local panel = vgui.Create("DPanel")
         panel:SetPaintBackground(false)
         panel:DockPadding(10, 10, 10, 10)
@@ -2354,6 +3115,24 @@ if CLIENT then
         scroll:Dock(FILL)
         scroll:DockMargin(0, 8, 0, 0)
 
+        local function infoLine(parent, text, col, tall)
+            local l = vgui.Create("DLabel", parent)
+            l:Dock(TOP)
+            l:SetTall(tall or 22)
+            l:SetWrap(true)
+            l:SetAutoStretchVertical(true)
+            l:SetText(text)
+            l:SetTextColor(col or THEME.textDim)
+            l:SetFont("FactionsExt_Small")
+            return l
+        end
+        local function countArr(t) return istable(t) and #t or 0 end
+        local function countMapLists(t)
+            local n = 0
+            if istable(t) then for _, v in pairs(t) do if istable(v) then n = n + #v end end end
+            return n
+        end
+
         local function rebuildCombo()
             factionCombo:Clear()
             local sorted = {}
@@ -2363,62 +3142,139 @@ if CLIENT then
             if sorted[1] then factionCombo:SetValue(sorted[1]) end
         end
 
+        local function sigOf(factionName)
+            local f = FactionsData and FactionsData[factionName]
+            if not istable(f) then return "none" end
+            local cfg = (FactionsExtData and FactionsExtData[factionName]) or {}
+            return table.concat({
+                tostring(countArr(f.Models)), tostring(countMapLists(f.RoleModels)), tostring(countMapLists(f.DepartmentModels)),
+                tostring(countArr(f.Weapons)), tostring(countMapLists(f.RoleWeapons)), tostring(countMapLists(f.DepartmentWeapons)),
+                tostring(f.GNewsAccess == true), tostring(cfg.GNewsAccess == true),
+                tostring(CurfewState and CurfewState.active == true), tostring(CurfewState and CurfewState.faction or ""),
+                tostring(istable(cfg.MaskDepartments) and table.Count(cfg.MaskDepartments) or 0),
+                tostring(countArr(cfg.CurfewRoles)),
+                -- Доступы по ролям (FactionPerms) — чтобы чекбоксы законов обновлялись
+                tostring(GRM.FactionPerms and GRM.FactionPerms.GetFactionRoles and util.TableToJSON(GRM.FactionPerms.GetFactionRoles(factionName)) or "{}"),
+            }, "|")
+        end
+
+        local lastSig = nil
+
+        -- Вкладка пересобирается при изменении подписи состояния (это нужно,
+        -- чтобы галочки подхватывали серверные данные). Но раньше при этом
+        -- терялась позиция прокрутки: поставил галочку в конце длинного
+        -- списка ролей — список отщёлкивал в самое начало. Запоминаем и
+        -- возвращаем скролл вокруг пересборки.
         local function rebuild(factionName)
+            local keepScroll = 0
+            if IsValid(scroll) and IsValid(scroll.VBar) then keepScroll = scroll.VBar:GetScroll() end
             scroll:Clear()
+            if keepScroll > 0 then
+                timer.Simple(0, function()
+                    if IsValid(scroll) and IsValid(scroll.VBar) then scroll.VBar:SetScroll(keepScroll) end
+                end)
+            end
             if not factionName or not FactionsData or not FactionsData[factionName] then return end
             local f = FactionsData[factionName]
-            local cfg = FactionsExtData[factionName] or { CurfewRoles = {}, MaskDepartments = {}, GNewsAccess = false }
+            local cfg = (FactionsExtData and FactionsExtData[factionName]) or { CurfewRoles = {}, MaskDepartments = {}, GNewsAccess = false }
 
+            infoLine(scroll, "Единый стейт доступов: эти же данные читают /model, выдача оружия при спавне, /kom_hour, /mask и /gnews. Изменения применяются мгновенно (синк 1.5 с).", THEME.textDim, 30)
+
+            -- Комендантский час ------------------------------------------------
             sectionLabel(scroll, "Комендантский час (/kom_hour)")
+            if CurfewState and CurfewState.active == true then
+                local left = math.max(0, (tonumber(CurfewState.endTime) or 0) - CurTime())
+                infoLine(scroll, string.format("СТАТУС: АКТИВЕН — осталось %02d:%02d%s", math.floor(left / 60), math.floor(left % 60),
+                    (CurfewState.faction or "") ~= "" and (" • объявила: " .. tostring(CurfewState.faction)) or ""), Color(255, 120, 120), 20)
+                local stopBtn = styledButton(scroll, "Отменить комендантский час", THEME.danger)
+                stopBtn:Dock(TOP) stopBtn:SetTall(30) stopBtn:DockMargin(0, 2, 0, 4)
+                stopBtn.DoClick = function() sendExtAction("stopCurfew", { factionName }) end
+            else
+                infoLine(scroll, "СТАТУС: не активен. Запуск: /kom_hour [мин] в чате — доступ у отмеченных ниже ролей.", THEME.textDim, 20)
+            end
+            local marked = 0
             for _, role in ipairs(f.Roles or {}) do
+                local on = tableHasValue(cfg.CurfewRoles or {}, role)
+                if on then marked = marked + 1 end
                 local chk = vgui.Create("DCheckBoxLabel", scroll)
                 chk:Dock(TOP)
-                chk:SetTall(26)
+                chk:SetTall(24)
                 chk:SetText(role)
-                chk:SetTextColor(THEME.text)
+                chk:SetTextColor(on and Color(140, 240, 160) or THEME.text)
                 chk:SetFont("FactionsExt_Normal")
-                chk:SetValue(tableHasValue(cfg.CurfewRoles or {}, role))
+                chk:SetValue(on and 1 or 0)
                 chk.OnChange = function() sendExtAction("toggleCurfewRole", { factionName, role }) end
             end
+            if #(f.Roles or {}) == 0 then infoLine(scroll, "Ролей нет — создайте во вкладке «Роли».", THEME.textDim, 20) end
 
-            sectionLabel(scroll, "GNewsAccess — только лидер фракции")
+            -- ГосНовости --------------------------------------------------------
+            sectionLabel(scroll, "Гос.новости (/gnews)")
+            local gnewsOn = (f.GNewsAccess == true) or (cfg.GNewsAccess == true)
             local gnews = vgui.Create("DCheckBoxLabel", scroll)
             gnews:Dock(TOP)
-            gnews:SetTall(28)
-            gnews:SetText("Разрешить /gnews лидеру этой фракции")
-            gnews:SetTextColor(THEME.text)
+            gnews:SetTall(26)
+            gnews:SetText(gnewsOn and "Доступ ВЫДАН лидеру этой фракции" or "Разрешить /gnews лидеру этой фракции")
+            gnews:SetTextColor(gnewsOn and Color(140, 240, 160) or THEME.text)
             gnews:SetFont("FactionsExt_Normal")
-            gnews:SetValue((cfg.GNewsAccess == true) or (f.GNewsAccess == true))
+            gnews:SetValue(gnewsOn and 1 or 0)
             gnews.OnChange = function(_, val) sendExtAction("setGNewsAccess", { factionName, tobool(val) }) end
 
-            sectionLabel(scroll, "Маскировка V2")
-            local info = vgui.Create("DLabel", scroll)
-            info:Dock(TOP)
-            info:SetTall(44)
-            info:SetWrap(true)
-            info:SetText("Откройте редактор, чтобы подписывать маскировки, выбирать модели, skin и bodygroups.")
-            info:SetTextColor(THEME.textDim)
-            info:SetFont("FactionsExt_Small")
+            -- Контроль чипов (находка 169) --------------------------------------
+            sectionLabel(scroll, "Контроль чипов")
+            local chipAlertOn = cfg.ChipDeathAlert == true
+            local chipAlert = vgui.Create("DCheckBoxLabel", scroll)
+            chipAlert:Dock(TOP)
+            chipAlert:SetTall(26)
+            chipAlert:SetText(chipAlertOn and "Уведомлять о смерти носителей экспериментальных чипов — ВКЛ" or "Присылать уведомление о смерти носителей экспериментального чипа")
+            chipAlert:SetTextColor(chipAlertOn and Color(140, 240, 160) or THEME.text)
+            chipAlert:SetFont("FactionsExt_Normal")
+            chipAlert:SetValue(chipAlertOn and 1 or 0)
+            chipAlert.OnChange = function(_, val) sendExtAction("setChipDeathAlert", { factionName, tobool(val) }) end
+            infoLine(scroll, "Члены фракции получат звук (npc/metropolice/die2.wav), текстовое уведомление и GPS-метку «В данном районе убит/умер специальный юнит» при смерти носителя экспериментального чипа.", THEME.textDim, 36)
 
-            local maskBtn = styledButton(scroll, "Открыть редактор маскировки V2", THEME.accent)
-            maskBtn:Dock(TOP)
-            maskBtn:SetTall(34)
-            maskBtn:DockMargin(0, 4, 0, 4)
+            -- Модели ------------------------------------------------------------
+            sectionLabel(scroll, "Модели (/model)")
+            local mGen, mRole, mDept = countArr(f.Models), countMapLists(f.RoleModels), countMapLists(f.DepartmentModels)
+            infoLine(scroll, "Назначено: общих " .. mGen .. " • по ролям " .. mRole .. " • по отделам " .. mDept ..
+                (mGen + mRole + mDept == 0 and " (действуют стандартные)" or ""), THEME.text, 20)
+            local modelsBtn = styledButton(scroll, "Редактор моделей (/models_admin)", THEME.accent)
+            modelsBtn:Dock(TOP) modelsBtn:SetTall(32) modelsBtn:DockMargin(0, 2, 0, 4)
+            modelsBtn.DoClick = openAdminModelsMenu
+
+            -- Оружие ------------------------------------------------------------
+            sectionLabel(scroll, "Оружие при спавне")
+            local wGen, wRole, wDept = countArr(f.Weapons), countMapLists(f.RoleWeapons), countMapLists(f.DepartmentWeapons)
+            local preview = {}
+            for i = 1, 3 do if istable(f.Weapons) and f.Weapons[i] then preview[#preview + 1] = tostring(f.Weapons[i]) end end
+            infoLine(scroll, "Назначено: общих " .. wGen .. " • по ролям " .. wRole .. " • по отделам " .. wDept ..
+                (wGen + wRole + wDept == 0 and " (стандартный набор)" or "") ..
+                (#preview > 0 and (" | " .. table.concat(preview, ", ") .. (wGen > 3 and ", …" or "")) or ""), THEME.text, 20)
+            local weaponsBtn = styledButton(scroll, "Редактор оружия (/weapons_admin)", THEME.accent)
+            weaponsBtn:Dock(TOP) weaponsBtn:SetTall(32) weaponsBtn:DockMargin(0, 2, 0, 4)
+            weaponsBtn.DoClick = openWeaponsAdminMenu
+
+            -- Маскировка ---------------------------------------------------------
+            sectionLabel(scroll, "Маскировка V2 (/mask)")
+            local depts = istable(cfg.MaskDepartments) and cfg.MaskDepartments or {}
+            if table.Count(depts) == 0 then
+                infoLine(scroll, "Отделов маскировки нет — создаются в редакторе (кнопка ниже).", THEME.textDim, 20)
+            else
+                local names = {}
+                for d in pairs(depts) do names[#names + 1] = d end
+                table.sort(names)
+                for _, d in ipairs(names) do
+                    local dept = istable(depts[d]) and depts[d] or {}
+                    infoLine(scroll, "• " .. d .. " — ролей с доступом: " .. countArr(dept.Roles) .. ", вариантов: " .. countArr(dept.Models), THEME.text, 18)
+                end
+            end
+            local maskBtn = styledButton(scroll, "Редактор маскировки V2 (/mask_admin)", THEME.accent)
+            maskBtn:Dock(TOP) maskBtn:SetTall(32) maskBtn:DockMargin(0, 2, 0, 4)
             maskBtn.DoClick = openMaskAdminMenu
 
-            sectionLabel(scroll, "Телефония / доступ к оборудованию")
-            local phoneInfo = vgui.Create("DLabel", scroll)
-            phoneInfo:Dock(TOP)
-            phoneInfo:SetTall(44)
-            phoneInfo:SetWrap(true)
-            phoneInfo:SetText("Настройка доступа фракций, рангов и отделов к АТС, прослушке и компьютеру мониторинга связи.")
-            phoneInfo:SetTextColor(THEME.textDim)
-            phoneInfo:SetFont("FactionsExt_Small")
-
-            local phoneAccessBtn = styledButton(scroll, "Настроить доступ к телефонии", Color(70, 150, 210))
-            phoneAccessBtn:Dock(TOP)
-            phoneAccessBtn:SetTall(34)
-            phoneAccessBtn:DockMargin(0, 4, 0, 4)
+            -- Телефония ----------------------------------------------------------
+            sectionLabel(scroll, "Телефония / оборудование")
+            local phoneAccessBtn = styledButton(scroll, "Доступ к АТС / прослушке (/phone_access)", Color(70, 150, 210))
+            phoneAccessBtn:Dock(TOP) phoneAccessBtn:SetTall(32) phoneAccessBtn:DockMargin(0, 2, 0, 0)
             phoneAccessBtn.DoClick = function()
                 if GRM and GRM.Phone and GRM.Phone.AccessManager and GRM.Phone.AccessManager.OpenMenu then
                     GRM.Phone.AccessManager.OpenMenu()
@@ -2427,57 +3283,201 @@ if CLIENT then
                     notification.AddLegacy("Если меню не открылось — проверьте, что grm_phone_system установлен и загружен.", NOTIFY_HINT, 4)
                 end
             end
+            
+            -- Законодательство ---------------------------------------------------
+            sectionLabel(scroll, "Законодательство (законы)")
+            
+            -- Проверяем доступы для текущей фракции
+            local factionPerms = {}
+            if GRM and GRM.FactionPerms and GRM.FactionPerms.GetFactionRoles then
+                factionPerms = GRM.FactionPerms.GetFactionRoles(factionName) or {}
+            end
+            
+            --[[ 21.08. Раздел настроек законов открывался всем, кто дошёл до
+                 вкладки: любой видел галочки «Публикация/Удаление законов».
+                 Менять их всё равно мог только суперадмин или лидер (сервер
+                 отказывал молча), поэтому выглядело как сломанный интерфейс.
+                 Теперь без права раздел показывает состояние и объясняет,
+                 кто им управляет — переключателей просто нет. ]]
+            local canManageLaws = false
+            do
+                local lp = LocalPlayer()
+                if IsValid(lp) then
+                    if lp:IsSuperAdmin() then
+                        canManageLaws = true
+                    else
+                        local data = (FactionsData or {})[factionName]
+                        local key = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(lp))
+                            or tostring(lp:SteamID64() or "")
+                        if istable(data) then
+                            if tostring(data.Leader or "") == key then canManageLaws = true end
+                            local member = istable(data.Members) and data.Members[key]
+                            if istable(member) and (member.IsLeader == true or member.Leader == true) then
+                                canManageLaws = true
+                            end
+                        end
+                    end
+                end
+            end
 
-            sectionLabel(scroll, "Администрирование")
-            local modelsBtn = styledButton(scroll, "Модели (/models_admin)", THEME.accent)
-            modelsBtn:Dock(TOP)
-            modelsBtn:SetTall(32)
-            modelsBtn.DoClick = openAdminModelsMenu
+            infoLine(scroll, canManageLaws
+                and "Настройка доступов к публикации и удалению законов по ролям фракции."
+                or "Доступами к законам управляет лидер организации или суперадмин. Ниже — текущее состояние.",
+                THEME.textDim, 20)
+            
+            -- Список ролей с чекбоксами для доступов
+            for _, role in ipairs(f.Roles or {}) do
+                local rolePerms = factionPerms[role] or {}
+                
+                local rolePanel = vgui.Create("DPanel", scroll)
+                rolePanel:Dock(TOP)
+                rolePanel:SetTall(50)
+                rolePanel:DockMargin(0, 4, 0, 0)
+                rolePanel.Paint = function(self, w, h)
+                    draw.RoundedBox(4, 0, 0, w, h, Color(40, 40, 40, 150))
+                end
+                
+                -- Название роли
+                local roleLabel = vgui.Create("DLabel", rolePanel)
+                roleLabel:SetPos(8, 4)
+                roleLabel:SetSize(200, 20)
+                roleLabel:SetText("Роль: " .. role)
+                roleLabel:SetTextColor(Color(255, 200, 100))
+                roleLabel:SetFont("FactionsExt_Normal")
+                
+                -- В GMod нет goto: ветка «нет прав» и ветка с чекбоксами
+                -- разведены обычным if/else.
+                if not canManageLaws then
+                    -- Только состояние, без переключателей.
+                    local stateLabel = vgui.Create("DLabel", rolePanel)
+                    stateLabel:SetPos(8, 26)
+                    stateLabel:SetSize(320, 20)
+                    stateLabel:SetFont("FactionsExt_Small")
+                    stateLabel:SetTextColor(THEME.textDim)
+                    stateLabel:SetText(("Публикация: %s · удаление: %s"):format(
+                        rolePerms.law_publish and "да" or "нет",
+                        rolePerms.law_remove and "да" or "нет"))
+                else
 
-            local weaponsBtn = styledButton(scroll, "Оружие (/weapons_admin)", THEME.accent)
-            weaponsBtn:Dock(TOP)
-            weaponsBtn:SetTall(32)
-            weaponsBtn:DockMargin(0, 4, 0, 0)
-            weaponsBtn.DoClick = openWeaponsAdminMenu
+                    -- Чекбокс law_publish
+                    local pubChk = vgui.Create("DCheckBoxLabel", rolePanel)
+                    pubChk:SetPos(8, 26)
+                    pubChk:SetSize(150, 20)
+                    pubChk:SetText("Публикация законов")
+                    pubChk:SetTextColor(rolePerms.law_publish and Color(140, 240, 160) or THEME.text)
+                    pubChk:SetFont("FactionsExt_Small")
+                    pubChk:SetValue(rolePerms.law_publish and 1 or 0)
+                    pubChk.OnChange = function(_, val)
+                        if GRM and GRM.FactionPerms then
+                            if tobool(val) then
+                                GRM.FactionPerms.GrantToRole(factionName, role, "law_publish")
+                            else
+                                GRM.FactionPerms.RevokeFromRole(factionName, role, "law_publish")
+                            end
+                        end
+                    end
+                
+                    -- Чекбокс law_remove
+                    local remChk = vgui.Create("DCheckBoxLabel", rolePanel)
+                    remChk:SetPos(170, 26)
+                    remChk:SetSize(150, 20)
+                    remChk:SetText("Удаление законов")
+                    remChk:SetTextColor(rolePerms.law_remove and Color(140, 240, 160) or THEME.text)
+                    remChk:SetFont("FactionsExt_Small")
+                    remChk:SetValue(rolePerms.law_remove and 1 or 0)
+                    remChk.OnChange = function(_, val)
+                        if GRM and GRM.FactionPerms then
+                            if tobool(val) then
+                                GRM.FactionPerms.GrantToRole(factionName, role, "law_remove")
+                            else
+                                GRM.FactionPerms.RevokeFromRole(factionName, role, "law_remove")
+                            end
+                        end
+                    end
+                end
+
+            end
+            
+            if #(f.Roles or {}) == 0 then
+                infoLine(scroll, "Ролей нет — создайте во вкладке «Роли».", THEME.textDim, 20)
+            end
         end
 
-        factionCombo.OnSelect = function(_, _, val) rebuild(val) end
+        factionCombo.OnSelect = function(_, _, val)
+            lastSig = sigOf(val)
+            rebuild(val)
+        end
         refresh.DoClick = function()
             rebuildCombo()
             local val = factionCombo:GetValue()
-            if val and val ~= "" then rebuild(val) end
+            if val and val ~= "" then lastSig = sigOf(val) rebuild(val) end
         end
+
+        -- авто-синк с зеркалами (заказ «синхронизировать»): изменилось — пересобрать
+        local tName = "FactionsExt_ExtTabSync_" .. tostring({}):gsub("%W", "")
+        timer.Create(tName, 1.5, 0, function()
+            if not IsValid(panel) then timer.Remove(tName) return end
+            local val = factionCombo:GetValue()
+            if not val or val == "" then return end
+            local s = sigOf(val)
+            if s ~= lastSig then lastSig = s rebuild(val) end
+        end)
+        panel.OnRemove = function() timer.Remove(tName) end
 
         timer.Simple(0.2, function()
             if IsValid(panel) then
                 rebuildCombo()
                 local val = factionCombo:GetValue()
-                if val and val ~= "" then rebuild(val) end
+                if val and val ~= "" then lastSig = sigOf(val) rebuild(val) end
             end
         end)
 
         return panel
     end
 
-    if not FactionsExt_OriginalOpenAdminMenu then
-        FactionsExt_OriginalOpenAdminMenu = OpenAdminMenu
-    end
+    -- Точка расширения: вкладка «Расширенные настройки» доступна ТОЛЬКО суперадмину
+    hook.Add("GRM_FactionsAdmin_BuildTabs", "FactionsExt_ExtendedTab", function(tabs)
+        if not IsValid(tabs) then return end
+        if not (IsValid(LocalPlayer()) and LocalPlayer():IsSuperAdmin()) then return end
+        tabs:AddSheet("Расширенные настройки", OpenExtendedSettings(tabs), "icon16/cog.png")
+    end)
 
-    OpenAdminMenu = function()
-        if FactionsExt_OriginalOpenAdminMenu then FactionsExt_OriginalOpenAdminMenu() end
-        timer.Simple(0.25, function()
-            if not IsValid(ui.currentFrame) then return end
-            local sheet
-            for _, child in ipairs(ui.currentFrame:GetChildren()) do
-                if child.ClassName == "DPropertySheet" then sheet = child break end
-            end
-            if not IsValid(sheet) then return end
-            for _, item in ipairs(sheet.Items or {}) do
-                if item.Tab and item.Tab:GetText() == "Расширенные настройки" then return end
-            end
-            sheet:AddSheet("Расширенные настройки", OpenExtendedSettings(ui.currentFrame), "icon16/cog.png")
-        end)
+    -- Вкладка «Экономика» в /factions (v3.2.0): чистый информационный режим.
+    -- Любые читерские кнопки убраны: только отображение госбюджета и
+    -- бюджетов/налогов фракций. Управление — строго через банкомат/компьютер.
+    local function OpenEconomyPanel(parentFrame)
+        local panel = vgui.Create("DPanel")
+        panel:SetPaintBackground(false)
+        panel:DockPadding(0, 0, 0, 0)
+        if GRM.Economy and GRM.Economy.EmbedAdminPanel then
+            GRM.Economy.EmbedAdminPanel(panel)
+            GRM.Economy._embeddedBuild = GRM.Economy.BuildAdminContent
+            net.Start("GRM_Eco_AdminOpen")
+            net.SendToServer()
+        end
+        local wait = vgui.Create("DLabel", panel)
+        wait:Dock(TOP)
+        wait:SetTall(28)
+        wait:SetFont("GRMFac_Normal")
+        wait:SetTextColor(Color(155, 170, 190))
+        wait:SetText("  Загрузка казны…")
+        return panel
     end
+    hook.Add("GRM_FactionsAdmin_BuildTabs", "FactionsExt_EconomyTab", function(tabs)
+        if not IsValid(tabs) then return end
+        -- Вкладку видит только тот, у кого есть доступ к экономике.
+        -- На клиенте проверяем по локальному признаку: сервер отправил
+        -- NET_OPEN_ADMIN либо суперадмину, либо CanManageEconomy-игроку.
+        -- Для точности спрашиваем сервер (лёгкий канал) — но чтобы не плодить
+        -- лишние запросы, показываем вкладку всегда: сама панель экономики
+        -- на сервере защищена CanManageEconomy, не-уполномоченному откроется
+        -- пустой ответ. Лучше: показываем только суперадмину ИЛИ тем, кому
+        -- сервер разрешил (определяем по факту, что нас пустили в админ-меню —
+        -- это уже значит лидер/суперадмин; у лидера без экономики вкладка
+        -- просто откроет защищённую панель).
+        tabs:AddSheet("Экономика", OpenEconomyPanel(tabs), "icon16/money.png")
+    end)
+
 
     net.Receive(NET_MASK_ADMIN_DATA, function()
         local data = net.ReadTable() or {}
@@ -2545,10 +3545,10 @@ if CLIENT then
         local role = net.ReadString()
         local message = net.ReadString()
         chat.AddText(
-            Color(255, 0, 0), "[Гос.новости] ",
-            Color(r, g, b), "[" .. tag .. "] ",
+            Color(255, 60, 60), "[Гос.Новости] ",
+            Color(r, g, b), "[" .. tag .. "]\n",
             Color(100, 200, 255), playerName,
-            Color(255, 255, 255), " (", role, "): ",
+            Color(230, 230, 230), " (" .. role .. "): ",
             Color(255, 255, 255), message
         )
     end)

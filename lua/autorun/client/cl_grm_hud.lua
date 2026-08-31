@@ -1,5 +1,18 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 --[[--------------------------------------------------------------------
-    GRM HUD v10.2 — Полноценный HUD для Sandbox
+    GRM HUD v10.4 — Полноценный HUD для Sandbox
+    v10.4: колесо и клавиши слотов только двигают подсветку; таймаут
+           закрывает панель без смены оружия. Выбор выполняется лишь ЛКМ.
+    v10.3: колесо/слоты/таймаут селектора НЕ сменяют оружие, пока
+           физган или гравиган держит проп (IN_ATTACK). Иначе при
+           вращении/подтягивании пропа бар открывался, через 3 с
+           input.SelectWeapon снимал физган — проп падал.
     v10.2: разделённые строки денег «НАЛИЧКА» (кошелёк, ядро валюты)
            и «НА СЧЁТУ» (банк, экономика → GRM_Bank_Sync)
     v10.1: ресивер grm_balance рассылает хук GRM_BalanceUpdated
@@ -13,27 +26,107 @@ if not CLIENT then return end
 GRM = GRM or {}
 GRM.HUD = GRM.HUD or {}
 GRM.HUD.Config = {
-    bgColor        = Color(12, 14, 20, 210),
-    bgShadow       = Color(0, 0, 0, 60),
-    textColor      = Color(230, 230, 235, 255),
-    labelColor     = Color(160, 165, 175, 255),
-    hpColorFull    = Color(80, 210, 120, 255),
-    hpColorMid     = Color(230, 200, 50, 255),
-    hpColorLow     = Color(220, 60, 60, 255),
-    armorColor     = Color(60, 150, 220, 255),
-    moneyColor     = Color(80, 220, 130, 255),
+    -- Каноническая палитра GRM/XUI (cl_grm_ui_theme.lua):
+    -- почти чёрный сине-стальной, неоновые акценты.
+    bgColor        = Color(8, 14, 23, 150),
+    bgShadow       = Color(0, 0, 0, 36),
+    panelHeader    = Color(10, 22, 37, 165),
+    lineColor      = Color(55, 117, 151, 190),
+    textColor      = Color(225, 238, 247, 255),
+    labelColor     = Color(132, 160, 178, 255),
+    hpColorFull    = Color(64, 222, 147, 255),
+    hpColorMid     = Color(250, 185, 63, 255),
+    hpColorLow     = Color(244, 78, 96, 255),
+    armorColor     = Color(48, 204, 255, 255),
+    moneyColor     = Color(64, 222, 147, 255),
     bankColor      = Color(95, 170, 255, 255),
-    ammoColor      = Color(220, 180, 60, 255),
+    ammoColor      = Color(250, 185, 63, 255),
     ammo2Color     = Color(180, 180, 190, 255),
-    slotBg         = Color(20, 22, 30, 220),
-    slotBorder     = Color(60, 65, 80, 200),
-    slotActive     = Color(80, 160, 255, 255),
+    slotBg         = Color(16, 27, 42, 225),
+    slotBorder     = Color(55, 117, 151, 190),
+    slotActive     = Color(48, 204, 255, 255),
     slotHover      = Color(60, 120, 200, 150),
     slotText       = Color(200, 205, 215, 255),
     slotKeyColor   = Color(255, 200, 60, 255),
     animSpeed       = 8,
     selectorTimeout = 3,
 }
+
+--[[--------------------------------------------------------------------
+    ЕДИНАЯ ПАНЕЛЬ СОСТОЯНИЯ (переработка 22.08 по заказу владельца).
+
+    Было: здоровье и броня рисовались здесь, сытость — в своём файле по
+    АБСОЛЮТНЫМ координатам (x = ScrW() - 1066, y = 1044 — на других
+    разрешениях улетало), вес — по центру снизу, выносливость — ещё где-то.
+    Полосы жили каждая своей жизнью, налезали друг на друга и появлялись в
+    разных углах экрана.
+
+    Стало: один список полос. Модуль не рисует ничего сам — он объявляет
+    свою полосу и отдаёт значение:
+
+        GRM.HUD.RegisterBar("hunger", {
+            label = "СЫТОСТЬ", order = 30,
+            Get = function() return value, max, "текст", Color(...) end,
+        })
+
+    Панель сама решает, где всё это стоит, какой ширины и в каком порядке,
+    и растёт по высоте под количество полос. Порядок задаётся числом order:
+    10 здоровье, 20 броня, 30 выносливость, 40 дыхание, 50 сытость, 55 жажда, 60 вес.
+----------------------------------------------------------------------]]
+GRM.HUD.Bars = GRM.HUD.Bars or {}
+
+function GRM.HUD.RegisterBar(id, def)
+    id = tostring(id or "")
+    if id == "" or not istable(def) or not isfunction(def.Get) then return false end
+    def.id = id
+    def.label = tostring(def.label or id)
+    def.order = tonumber(def.order) or 100
+    GRM.HUD.Bars[id] = def
+    return true
+end
+
+function GRM.HUD.RemoveBar(id) GRM.HUD.Bars[tostring(id or "")] = nil end
+
+-- Autorun грузится по алфавиту: Food/Movement могут выполниться РАНЬШЕ HUD
+-- и тогда не увидеть RegisterBar. Базовые провайдеры регистрируются здесь
+-- повторно; если модуль загрузился позже, он просто заменит тот же id своим
+-- более детальным вариантом.
+GRM.HUD.RegisterBar("hunger", {
+    label = "СЫТОСТЬ", order = 50,
+    Get = function()
+        local food = GRM.Food or {}
+        local cfg = food.Config or {}
+        local max = tonumber(cfg.HungerMax) or 100
+        local value = math.Clamp(tonumber(food.ClientHunger) or max, 0, max)
+        local frac = value / math.max(1, max)
+        local color = frac < 0.2 and Color(220, 90, 30) or (frac < 0.5 and Color(240, 150, 40) or Color(250, 175, 45))
+        local text = frac <= 0 and "ГОЛОДАНИЕ" or (math.floor(value) .. "%")
+        return value, max, text, color
+    end,
+})
+
+GRM.HUD.RegisterBar("stamina", {
+    label = "ВЫНОСЛИВОСТЬ", order = 30,
+    Get = function()
+        local move = GRM.Movement or {}
+        local max = tonumber(move.Config and move.Config.StaminaMax) or 100
+        local value = math.Clamp(tonumber(GRM.LocalStamina) or max, 0, max)
+        local frac = value / math.max(1, max)
+        local color = frac < 0.3 and Color(130, 45, 200) or (frac < 0.6 and Color(155, 70, 230) or Color(175, 90, 255))
+        return value, max, math.floor(value) .. "%", color
+    end,
+})
+
+--- Полосы по порядку (чистая функция — гоняется стендом).
+function GRM.HUD.BarList()
+    local out = {}
+    for _, def in pairs(GRM.HUD.Bars) do out[#out + 1] = def end
+    table.sort(out, function(a, b)
+        if a.order == b.order then return a.id < b.id end
+        return a.order < b.order
+    end)
+    return out
+end
 
 -- ШРИФТЫ
 if not GRM.HUD._fontsCreated then
@@ -60,6 +153,8 @@ if not GRM.HUD._fontsCreated then
         })
     end
 end
+surface.CreateFont("GRM_HUD_Name", { font = "Roboto", size = 16, weight = 700, extended = true, antialias = true })
+surface.CreateFont("GRM_HUD_Meta", { font = "Roboto", size = 12, weight = 500, extended = true, antialias = true })
 
 -- БАЛАНС
 GRM.PlayerBalance = GRM.PlayerBalance or 0
@@ -90,12 +185,19 @@ function GRM.AddNotification(text, duration, color)
     while #GRM.Notifications > 6 do table.remove(GRM.Notifications) end
 end
 
-hook.Add("InitPostEntity", "GRM_HUD_ReqBal", function()
+grmBootStart("GRM_HUD_ReqBal", "late", function()
     timer.Simple(1, function()
-        net.Start("grm_request_bal")
-        net.SendToServer()
-        net.Start("GRM_Bank_Request")  -- банковский счёт (экономика)
-        net.SendToServer()
+        local function pooled(name)
+            return util.NetworkStringToID and util.NetworkStringToID(name) ~= 0
+        end
+        if pooled("grm_request_bal") then
+            net.Start("grm_request_bal")
+            net.SendToServer()
+        end
+        if pooled("GRM_Bank_Request") then
+            net.Start("GRM_Bank_Request")
+            net.SendToServer()
+        end
     end)
 end)
 
@@ -139,6 +241,29 @@ end
 -- СЕЛЕКТОР ОРУЖИЯ
 local selector = { active = false, slot = 1, pos = 1, lastInput = 0, alpha = 0, weapons = {}, lastRefresh = 0 }
 
+--[[ Звуки селектора оружия — стоковые HL2, ровно те же, что играет ванильный
+     выбор оружия. Раньше наш селектор листался молча: визуально работает, а
+     на слух — «мёртвый». Проигрываем через GRM.Sound (там прекэш и защита
+     от отсутствующего файла), с фолбэком на surface.PlaySound. ]]
+local SELECTOR_SND = {
+    open   = "common/wpn_hudon.wav",
+    close  = "common/wpn_hudoff.wav",
+    move   = "common/wpn_moveselect.wav",
+    pick   = "common/wpn_select.wav",
+    deny   = "common/wpn_denyselect.wav",
+}
+
+local function selectorSound(kind, throttle)
+    local path = SELECTOR_SND[kind]
+    if not path then return end
+    if GRM.Sound and GRM.Sound.UI then
+        GRM.Sound.UI(path, throttle or 0.02)
+    elseif surface and surface.PlaySound then
+        surface.PlaySound(path)
+    end
+end
+GRM.HUD.SelectorSound = selectorSound
+
 local function RefreshWeapons()
     local now = CurTime()
     if now - selector.lastRefresh < 0.2 then return end
@@ -157,15 +282,20 @@ local function RefreshWeapons()
     for s, weps in pairs(selector.weapons) do table.sort(weps, function(a, b) return a.slotPos < b.slotPos end) end
 end
 
-local function CloseSelector() selector.active = false end
+local function CloseSelector(silent)
+    if selector.active and not silent then selectorSound("close") end
+    selector.active = false
+end
 
 local function SelectWeapon()
     local slotWeps = selector.weapons[selector.slot]
+    local picked = false
     if slotWeps and slotWeps[selector.pos] then
         local wep = slotWeps[selector.pos].weapon
-        if IsValid(wep) then input.SelectWeapon(wep) end
+        if IsValid(wep) then input.SelectWeapon(wep) picked = true end
     end
-    CloseSelector()
+    selectorSound(picked and "pick" or "deny", 0.05)
+    CloseSelector(true)
 end
 
 local function FindCurrentWeapon()
@@ -231,30 +361,100 @@ local function PrevWeapon()
     end
 end
 
+local function GRM_HUD_MobileOpen()
+    local MB = GRM and GRM.Mobile
+    if not MB then return false end
+    if MB.ClientBlocksInput and MB.ClientBlocksInput() then return true end
+    return MB.ClientIsOpen and MB.ClientIsOpen() == true
+end
+
+-- Физган/гравиган: ЛКМ = луч/захват, E+мышь = вращение, колесо = дистанция.
+-- Селектор не должен в это время ни открываться, ни автовыбирать оружие.
+local BUILD_WEP = {
+    weapon_physgun = true,
+    weapon_physcannon = true,
+}
+
+function GRM.HUD.IsBuildWeapon(ply)
+    if not IsValid(ply) then return false end
+    local wep = ply.GetActiveWeapon and ply:GetActiveWeapon()
+    if not IsValid(wep) then return false end
+    local cls = wep.GetClass and wep:GetClass() or ""
+    return BUILD_WEP[cls] == true
+end
+
+function GRM.HUD.IsPropToolBusy(ply)
+    if not GRM.HUD.IsBuildWeapon(ply) then return false end
+    if not ply.KeyDown then return false end
+    return ply:KeyDown(IN_ATTACK) == true
+end
+
+local function AbortSelectorQuiet()
+    selector.active = false
+    selector.alpha = 0
+end
+
 hook.Add("PlayerBindPress", "GRM_HUD_Selector", function(ply, bind, pressed)
     if not pressed then return end
     if not IsValid(ply) or not ply:Alive() then return end
+    if GRM_HUD_MobileOpen() then
+        bind = string.lower(tostring(bind or ""))
+        selector.active = false
+        selector.alpha = 0
+        if bind == "invnext" then if GRM.Mobile.ClientWheel then GRM.Mobile.ClientWheel(1) end return true end
+        if bind == "invprev" then if GRM.Mobile.ClientWheel then GRM.Mobile.ClientWheel(-1) end return true end
+        if bind == "+attack3" or bind == "attack3" or bind == "mouse3" or bind == "+mouse3" then if GRM.Mobile.ClientSelect then GRM.Mobile.ClientSelect() end return true end
+        if bind:match("^slot%d") or bind == "lastinv" or bind == "phys_swap" then return true end
+        if bind == "+attack" or bind == "+attack2" or bind == "+reload" or bind == "+use" then return true end
+        if bind == "+jump" or bind == "+duck" or bind == "+speed" or bind == "+walk" then return true end
+        return true
+    end
+    local b = string.lower(tostring(bind or ""))
+    -- Пока луч физгана/гравигана держит проп: глотаем смену оружия,
+    -- бар не открываем, SelectWeapon не зовём. Дистанцию крутит сам
+    -- физган по дельте колеса (не через invnext).
+    if GRM.HUD.IsPropToolBusy(ply) then
+        if b == "invnext" or b == "invprev" or b == "lastinv" or b == "phys_swap"
+            or string.match(b, "^slot%d+$") then
+            AbortSelectorQuiet()
+            return true
+        end
+        if b == "+attack" or b == "+attack2" then
+            AbortSelectorQuiet()
+            return
+        end
+    end
     if bind == "invnext" then
         RefreshWeapons()
-        if not selector.active then selector.active = true; FindCurrentWeapon() end
+        if not selector.active then selector.active = true selectorSound("open", 0.05) FindCurrentWeapon() end
+        local was = selector.slot .. ":" .. selector.pos
         NextWeapon()
+        -- Щелчок только когда выбор реально сдвинулся (одно оружие в руках —
+        -- звука нет, как в ванильном селекторе).
+        if was ~= (selector.slot .. ":" .. selector.pos) then selectorSound("move") end
         selector.lastInput = CurTime()
         return true
     elseif bind == "invprev" then
         RefreshWeapons()
-        if not selector.active then selector.active = true; FindCurrentWeapon() end
+        if not selector.active then selector.active = true selectorSound("open", 0.05) FindCurrentWeapon() end
+        local was = selector.slot .. ":" .. selector.pos
         PrevWeapon()
+        if was ~= (selector.slot .. ":" .. selector.pos) then selectorSound("move") end
         selector.lastInput = CurTime()
         return true
     end
     for i = 1, 6 do
         if bind == "slot" .. i then
             RefreshWeapons()
+            local slotWeps = selector.weapons[i]
+            local has = slotWeps and #slotWeps > 0
             if selector.active and selector.slot == i then
-                local slotWeps = selector.weapons[i]
-                if slotWeps and #slotWeps > 0 then selector.pos = (selector.pos % #slotWeps) + 1 end
+                if has then selector.pos = (selector.pos % #slotWeps) + 1 end
+                selectorSound(has and "move" or "deny")
             else
-                selector.active = true; selector.slot = i; selector.pos = 1
+                if not selector.active then selectorSound("open", 0.05) end
+                selector.active = true selector.slot = i selector.pos = 1
+                selectorSound(has and "move" or "deny")
             end
             selector.lastInput = CurTime()
             return true
@@ -277,20 +477,24 @@ end)
 
 -- ОТРИСОВКА
 local function DrawMainHUD()
+    -- При активных чипах аугментаций обычный HUD не рисуется: его место
+    -- занимает био-интерфейс (BIOMETRICS/ФИНАНСОВЫЙ КАНАЛ в cl_grm_augmentations_hud.lua)
+    if GRM.AugHUD and GRM.AugHUD.IsActive and GRM.AugHUD.IsActive() then return end
     UpdateValues()
     AnimateValues()
     if not actual.alive then return end
+
     local cfg = GRM.HUD.Config
     local sh, sw = ScrH(), ScrW()
-    local px, py = 16, sh - 16 - 118
-    local pw, ph = 210, 112
-    draw.RoundedBox(8, px + 2, py + 2, pw, ph, cfg.bgShadow)
-    draw.RoundedBox(8, px, py, pw, ph, cfg.bgColor)
-    local barX, barY = px + 10, py + 20
-    local barW, barH = pw - 20, 14
+
+    --[[ Собираем ВСЁ, что нужно показать, в один список: сначала здоровье и
+         броня (они всегда), затем полосы, которые объявили другие модули
+         (выносливость, дыхание, сытость, вес). Панель считает свою высоту
+         под фактическое число полос — ничего не налезает и не висит в
+         пустоте. ]]
+    local rows = {}
+
     local hpFrac = math.Clamp(anim.hp / actual.maxHp, 0, 1)
-    draw.SimpleText("ЗДОРОВЬЕ", "GRM_HUD_Label", barX, py + 7, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-    draw.RoundedBox(4, barX, barY, barW, barH, Color(30, 32, 40, 255))
     local hpColor
     if hpFrac > 0.6 then hpColor = cfg.hpColorFull
     elseif hpFrac > 0.3 then
@@ -300,33 +504,121 @@ local function DrawMainHUD()
         local t = hpFrac / 0.3
         hpColor = Color(Lerp(t, cfg.hpColorLow.r, cfg.hpColorMid.r), Lerp(t, cfg.hpColorLow.g, cfg.hpColorMid.g), Lerp(t, cfg.hpColorLow.b, cfg.hpColorMid.b), 255)
     end
-    if hpFrac > 0 then draw.RoundedBox(4, barX, barY, barW * hpFrac, barH, hpColor) end
-    draw.SimpleText(math.Round(anim.hp) .. " / " .. actual.maxHp, "GRM_HUD_Value", barX + barW / 2, barY + barH / 2, Color(255, 255, 255, 240), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    rows[#rows + 1] = { label = "ЗДОРОВЬЕ", frac = hpFrac, color = hpColor,
+        text = math.Round(anim.hp) .. " / " .. actual.maxHp }
 
-    local arBarY = barY + barH + 10
-    local arFrac = math.Clamp(anim.armor / 100, 0, 1)
-    draw.SimpleText("БРОНЯ", "GRM_HUD_Label", barX, arBarY - 11, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-    draw.RoundedBox(4, barX, arBarY, barW, barH, Color(30, 32, 40, 255))
-    if arFrac > 0 then draw.RoundedBox(4, barX, arBarY, barW * arFrac, barH, cfg.armorColor) end
-    draw.SimpleText(math.Round(anim.armor), "GRM_HUD_Value", barX + barW / 2, arBarY + barH / 2, Color(255, 255, 255, 240), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    -- Броня показывается всегда (даже 0), чтобы игрок видел полосу,
+    -- которую надо пополнять — она не «пропадает» из HUD.
+    rows[#rows + 1] = { label = "БРОНЯ", frac = math.Clamp(anim.armor / 100, 0, 1),
+        color = cfg.armorColor, text = tostring(math.Round(anim.armor)) }
 
-    -- GRM-FIX: две строки денег — наличка (кошелёк) и счёт (банк)
-    local moneyY = arBarY + barH + 8
-    draw.SimpleText("НАЛИЧКА", "GRM_HUD_Label", barX, moneyY + 2, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    for _, def in ipairs(GRM.HUD.BarList()) do
+        local ok, value, max, text, color, hidden = pcall(def.Get)
+        if ok and not hidden and value ~= nil then
+            max = math.max(1, tonumber(max) or 100)
+            rows[#rows + 1] = {
+                label = def.label,
+                frac = math.Clamp((tonumber(value) or 0) / max, 0, 1),
+                color = color or cfg.armorColor,
+                text = text or (math.Round(tonumber(value) or 0) .. " / " .. math.Round(max)),
+            }
+        end
+    end
+
+    local lp = LocalPlayer()
+    local rpName = IsValid(lp) and lp:GetNWString("GRM_RPName", "") or ""
+    if rpName == "" and IsValid(lp) then rpName = lp:Nick() end
+    local facKey = IsValid(lp) and lp:GetNWString("GRM_Faction", "") or ""
+    local facName = "Гражданский"
+    if facKey ~= "" then
+        facName = (GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(facKey)) or facKey
+    end
+    local roleName = IsValid(lp) and lp:GetNWString("GRM_Role", "") or ""
+    if roleName ~= "" then
+        if GRM.Factions and GRM.Factions.RoleDisplayName and Factions and Factions[facKey] then
+            roleName = GRM.Factions.RoleDisplayName(Factions[facKey], roleName) or roleName
+        end
+        facName = facName .. " · " .. roleName
+    end
+
     local cashTxt = (GRM.Format and GRM.Format(math.Round(anim.bal))) or ("$" .. string.Comma(math.Round(anim.bal)))
-    draw.SimpleText(cashTxt, "GRM_HUD_Money", barX + barW, moneyY, cfg.moneyColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
-    local bankY = moneyY + 18
-    draw.SimpleText("НА СЧЁТУ", "GRM_HUD_Label", barX, bankY + 2, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
     local bankTxt = (GRM.PlayerBank ~= nil)
         and ((GRM.Format and GRM.Format(math.Round(anim.bank))) or ("$" .. string.Comma(math.Round(anim.bank))))
         or "—"
-    draw.SimpleText(bankTxt, "GRM_HUD_Money", barX + barW, bankY, cfg.bankColor or cfg.moneyColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
 
+    local hx, hy, hw, hh = 16, 16, 312, 108
+    draw.RoundedBox(8, hx, hy, hw, hh, Color(8, 14, 23, 150))
+    surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, 85)
+    surface.DrawOutlinedRect(hx, hy, hw, hh, 1)
+
+    if IsValid(lp) then
+        pcall(function()
+            if not IsValid(GRM.HUD._avatar) then
+                local av = vgui.Create("AvatarImage")
+                av:SetSize(44, 44)
+                av:SetPaintedManually(true)
+                av:SetMouseInputEnabled(false)
+                av:SetKeyboardInputEnabled(false)
+                GRM.HUD._avatar = av
+            end
+            if GRM.HUD._avatarPly ~= lp then
+                GRM.HUD._avatar:SetPlayer(lp, 64)
+                GRM.HUD._avatarPly = lp
+            end
+            GRM.HUD._avatar:SetPos(hx + 10, hy + 10)
+            GRM.HUD._avatar:SetSize(44, 44)
+            GRM.HUD._avatar:PaintManual()
+        end)
+    end
+    draw.SimpleText(rpName, "GRM_HUD_Name", hx + 64, hy + 12, cfg.textColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    draw.SimpleText(facName, "GRM_HUD_Meta", hx + 64, hy + 34, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    draw.SimpleText("НАЛИЧНЫЕ", "GRM_HUD_Label", hx + 12, hy + 62, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    draw.SimpleText(cashTxt, "GRM_HUD_Money", hx + 12, hy + 82, cfg.moneyColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    draw.SimpleText("СЧЁТ", "GRM_HUD_Label", hx + hw - 12, hy + 62, cfg.labelColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+    draw.SimpleText(bankTxt, "GRM_HUD_Money", hx + hw - 12, hy + 82, cfg.bankColor or cfg.moneyColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+
+    local pw = 320
+    local pad, rowH, gap = 10, 24, 4
+    local headerH = 24
+    local ph = headerH + pad + #rows * (rowH + gap) + pad - gap
+    ph = math.min(ph, sh - 48)
+    local px, py = 16, math.max(16, sh - 28 - ph)
+
+    GRM.HUD.StatusRect = { x = px, y = py, w = pw, h = ph }
+
+    draw.RoundedBox(8, px + 2, py + 2, pw, ph, cfg.bgShadow)
+    draw.RoundedBox(8, px, py, pw, ph, cfg.bgColor)
+    surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, 90)
+    surface.DrawOutlinedRect(px, py, pw, ph, 1)
+    draw.RoundedBoxEx(8, px, py, pw, headerH, cfg.panelHeader, true, true, false, false)
+    draw.RoundedBox(0, px, py, 3, headerH, cfg.hpColorFull)
+    draw.SimpleText("СОСТОЯНИЕ", "GRM_HUD_Value", px + 12, py + headerH / 2, cfg.textColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+
+    local x, w = px + pad, pw - pad * 2
+    local y = py + headerH + pad
+    for _, row in ipairs(rows) do
+        local fillW = math.max(0, (w - 3) * row.frac)
+        draw.RoundedBox(4, x, y, w, rowH, Color(17, 29, 45, 120))
+        if fillW > 0 then
+            draw.RoundedBox(4, x + 3, y + 3, math.max(2, fillW), rowH - 6,
+                Color(row.color.r, row.color.g, row.color.b, 150))
+        end
+        draw.RoundedBox(2, x, y, 3, rowH, row.color)
+        draw.SimpleText(row.label, "GRM_HUD_Label", x + 10, y + rowH / 2, cfg.textColor,
+            TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText(row.text, "GRM_HUD_Value", x + w - 8, y + rowH / 2, cfg.textColor,
+            TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+        y = y + rowH + gap
+    end
+
+    -- ── патроны: отдельный блок справа снизу ────────────────────────
     if actual.ammo1 >= 0 then
-        local ax, ay = sw - 16 - 150, sh - 16 - 60
-        local aw, ah = 150, 54
+        local ax, ay = sw - 16 - 160, sh - 16 - 64
+        local aw, ah = 160, 58
         draw.RoundedBox(8, ax + 2, ay + 2, aw, ah, cfg.bgShadow)
         draw.RoundedBox(8, ax, ay, aw, ah, cfg.bgColor)
+        surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, math.floor(cfg.lineColor.a or 255))
+        surface.DrawOutlinedRect(ax, ay, aw, ah)
         draw.SimpleText("ПАТРОНЫ", "GRM_HUD_Label", ax + aw - 10, ay + 6, cfg.labelColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
         local ammoStr = tostring(math.Round(anim.ammo1))
         draw.SimpleText(ammoStr, "GRM_HUD_Ammo", ax + 12, ay + ah / 2 + 4, cfg.ammoColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
@@ -337,8 +629,17 @@ local function DrawMainHUD()
 end
 
 local function DrawWeaponSelector()
+    if GRM_HUD_MobileOpen and GRM_HUD_MobileOpen() then selector.active = false; selector.alpha = 0; return end
+    local lpBusy = LocalPlayer()
+    -- Захват физганом: бар гасим сразу, таймаут НЕ вызывает SelectWeapon
+    if GRM.HUD.IsPropToolBusy(lpBusy) then
+        AbortSelectorQuiet()
+        return
+    end
     local cfg = GRM.HUD.Config
-    if selector.active and CurTime() - selector.lastInput > cfg.selectorTimeout then SelectWeapon() end
+    -- Таймаут только закрывает интерфейс. Подсвеченное оружие никогда не
+    -- выбирается без явного подтверждения ЛКМ.
+    if selector.active and CurTime() - selector.lastInput > cfg.selectorTimeout then CloseSelector() end
     local targetAlpha = selector.active and 255 or 0
     selector.alpha = math.Approach(selector.alpha, targetAlpha, FrameTime() * 900)
     if selector.alpha < 1 then return end
@@ -432,15 +733,19 @@ local function DrawNotifications()
 end
 
 hook.Add("HUDPaint", "GRM_HUD_Main", function()
-    pcall(DrawMainHUD)
+    local ok, err = pcall(DrawMainHUD)
+    if not ok and (GRM.HUD._lastErr or "") ~= tostring(err) then
+        GRM.HUD._lastErr = tostring(err)
+        ErrorNoHalt("[GRM HUD] " .. tostring(err) .. "\n")
+    end
     pcall(DrawWeaponSelector)
     pcall(DrawNotifications)
 end)
 
-hook.Add("InitPostEntity", "GRM_HUD_Welcome", function()
+grmBootStart("GRM_HUD_Welcome", "late", function()
     timer.Simple(4, function()
-        if IsValid(LocalPlayer()) then GRM.AddNotification("HUD v10.2 загружен — колёсико для выбора оружия", 5, Color(100, 180, 255)) end
+        if IsValid(LocalPlayer()) then GRM.AddNotification("HUD v10.5 — шапка и деньги слева сверху", 5, Color(100, 180, 255)) end
     end)
 end)
 
-print("[GRM] HUD v10.2 загружен")
+print("[GRM] HUD v10.5 загружен")

@@ -1,5 +1,10 @@
 --[[--------------------------------------------------------------------
-    GRM Tab Menu v1.8 — Полная синхронизация баланса (исправлено)
+    GRM Tab Menu v2.0 — RP-имена + серверные часы HH:MM:SS
+    v2.0: в шапке TAB отображается реальное серверное время GRM.Time.
+    GRM Tab Menu v1.9 — Игровые (RP) имена вместо Steam-ников
+    v1.9: в списке и карточке игрока показывается RP-имя (NWString
+          GRM_RPName, Код 72); если RP-имени нет — фолбэк на Steam-ник;
+          исходный Steam-ник виден мелкой строкой в карточке деталей.
     v1.8: серверный fallback grm_request_bal больше не перекрывает
           обработчик ядра валюты (маркер GRM._currencyReqBalRcv)
     - Используется GRM.PlayerBalance вместо локальной _myBalance
@@ -13,7 +18,7 @@ GRM.TabMenu = GRM.TabMenu or {}
 GRM.TabMenu.ShowBalance    = true
 GRM.TabMenu.ShowFaction    = true
 GRM.TabMenu.ReplaceDefault = true
-GRM.TabMenu.RefreshInterval = 5
+GRM.TabMenu.RefreshInterval = 2
 
 GRM.GaggedPlayers = GRM.GaggedPlayers or {}
 
@@ -65,6 +70,15 @@ if SERVER then
     local function getPlayerRank(ply)
         if not IsValid(ply) then return "user" end
         local sid = ply:SteamID()
+        --[[ 21.08. Группа GRM важнее всего остального: назначение через
+             админ-панель раньше не отражалось в TAB вообще (список смотрел
+             только в ULib и в движковые флаги). ]]
+        if GRM.Admin and GRM.Admin.GroupOf then
+            local group = GRM.Admin.GroupOf(ply)
+            if isstring(group) and group ~= "" then return group end
+        end
+        local nw = ply.GetNWString and ply:GetNWString("GRM_AdminGroup", "") or ""
+        if nw ~= "" then return nw end
         if ULib and ULib.ucl and ULib.ucl.getUserGroup then
             local group = ULib.ucl.getUserGroup(sid)
             if group and group ~= "" then return group end
@@ -79,11 +93,33 @@ if SERVER then
     end
 
     local function getPlayerFaction(ply)
-        if not Factions then return "" end
-        local sid = ply:SteamID()
-        for name, f in pairs(Factions) do
-            if istable(f) and istable(f.Members) and f.Members[sid] then
-                return name
+        if not IsValid(ply) then return "" end
+        local fac = ply:GetNWString("GRM_Faction", "")
+        if fac ~= "" then return fac end
+        fac = ply:GetNWString("Faction", "")
+        if fac ~= "" then return fac end
+        if _G.FactionsAPI and isfunction(_G.FactionsAPI.GetFactionOf) then
+            local f = _G.FactionsAPI.GetFactionOf(ply)
+            if isstring(f) and f ~= "" then return f end
+        end
+        if Factions then
+            local ck = (GRM.Identity and isfunction(GRM.Identity.CharacterKey) and GRM.Identity.CharacterKey(ply)) or ""
+            local sid = ply:SteamID() or ""
+            local sid64 = (ply.SteamID64 and ply:SteamID64()) or ""
+            if ck ~= "" then
+                for name, f in pairs(Factions) do
+                    if istable(f) and istable(f.Members) and rawget(f.Members, ck) then return name end
+                end
+            end
+            if sid ~= "" then
+                for name, f in pairs(Factions) do
+                    if istable(f) and istable(f.Members) and (rawget(f.Members, sid) or (f.Leader == sid)) then return name end
+                end
+            end
+            if sid64 ~= "" then
+                for name, f in pairs(Factions) do
+                    if istable(f) and istable(f.Members) and (rawget(f.Members, sid64) or (f.Leader == sid64)) then return name end
+                end
             end
         end
         return ""
@@ -92,7 +128,7 @@ if SERVER then
     local function buildTabData(requester)
         local isAdmin = requester:IsAdmin()
         local players = {}
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) then
                 local sid = ply:SteamID64()
                 local bal = 0
@@ -101,11 +137,19 @@ if SERVER then
                         bal = GRM.GetBalance(ply)
                     end
                 end
+                local rpName = string.Trim(tostring(ply:GetNWString("GRM_RPName", "") or ""))
                 table.insert(players, {
                     sid64    = sid,
-                    nick     = ply:Nick(),
+                    nick     = (rpName ~= "" and rpName) or ply:Nick(),
+                    steam    = ply:Nick(),
                     rank     = getPlayerRank(ply),
-                    faction  = GRM.TabMenu.ShowFaction and getPlayerFaction(ply) or "",
+                    -- Подпись и цвет берём из самой группы: свои группы
+                    -- («Куратор», «Хелпер») больше не показываются обрубком.
+                    rankName = (GRM.Admin and GRM.Admin.GroupLabel)
+                        and select(1, GRM.Admin.GroupLabel(getPlayerRank(ply))) or nil,
+                    rankColor = (GRM.Admin and GRM.Admin.GroupLabel)
+                        and select(2, GRM.Admin.GroupLabel(getPlayerRank(ply))) or nil,
+                    faction=GRM.TabMenu.ShowFaction and(GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(getPlayerFaction(ply))or getPlayerFaction(ply))or"",
                     balance  = bal,
                     showBal  = isAdmin or (ply == requester),
                     pingMs   = ply:Ping(),
@@ -134,13 +178,35 @@ if SERVER then
         net.Send(ply)
     end)
 
+    --[[ Смена группы должна быть видна в TAB СРАЗУ, а не через пять секунд
+         автообновления. Рассылку сводим в одну (пачка назначений подряд —
+         обычное дело), данные у каждого свои: баланс чужих видит только
+         админ, поэтому таблица собирается на каждого отдельно. ]]
+    local function pushTabToAll()
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+            if IsValid(ply) then
+                net.Start("grm_tab_data")
+                    net.WriteTable(buildTabData(ply))
+                net.Send(ply)
+            end
+        end
+    end
+
+    hook.Add("GRM_AdminGroupChanged", "GRM_TabMenu_GroupChanged", function()
+        if GRM.Perf and GRM.Perf.Coalesce then
+            GRM.Perf.Coalesce("grm_tab_group_push", 0.5, pushTabToAll)
+        else
+            pushTabToAll()
+        end
+    end)
+
     net.Receive("grm_tab_action", function(_, admin)
         if not admin:IsAdmin() then return end
         local a = net.ReadTable()
         if not a or not a.type then return end
 
         local function findBySID64(sid64)
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and p:SteamID64() == sid64 then return p end
             end
             return nil
@@ -151,6 +217,16 @@ if SERVER then
                 net.WriteBool(ok)
                 net.WriteString(msg or "")
             net.Send(admin)
+        end
+
+        --[[ 21.08. Кнопки TAB — отдельный путь от админ-панели, и о них
+             раньше тоже никто, кроме двоих, не знал. Объявляем тем же
+             общим слоем GRM.Admin.Announce (красная строка всем). ]]
+        local function announce(verb, target, tail)
+            if not (GRM.Admin and GRM.Admin.Announce and IsValid(target)) then return end
+            local actorName = admin:GetNWString("GRM_RPName", "") ~= "" and admin:GetNWString("GRM_RPName", "") or admin:Nick()
+            local targetName = target:GetNWString("GRM_RPName", "") ~= "" and target:GetNWString("GRM_RPName", "") or target:Nick()
+            GRM.Admin.Announce(("%s %s %s%s"):format(actorName, verb, targetName, tail or ""), "mod")
         end
 
         if a.type == "gag" or a.type == "ungag" then
@@ -165,9 +241,11 @@ if SERVER then
             if gag then
                 GRM.Notify(target, "[Система] Вы заглушены в чате администратором " .. admin:Nick(), 255, 80, 80)
                 sendResult(true, "Заглушён: " .. target:Nick())
+                announce("заглушил в чате", target)
             else
                 GRM.Notify(target, "[Система] Вы разглушены администратором " .. admin:Nick(), 100, 220, 100)
                 sendResult(true, "Разглушён: " .. target:Nick())
+                announce("разглушил в чате", target)
             end
 
         elseif a.type == "kick" then
@@ -180,6 +258,7 @@ if SERVER then
             else
                 target:Kick("[GRM] " .. reason)
             end
+            announce("кикнул", target, " · причина: " .. tostring(reason))
             sendResult(true, "Кикнут: " .. target:Nick())
 
         elseif a.type == "ban" then
@@ -205,6 +284,7 @@ if SERVER then
                 end
             end
             local durStr = minutes == 0 and "навсегда" or (minutes .. " мин.")
+            announce("забанил", target, " (" .. durStr .. ") · причина: " .. tostring(reason))
             sendResult(true, "Забанен (" .. durStr .. "): " .. target:Nick())
 
         elseif a.type == "ulx_mute" or a.type == "ulx_unmute" then
@@ -215,6 +295,7 @@ if SERVER then
             if not IsValid(target) then sendResult(false, "Игрок не в сети"); return end
             local muting = (a.type == "ulx_mute")
             ULib.queueFunctionCall(ulx.mute, admin, target, muting and 1 or 0, muting and "Заглушен голос" or "")
+            announce(muting and "заглушил голос" or "вернул голос", target)
             sendResult(true, (muting and "Заглушен голос: " or "Разглушен голос: ") .. target:Nick())
         end
     end)
@@ -242,20 +323,22 @@ if CLIENT then
     surface.CreateFont("GRMT_Badge",   { font = "Roboto", size = 11, weight = 700 })
     surface.CreateFont("GRMT_BigBal",  { font = "Roboto", size = 16, weight = 700 })
 
+    -- Палитра приведена к общему стилю GRM (как /factions и /admin):
+    -- тёмный корпус, золотой акцент, синее выделение.
     local C = {
-        BG       = Color(14,  16,  22,  245),
-        PANEL    = Color(22,  25,  36,  255),
-        DARK     = Color(12,  14,  20,  255),
-        BORDER   = Color(40,  45,  65,  255),
-        ROW_ALT  = Color(18,  21,  32,  255),
-        ROW_SEL  = Color(30,  50,  90,  255),
-        ROW_HOV  = Color(24,  28,  42,  255),
-        WHITE    = Color(215, 220, 235, 255),
-        GREY     = Color(120, 125, 145, 255),
+        BG       = Color(16,  20,  28,  252),
+        PANEL    = Color(22,  28,  38,  255),
+        DARK     = Color(12,  15,  22,  255),
+        BORDER   = Color(38,  48,  66,  255),
+        ROW_ALT  = Color(20,  25,  34,  255),
+        ROW_SEL  = Color(40,  80,  140, 255),
+        ROW_HOV  = Color(36,  46,  62,  255),
+        WHITE    = Color(240, 244, 250, 255),
+        GREY     = Color(155, 170, 190, 255),
         GREEN    = Color(60,  200, 90,  255),
         RED      = Color(210, 70,  60,  255),
-        BLUE     = Color(70,  140, 220, 255),
-        GOLD     = Color(220, 175, 45,  255),
+        BLUE     = Color(65,  145, 235, 255),
+        GOLD     = Color(245, 195, 65,  255),
         PURPLE   = Color(160, 90,  220, 255),
         CYAN     = Color(60,  200, 200, 255),
         ORANGE   = Color(220, 130, 40,  255),
@@ -272,8 +355,55 @@ if CLIENT then
         user       = { label = "U",     col = C.GREY,   priority = 3 },
     }
 
-    local function getRankInfo(rank)
-        return RANK_INFO[rank] or { label = rank:upper():sub(1,3), col = C.ORANGE, priority = 2 }
+    --[[ pd — строка игрока: если сервер прислал название и цвет группы,
+         показываем их, а не обрубок из трёх букв. ]]
+    local function getRankInfo(rank, pd)
+        local base = RANK_INFO[rank]
+        if not base then
+            base = { label = tostring(rank or "?"):upper():sub(1, 3), col = C.ORANGE, priority = 2 }
+        end
+        if istable(pd) then
+            local label, col = base.label, base.col
+            if isstring(pd.rankName) and pd.rankName ~= "" and not RANK_INFO[rank] then
+                label = utf8 and utf8.upper and utf8.upper(pd.rankName) or pd.rankName
+            end
+            if istable(pd.rankColor) then
+                col = Color(tonumber(pd.rankColor.r) or col.r, tonumber(pd.rankColor.g) or col.g,
+                    tonumber(pd.rankColor.b) or col.b, 255)
+            end
+            return { label = label, col = col, priority = base.priority, full = pd.rankName or base.label }
+        end
+        return base
+    end
+
+    --[[ ЖИВОЙ ПИНГ (заказ владельца 21.08: «пинг должен меняться, пока
+         держишь TAB, а не только при открытии»).
+
+         Пинг не нужно спрашивать у сервера: `Player:Ping()` доступен на
+         клиенте. Раньше в строке рисовалось значение из снимка, который
+         приходил только при открытии окна и раз в пять секунд — отсюда
+         ощущение «нужно передёрнуть TAB». Теперь строка берёт пинг у живой
+         entity каждый кадр, а список игроков кэшируется на секунду, чтобы
+         не звать player.GetAll() в отрисовке. ]]
+    local _plyBySID, _plyBySIDAt = {}, 0
+    local function playerBySID(sid64)
+        sid64 = tostring(sid64 or "")
+        if sid64 == "" then return nil end
+        if (CurTime() - _plyBySIDAt) > 1 then
+            _plyBySID = {}
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+                if IsValid(p) then _plyBySID[tostring(p:SteamID64() or "")] = p end
+            end
+            _plyBySIDAt = CurTime()
+        end
+        local ply = _plyBySID[sid64]
+        return IsValid(ply) and ply or nil
+    end
+
+    local function livePing(pd)
+        local ply = playerBySID(pd and pd.sid64)
+        if IsValid(ply) then return ply:Ping() end
+        return math.floor(tonumber(pd and pd.pingMs) or 0)
     end
 
     local _frame        = nil
@@ -342,7 +472,7 @@ if CLIENT then
     local function buildLocalPlayers()
         local list = {}
         local lp   = LocalPlayer()
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) then
                 local rank = "user"
                 if ply:IsSuperAdmin() then rank = "superadmin"
@@ -353,9 +483,11 @@ if CLIENT then
                     bal     = GRM.PlayerBalance or 0
                     showBal = true
                 end
+                local rpName = string.Trim(tostring(ply:GetNWString("GRM_RPName", "") or ""))
                 table.insert(list, {
                     sid64    = ply:SteamID64(),
-                    nick     = ply:Nick(),
+                    nick     = (rpName ~= "" and rpName) or ply:Nick(),
+                    steam    = ply:Nick(),
                     rank     = rank,
                     faction  = "",
                     balance  = bal,
@@ -469,8 +601,34 @@ if CLIENT then
         net.Start("VD_RequestVehicleList"); net.SendToServer()
     end
 
+    --[[ Снимок приходит раз в несколько секунд. Раньше он ЦЕЛИКОМ заменял
+         данные и пересобирал список: прокрутка прыгала, выбранная карточка
+         моргала. Теперь при неизменном составе игроков поля обновляются на
+         месте (строки читают ту же таблицу), а пересборка идёт только когда
+         кто-то зашёл или вышел. ]]
+    local function rosterKey(data)
+        if not (istable(data) and istable(data.players)) then return "" end
+        local ids = {}
+        for _, pd in ipairs(data.players) do ids[#ids + 1] = tostring(pd.sid64 or "") end
+        table.sort(ids)
+        return table.concat(ids, ",")
+    end
+
     net.Receive("grm_tab_data", function()
-        _data = net.ReadTable()
+        local incoming = net.ReadTable()
+        local sameRoster = _data ~= nil and rosterKey(_data) == rosterKey(incoming)
+
+        if sameRoster then
+            local byID = {}
+            for _, pd in ipairs(_data.players or {}) do byID[tostring(pd.sid64 or "")] = pd end
+            for _, fresh in ipairs(incoming.players or {}) do
+                local pd = byID[tostring(fresh.sid64 or "")]
+                if pd then for k, v in pairs(fresh) do pd[k] = v end end
+            end
+        else
+            _data = incoming
+        end
+
         if _data and _data.players then
             for _, pd in ipairs(_data.players) do
                 if pd.isGagged then _gagCache[pd.sid64] = true
@@ -489,7 +647,9 @@ if CLIENT then
                 end
             end
         end
-        if IsValid(_frame) and _frame._refresh then _frame._refresh() end
+        -- Пересобираем список только при смене состава; в остальных случаях
+        -- строки сами перерисуются с обновлёнными полями.
+        if not sameRoster and IsValid(_frame) and _frame._refresh then _frame._refresh() end
     end)
 
     net.Receive("grm_tab_gagupdate", function()
@@ -554,7 +714,8 @@ if CLIENT then
         if IsValid(_selPanel) then _selPanel:Remove() end
         local pw = parent:GetWide()
         local ph = parent:GetTall()
-        local dw = 270
+        -- Карточка тянется по ширине контейнера (окно стало шире).
+        local dw = math.max(260, pw - 8)
         local sp = vgui.Create("DPanel", parent)
         sp:SetPos(pw - dw - 8, 0); sp:SetSize(dw, ph)
         sp.Paint = function(_, w, h)
@@ -564,11 +725,21 @@ if CLIENT then
         end
         _selPanel = sp
 
-        local ri  = getRankInfo(pd.rank)
+        local ri  = getRankInfo(pd.rank, pd)
         local y   = 14
+
+        -- Крупная аватарка Steam в карточке игрока.
+        local bigAvatar = vgui.Create("AvatarImage", sp)
+        bigAvatar:SetSize(64, 64)
+        bigAvatar:SetPos(12, y)
+        if pd.sid64 and pd.sid64 ~= "" and pd.sid64 ~= "0" then
+            bigAvatar:SetSteamID(tostring(pd.sid64), 128)
+        end
+        bigAvatar:SetMouseInputEnabled(false)
+
         local badgeW = 50
         local badge = vgui.Create("DPanel", sp)
-        badge:SetPos(12, y); badge:SetSize(badgeW, 22)
+        badge:SetPos(86, y); badge:SetSize(badgeW, 22)
         badge.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, ri.col) end
         local badgeLbl = vgui.Create("DLabel", badge)
         badgeLbl:SetPos(0,0); badgeLbl:SetSize(badgeW, 22)
@@ -577,9 +748,17 @@ if CLIENT then
         badgeLbl:SetContentAlignment(5)
 
         local nameLbl = vgui.Create("DLabel", sp)
-        nameLbl:SetPos(68, y+2); nameLbl:SetSize(dw - 80, 20)
+        nameLbl:SetPos(86, y + 26); nameLbl:SetSize(dw - 98, 22)
         nameLbl:SetText(pd.nick); nameLbl:SetFont("GRMT_Head"); nameLbl:SetTextColor(C.WHITE)
-        y = y + 28
+        y = y + 74
+
+        -- исходный Steam-ник (если RP-имя заменило его в списке)
+        if pd.steam and pd.steam ~= "" and pd.steam ~= pd.nick then
+            local stLbl = vgui.Create("DLabel", sp)
+            stLbl:SetPos(12, y - 4); stLbl:SetSize(dw - 24, 14)
+            stLbl:SetText("Steam: " .. pd.steam); stLbl:SetFont("GRMT_Small"); stLbl:SetTextColor(C.GREY)
+            y = y + 14
+        end
 
         local sidLbl = vgui.Create("DLabel", sp)
         sidLbl:SetPos(12, y); sidLbl:SetSize(dw - 24, 14)
@@ -595,8 +774,18 @@ if CLIENT then
 
         local pingLbl = vgui.Create("DLabel", sp)
         pingLbl:SetPos(12, y); pingLbl:SetSize(dw - 24, 14)
-        pingLbl:SetText("Пинг: " .. (pd.pingMs or "?") .. " ms")
-        pingLbl:SetFont("GRMT_Small"); pingLbl:SetTextColor(C.GREY)
+        pingLbl:SetFont("GRMT_Small")
+        -- Обновляем не каждый кадр, а два раза в секунду: чаще человек
+        -- всё равно не читает, а работы меньше.
+        pingLbl._next = 0
+        pingLbl.Think = function(self)
+            if CurTime() < self._next then return end
+            self._next = CurTime() + 0.5
+            local value = livePing(pd)
+            self:SetText("Пинг: " .. value .. " ms")
+            self:SetTextColor(value < 80 and C.GREEN or value < 150 and C.GOLD or C.RED)
+        end
+        pingLbl:Think()
         y = y + 20
 
         local sep1 = vgui.Create("DPanel", sp)
@@ -744,48 +933,77 @@ if CLIENT then
         return sp
     end
 
-    -- Строка игрока
-    local ROW_H = 52
+    -- Строка игрока: аватар Steam + ранг + имя/организация + баланс + пинг
+    -- отдельной колонкой (раньше пинг рисовался под именем и терялся).
+    local ROW_H = 56
     local function buildPlayerRow(scroll, pd, idx, bodyW, detailParent)
         local isSelf   = IsValid(LocalPlayer()) and LocalPlayer():SteamID64() == pd.sid64
-        local ri       = getRankInfo(pd.rank)
+        local ri       = getRankInfo(pd.rank, pd)
         local isMuted  = _voiceMuted[pd.sid64] or false
         local isGagged = _gagCache[pd.sid64] or false
 
         local row = vgui.Create("DPanel", scroll)
         row:SetSize(bodyW, ROW_H)
-        row:Dock(TOP); row:DockMargin(0, 0, 0, 1)
+        row:Dock(TOP); row:DockMargin(0, 0, 0, 3)
+
+        -- Аватарка из Steam-профиля.
+        local avatar = vgui.Create("AvatarImage", row)
+        avatar:SetSize(40, 40)
+        avatar:SetPos(12, (ROW_H - 40) / 2)
+        if pd.sid64 and pd.sid64 ~= "" and pd.sid64 ~= "0" then
+            avatar:SetSteamID(tostring(pd.sid64), 64)
+        end
+        avatar:SetMouseInputEnabled(false)
+
         row.Paint = function(s, w, h)
             local bg = (_selSID == pd.sid64) and C.ROW_SEL
                     or (s:IsHovered() and C.ROW_HOV)
-                    or (idx % 2 == 0 and C.ROW_ALT or C.DARK)
-            draw.RoundedBox(4, 0, 0, w, h, bg)
-            draw.RoundedBox(2, 0, 0, 3, h, ri.col)
-            local badgeW = 34
-            draw.RoundedBox(3, 10, (h-18)/2, badgeW, 18, ri.col)
-            draw.SimpleText(ri.label, "GRMT_Badge", 10 + badgeW/2, h/2,
-                Color(0,0,0,200), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    or (idx % 2 == 0 and C.ROW_ALT or C.PANEL)
+            draw.RoundedBox(6, 0, 0, w, h, bg)
+            draw.RoundedBox(6, 0, 0, 3, h, ri.col)
 
-            local nameX    = 52
+            -- Рамка вокруг аватарки цветом ранга.
+            surface.SetDrawColor(ri.col)
+            surface.DrawOutlinedRect(11, (h - 40) / 2 - 1, 42, 42, 1)
+
+            local nameX = 64
             local nameColor = isSelf and C.CYAN or C.WHITE
-            draw.SimpleText(pd.nick, "GRMT_Body", nameX, h/2 - 7, nameColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            if pd.faction and pd.faction ~= "" then
-                draw.SimpleText("[" .. pd.faction .. "]", "GRMT_Small", nameX, h/2 + 8, C.GOLD, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            elseif pd.isBot then
-                draw.SimpleText("[BOT]", "GRMT_Small", nameX, h/2 + 8, C.GREY, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(pd.nick, "GRMT_Body", nameX, h / 2 - 8, nameColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+
+            -- Ранг подписью под именем, а не тесным бейджем.
+            draw.SimpleText(ri.label, "GRMT_Small", nameX, h / 2 + 10, ri.col, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            if pd.isBot then
+                draw.SimpleText("BOT", "GRMT_Small", nameX + 34, h / 2 + 10, C.GREY, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             end
+
+            local facX = math.floor(w * 0.46)
+            if pd.faction and pd.faction ~= "" then
+                draw.SimpleText(pd.faction, "GRMT_Body", facX, h / 2, C.GOLD, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            else
+                draw.SimpleText("—", "GRMT_Small", facX, h / 2, C.GREY, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+
             if pd.showBal then
                 local balStr = (GRM and GRM.Format) and GRM.Format(pd.balance) or tostring(pd.balance)
-                draw.SimpleText(balStr, "GRMT_Body", w - 56, h/2, C.GREEN, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                draw.SimpleText(balStr, "GRMT_Body", w - 150, h / 2, C.GREEN, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
             end
-            local iconX = w - 50
-            if isMuted  then draw.SimpleText("[M]", "GRMT_Small", iconX + 16, h/2, C.GREY,   TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER) end
-            if isGagged then draw.SimpleText("[G]", "GRMT_Small", iconX + 30, h/2, C.ORANGE, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER) end
-            if isSelf   then draw.SimpleText("<<",  "GRMT_Small", iconX + 44, h/2, C.CYAN,   TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER) end
 
-            local ping    = pd.pingMs or 0
+            -- Пинг: своя колонка справа с индикатором качества связи.
+            -- Значение живое: пока окно открыто, оно меняется само.
+            local ping = livePing(pd)
             local pingCol = ping < 80 and C.GREEN or ping < 150 and C.GOLD or C.RED
-            draw.SimpleText(ping .. "ms", "GRMT_Small", 52, h - 12, pingCol, TEXT_ALIGN_LEFT, TEXT_ALIGN_BOTTOM)
+            draw.RoundedBox(4, w - 86, h / 2 - 11, 62, 22, Color(0, 0, 0, 90))
+            draw.SimpleText(ping .. " ms", "GRMT_Small", w - 30, h / 2, pingCol, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            for i = 1, 3 do
+                local lit = (i == 1) or (i == 2 and ping < 150) or (i == 3 and ping < 80)
+                draw.RoundedBox(1, w - 82 + (i - 1) * 5, h / 2 + 5 - i * 3, 3, 3 + i * 3,
+                    lit and pingCol or Color(60, 66, 80))
+            end
+
+            local iconY = h / 2 - 16
+            if isMuted  then draw.SimpleText("MUTE", "GRMT_Small", w - 100, iconY, C.GREY,   TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER) end
+            if isGagged then draw.SimpleText("GAG",  "GRMT_Small", w - 100, h / 2 + 16, C.ORANGE, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER) end
+            if isSelf   then draw.SimpleText("ВЫ",   "GRMT_Small", w - 150, h / 2 - 16, C.CYAN, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER) end
         end
         row:SetCursor("hand")
         row.OnMousePressed = function()
@@ -800,10 +1018,16 @@ if CLIENT then
     function GRM.OpenTabMenu()
         if IsValid(_frame) then return end
         local SW, SH = ScrW(), ScrH()
-        local W = math.min(960, SW - 40)
-        local H = math.min(640, SH - 40)
+        -- Раньше окно было 960×640 при любом разрешении: колонки жались,
+        -- пинг уезжал под имя и терялся. Теперь ширина по экрану.
+        local W = math.Clamp(math.floor(SW * 0.92), 1100, 1720)
+        local H = math.Clamp(math.floor(SH * 0.86), 640, 1000)
+        W = math.min(W, SW - 40)
+        H = math.min(H, SH - 40)
 
         local f = vgui.Create("DFrame")
+        -- TAB — справочный список, разрешён даже при server-ban.
+        f.GRM_BanAllowed = true
         f:SetTitle("")
         f:SetSize(W, H)
         f:Center()
@@ -812,30 +1036,40 @@ if CLIENT then
         f:ShowCloseButton(false)
         _frame = f
         f.Paint = function(_, w, h)
-            draw.RoundedBox(10, 0, 0, w, h, C.BG)
-            draw.RoundedBox(10, 0, 0, w, 40, C.DARK)
+            draw.RoundedBox(8, 0, 0, w, h, C.BG)
+            draw.RoundedBoxEx(8, 0, 0, w, 44, C.DARK, true, true, false, false)
             surface.SetDrawColor(C.BORDER)
-            surface.DrawRect(0, 40, w, 1)
+            surface.DrawRect(0, 44, w, 1)
+            surface.DrawOutlinedRect(0, 0, w, h)
         end
 
         local titleLbl = vgui.Create("DLabel", f)
-        titleLbl:SetPos(14, 10); titleLbl:SetSize(400, 22)
-        titleLbl:SetText("ИГРОКИ НА СЕРВЕРЕ"); titleLbl:SetFont("GRMT_Title"); titleLbl:SetTextColor(C.WHITE)
+        titleLbl:SetPos(16, 12); titleLbl:SetSize(460, 22)
+        titleLbl:SetText("GRM · ИГРОКИ НА СЕРВЕРЕ"); titleLbl:SetFont("GRMT_Title"); titleLbl:SetTextColor(C.GOLD)
 
         local cntLbl = vgui.Create("DLabel", f)
-        cntLbl:SetPos(W/2 - 50, 12); cntLbl:SetSize(100, 18)
+        cntLbl:SetPos(W/2 - 70, 14); cntLbl:SetSize(140, 18)
         cntLbl:SetFont("GRMT_Head"); cntLbl:SetTextColor(C.GREY); cntLbl:SetContentAlignment(5)
 
         local closeBtn = vgui.Create("DButton", f)
-        closeBtn:SetPos(W - 34, 6); closeBtn:SetSize(28, 28)
+        closeBtn:SetPos(W - 36, 8); closeBtn:SetSize(28, 28)
         closeBtn:SetText("X"); closeBtn:SetFont("GRMT_Head"); closeBtn:SetTextColor(C.GREY)
         closeBtn.Paint = function(s, w, h)
             if s:IsHovered() then draw.RoundedBox(4, 0, 0, w, h, Color(180,40,40)) end
         end
         closeBtn.DoClick = function() f:Remove(); _frame = nil end
 
+        local clockPanel=vgui.Create("DPanel",f)
+        clockPanel:SetPos(W-312,8);clockPanel:SetSize(166,28)
+        clockPanel.Paint=function(_,w,h)
+            draw.RoundedBox(5,0,0,w,h,Color(18,25,40,245));surface.SetDrawColor(C.BORDER);surface.DrawOutlinedRect(0,0,w,h,1)
+            local now=GRM.Time and GRM.Time.GetString and GRM.Time.GetString()or"--:--:--"
+            draw.SimpleText(now,"GRMT_Head",w/2,h/2,C.CYAN,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+        end
+        clockPanel:SetTooltip("Реальное серверное время • UTC+3 по умолчанию")
+
         local refBtn = vgui.Create("DButton", f)
-        refBtn:SetPos(W - 130, 8); refBtn:SetSize(90, 24)
+        refBtn:SetPos(W - 136, 10); refBtn:SetSize(90, 24)
         refBtn:SetText("Обновить"); refBtn:SetFont("GRMT_Small"); refBtn:SetTextColor(C.WHITE)
         refBtn.Paint = function(s, w, h)
             draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(45,60,90) or Color(30,40,65))
@@ -890,7 +1124,7 @@ if CLIENT then
 
         local bodyY    = filterY + filterH + 2
         local bodyH    = H - bodyY - 8
-        local detailW  = 280
+        local detailW  = math.Clamp(math.floor(W * 0.28), 320, 460)
         local listW    = W - detailW - 24
 
         local body = vgui.Create("DPanel", f)
@@ -924,9 +1158,11 @@ if CLIENT then
         local hdr = vgui.Create("DPanel", body)
         hdr:SetPos(0, -22); hdr:SetSize(listW, 20)
         hdr.Paint = function(_, w, h)
-            draw.RoundedBox(0, 0, 0, w, h, C.PANEL)
-            draw.SimpleText("РАНГ  ИМЯ / ФРАКЦИЯ", "GRMT_Small", 52, h/2, C.GREY, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            draw.SimpleText("БАЛАНС", "GRMT_Small", w - 56, h/2, C.GREY, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            draw.RoundedBox(4, 0, 0, w, h, C.PANEL)
+            draw.SimpleText("ИГРОК", "GRMT_Small", 104, h/2, C.GREY, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("ОРГАНИЗАЦИЯ", "GRMT_Small", math.floor(w * 0.46), h/2, C.GREY, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("БАЛАНС", "GRMT_Small", w - 150, h/2, C.GREY, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("ПИНГ", "GRMT_Small", w - 24, h/2, C.GREY, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
         end
 
         local function refresh()

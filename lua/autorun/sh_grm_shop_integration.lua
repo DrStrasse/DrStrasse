@@ -189,6 +189,7 @@ if CLIENT then
     -- Патчим OpenLeaderMenu для добавления вкладки транспорта
     hook.Add("Think", "GRM_PatchLeaderMenu", function()
         -- Этот хук срабатывает один раз для патча
+        if GRM.Perf and not GRM.Perf.Throttle("shop.leader.patch",.5)then return end
         if not OpenLeaderMenu then return end
 
         local _origLeaderMenu = OpenLeaderMenu
