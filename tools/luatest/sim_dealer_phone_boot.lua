@@ -26,7 +26,7 @@ local vendorTool = read("lua/weapons/gmod_tool/stools/grm_vendor_tool.lua")
 local phoneVendor = read("lua/autorun/sh_grm_phone_vendor.lua")
 local boot = read("lua/autorun/sh_00_grm_boot.lua")
 local arrest = read("lua/autorun/sh_grm_arrest.lua")
-local logistics = read("lua/autorun/client/cl_grm_faction_logistics.lua")
+local industryUI = read("lua/autorun/client/cl_grm_industry_ui.lua")
 local cuffs = read("lua/autorun/server/sv_grm_handcuffs.lua")
 local trunk = read("lua/autorun/sh_grm_trunk.lua")
 local broadcast = read("lua/autorun/sh_grm_broadcast.lua")
@@ -143,11 +143,13 @@ ok(trunk:find("if not istable(TK.Viewers) or next(TK.Viewers) == nil then return
     "сторож багажника спит, пока его никто не открыл")
 ok(broadcast:find("if (BC.LiveCount or 0) <= 0 then return end", 1, true) ~= nil,
     "сторож эфира спит, пока нет ни одного включённого микрофона")
-ok(read("lua/autorun/server/sv_grm_logistics.lua"):find("next(L.Routes) == nil then return end", 1, true) ~= nil,
-    "тик маршрутов логистики спит без активных рейсов")
-ok(logistics:find('hook.Add("GRM_FactionsAdmin_BuildTabs","GRML_FactionsMenuTab"', 1, true) ~= nil
-    and logistics:find('timer.Create("GRML_FactionsMenuTab"', 1, true) == nil,
-    "вечный таймер встраивания вкладки логистики заменён хуком меню")
+ok(read("lua/autorun/server/sv_grm_industry_logistics.lua"):find("if not next(I.Routes) then return end", 1, true) ~= nil,
+    "тик рейсов логистики спит без активных маршрутов")
+ok(read("lua/autorun/server/sv_grm_industry.lua"):find("if not next(I.Jobs) then return end", 1, true) ~= nil,
+    "тик задач цеха спит без активных работ")
+ok(industryUI:find('timer.Create("GRM', 1, true) == nil
+    and industryUI:find('hook.Add("PostDrawTranslucentRenderables"', 1, true) ~= nil,
+    "подписи над узлами рисуются хуком отрисовки, а не вечным таймером")
 
 print(("\nDEALER + PHONE VENDOR + BOOT: %d/%d, провалов: %d"):format(total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)

@@ -100,11 +100,20 @@ ok(tool:find("local fadeOff", 1, true) ~= nil and tool:find("fadeOff = function"
 local mobile = read("lua/autorun/sh_grm_mobile.lua")
 ok(mobile:find("local tierRank", 1, true) ~= nil and mobile:find("tierRank = function", 1, true) ~= nil,
     "подсчёт чипов телефона: форвард-декларация на месте")
-local factory = read("lua/autorun/server/sv_grm_factory_fullcycle.lua")
-ok(factory:find("local qteTimerName", 1, true) ~= nil and factory:find("qteTimerName = function", 1, true) ~= nil,
-    "имя таймера QTE завода: форвард-декларация на месте")
-ok(factory:find("timer.Remove(qteTimerName(ent))", 1, true) ~= nil,
-    "очистка станка снимает ПРАВИЛЬНЫЙ таймер QTE")
+--[[ Старый цех держал на каждую работу отдельный timer.Create и снимал его
+     по имени, вычисленному функцией qteTimerName(ent). Новый цех таймеров
+     на работу не создаёт вовсе: задачи живут в I.Jobs и их крутит один
+     общий тик. Проверяем именно это — отсутствие таймеров на работу. ]]
+local industry = read("lua/autorun/server/sv_grm_industry.lua")
+-- Считаем только вызовы: слово timer.Create встречается и в комментарии.
+local timerCount = select(2, industry:gsub("timer%.Create%(", ""))
+ok(timerCount == 2, "в цехе ровно два общих таймера (тик задач и сырьё), не по таймеру на работу",
+    timerCount)
+ok(industry:find('timer.Remove', 1, true) == nil,
+    "снимать таймер по вычисленному имени больше не нужно — задач как таймеров нет")
+ok(industry:find("I.Jobs[job.id] = job", 1, true) ~= nil
+    and industry:find("I.Jobs[job.id] = nil", 1, true) ~= nil,
+    "задача регистрируется и снимается как объект, а не как таймер")
 
 print(("\nFORWARD LOCALS: %d/%d, провалов: %d"):format(total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)

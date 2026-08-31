@@ -6,14 +6,14 @@ local tool=read("lua/weapons/gmod_tool/stools/grm_quest_tool.lua")
 local npc=read("lua/entities/grm_quest_npc/init.lua")
 local inv=read("lua/autorun/sh_grm_inventory.lua")
 local mining=read("lua/entities/grm_ore_node.lua")
-local factory=read("lua/autorun/server/sv_grm_factory_fullcycle.lua")
+local factory=read("lua/autorun/server/sv_grm_industry.lua")
 local hub=read("lua/autorun/server/sv_grm_persistence_hub.lua")
 local qmenu=read("lua/autorun/sh_grm_qmenu.lua")
 local achievements=read("lua/autorun/sh_grm_achievements.lua")
 local pass,fail=0,0
 local function has(s,n)return s:find(n,1,true)~=nil end
 local function ok(v,n)if v then pass=pass+1;print("  ok  "..n)else fail=fail+1;print("  FAIL "..n)end end
-ok(has(core,'Q.Version = "1.4.0"'),"quest ecosystem version 1.4")
+ok(has(core,'Q.Version = "1.5.0"'),"quest ecosystem version 1.5")
 ok(has(core,"function Q.NormalizeDefinition")and has(core,"STEP_TYPES"),"server normalizes closed objective types")
 ok(has(core,"visit=true")and has(core,"event=true")and has(core,"talk=true")and has(core,"item=true"),"visit event talk and inventory objectives")
 ok(has(core,"function Q.Event")and has(core,"function Q.Talk"),"generic event and NPC conversation APIs")

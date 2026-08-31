@@ -70,8 +70,8 @@ local model = entInit:match('SetModel%("([^"]+)"') or shared:match('Model%s*=%s*
      прямо, и одинаковый вид маркеров важнее «красивой» альтернативы.
      Сверяем с конфигом логистики, а не с зашитой строкой — если там
      поменяют модель, стенд заметит расхождение. ]]
-local logi = read("lua/autorun/sh_grm_logistics_config.lua")
-local logiModel = logi:match('LoadingPointModel%s*=%s*"([^"]+)"') or ""
+local logi = read("lua/autorun/sh_grm_industry_core.lua")
+local logiModel = logi:match('depot%s*=%s*%{[^}]-model%s*=%s*"([^"]+)"') or ""
 ok(model ~= "" and model == logiModel,
     "модель та же, что у точки погрузки логистики",
     ("чекпоинт=%s логистика=%s"):format(model, logiModel))

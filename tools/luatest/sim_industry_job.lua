@@ -1,0 +1,465 @@
+--[[--------------------------------------------------------------------
+    sim_industry_job — жизненный цикл задачи на станке.
+
+    ЗАКАЗ ВЛАДЕЛЬЦА (31.08), дословно: «мини-игра пройдена и запускается
+    прогресс-бар производства, а игрок может свободно гулять. Это бред».
+
+    ЧТО БЫЛО В СТАРОМ ЦЕХЕ. beginCraft() создавал `timer.Create` и всё.
+    У задачи не было владельца, стадии и вложенного сырья. Игрок уходил
+    через полкарты и всё равно получал оружие в руки `owner:Give()`.
+    Выход с сервера сжигал материалы безвозвратно.
+
+    ЧТО ПРОВЕРЯЕМ ЗДЕСЬ.
+      * Задача — объект: знает работника, стадию, вложенное сырьё.
+      * Отошёл от станка — работа ВСТАЁТ, а не проваливается и не идёт
+        сама. Прогресс замирает.
+      * Вернулся — работа продолжается с того же места.
+      * Умер / вышел с сервера — пауза с понятной причиной.
+      * Продукт идёт в ВЫХОД СТАНКА, а не в руки и не пропом на пол.
+      * Брак возвращает часть сырья, а не сжигает его.
+      * Заброшенная задача закрывается с возвратом сырья.
+
+    Запуск: luajit tools/luatest/sim_industry_job.lua
+----------------------------------------------------------------------]]
+
+local pass, fail = 0, 0
+local function ok(v, name, extra)
+    if v then pass = pass + 1 print("  ok   " .. name)
+    else fail = fail + 1 print("  FAIL " .. name .. "   " .. tostring(extra or "")) end
+end
+
+-- ================================================================
+--  ОКРУЖЕНИЕ GMod
+-- ================================================================
+local NOW = 1000
+local TIMERS = {}
+local SIMPLE = {}
+local NET_HANDLERS = {}
+
+SERVER = true
+function AddCSLuaFile() end
+
+istable    = function(v) return type(v) == "table" end
+isstring   = function(v) return type(v) == "string" end
+isnumber   = function(v) return type(v) == "number" end
+isfunction = function(v) return type(v) == "function" end
+IsValid    = function(v) return type(v) == "table" and v.__dead ~= true end
+
+function CurTime() return NOW end
+game = { GetMap = function() return "rp_test" end }
+util = { AddNetworkString = function() end }
+weapons = { Get = function() return { WorldModel = "models/weapons/w_pistol.mdl" } end }
+timer = {
+    Create = function(name, delay, reps, fn) TIMERS[name] = fn end,
+    Simple = function(delay, fn) SIMPLE[#SIMPLE + 1] = { at = NOW + (delay or 0), fn = fn } end,
+}
+local function runTimers()
+    for i = #SIMPLE, 1, -1 do
+        if NOW >= SIMPLE[i].at then
+            local fn = SIMPLE[i].fn
+            table.remove(SIMPLE, i)
+            fn()
+        end
+    end
+end
+
+-- Вектор: нужны DistToSqr и Distance для проверки присутствия.
+local Vec = {}
+Vec.__index = Vec
+local function V(x, y, z) return setmetatable({ x = x or 0, y = y or 0, z = z or 0 }, Vec) end
+function Vec:DistToSqr(o)
+    local dx, dy, dz = self.x - o.x, self.y - o.y, self.z - o.z
+    return dx * dx + dy * dy + dz * dz
+end
+function Vec:Distance(o) return math.sqrt(self:DistToSqr(o)) end
+function Vec:__sub(o) return V(self.x - o.x, self.y - o.y, self.z - o.z) end
+function Vec:__add(o) return V(self.x + o.x, self.y + o.y, self.z + o.z) end
+
+local function hookStub() end
+hook = { Add = hookStub, Run = function() end, Remove = hookStub }
+net = {
+    Start = function() net._buf = {} end,
+    Send = function() net._sent = net._sent or {} net._sent[#net._sent + 1] = net._buf net._buf = {} end,
+    SendToServer = function() end,
+    Receive = function(name, fn) NET_HANDLERS[name] = fn end,
+    WriteEntity = function(e) (net._buf or {})[#(net._buf or {}) + 1] = e end,
+    WriteString = function(s) (net._buf or {})[#(net._buf or {}) + 1] = s end,
+    WriteUInt = function(v) (net._buf or {})[#(net._buf or {}) + 1] = v end,
+    WriteFloat = function(v) (net._buf or {})[#(net._buf or {}) + 1] = v end,
+    WriteBool = function(v) (net._buf or {})[#(net._buf or {}) + 1] = v end,
+    WriteTable = function(t) (net._buf or {})[#(net._buf or {}) + 1] = t end,
+}
+NULL = setmetatable({}, { __index = function() return function() return false end end })
+
+concommand = { Add = function() end, Run = function() end }
+HUD_PRINTCONSOLE = 2
+
+GRM = GRM or {}
+GRM.Persistence = {
+    LoadJSON = function(path, defaults) return defaults, "missing" end,
+    SaveJSON = function() return true end,
+}
+GRM.Audit = { Write = function() end }
+GRM.Access = { Register = function() end, Can = function() return true end }
+GRM.Notify = function() end
+GRM.GiveMoney = function() end
+GRM.TakeMoney = function() end
+GRM.GetBalance = function() return 0 end
+GRM.HasMoney = function() return true end
+GRM.Format = function(v) return tostring(v) end
+
+-- ================================================================
+--  БОЕВЫЕ ФАЙЛЫ
+-- ================================================================
+local function load(p)
+    local chunk = assert(loadfile(p))
+    chunk()
+end
+load("lua/autorun/sh_grm_industry_core.lua")
+load("lua/autorun/sh_grm_industry_container.lua")
+load("lua/autorun/server/sv_grm_industry.lua")
+
+local I = GRM.Industry
+local C = GRM.Container
+local CFG = I.Config
+ok(I ~= nil and I.StartJob ~= nil, "серверный модуль цеха загружен из боевого файла")
+ok(TIMERS["GRM_Industry_Tick"] ~= nil, "тик задач зарегистрирован")
+local tick = TIMERS["GRM_Industry_Tick"]
+
+-- Прокрутить N тиков вперёд.
+local function advance(seconds)
+    local steps = math.floor(seconds / CFG.TickInterval)
+    for _ = 1, steps do
+        NOW = NOW + CFG.TickInterval
+        tick()
+        runTimers()
+    end
+end
+
+-- ================================================================
+--  ФИКСИРОВАННЫЕ ОБЪЕКТЫ
+-- ================================================================
+local function newEnt(role, kind)
+    local e = { NodeRole = role, vars = {}, pos = V(0, 0, 0) }
+    for _, name in ipairs({ "NodeID", "NodeKind", "FactionName", "NodeLabel", "WorkerName", "JobStage" }) do
+        e["Set" .. name] = function(self, v) self.vars[name] = v end
+        e["Get" .. name] = function(self) return self.vars[name] or "" end
+    end
+    for _, name in ipairs({ "Stock", "Wear" }) do
+        e["Set" .. name] = function(self, v) self.vars[name] = v end
+        e["Get" .. name] = function(self) return self.vars[name] or 0 end
+    end
+    for _, name in ipairs({ "Busy" }) do
+        e["Set" .. name] = function(self, v) self.vars[name] = v end
+        e["Get" .. name] = function(self) return self.vars[name] == true end
+    end
+    e["SetProgress"] = function(self, v) self.vars.Progress = v end
+    e["GetProgress"] = function(self) return self.vars.Progress or 0 end
+    e.GetPos = function(self) return self.pos end
+    e.SetModel = function() end
+    e.PhysicsInit = function() end
+    e.SetMoveType = function() end
+    e.SetSolid = function() end
+    e.GetPhysicsObject = function() return nil end
+    e.EmitSound = function() end
+    e.Nick = function() return "Тестовый" end
+    e.GetNWString = function() return "" end
+    e.SteamID64 = function() return "76561190000000001" end
+    e.IsPlayer = function() return true end
+    if kind then e.vars.NodeKind = kind end
+    return e
+end
+
+local function newPlayer()
+    local p = newEnt("player")
+    p.pos = V(0, 0, 0)
+    p.Alive = function() return true end
+    return p
+end
+
+local function newStation(kind)
+    local e = newEnt("station", kind)
+    e.pos = V(0, 0, 0)
+    I.InitNode(e)
+    return e, I.NodeFor(e)
+end
+
+local function fillInput(rec, items)
+    for id, n in pairs(items) do C.Add(rec.inID, id, n) end
+end
+
+-- ================================================================
+print("\n=== 1. ЗАДАЧА — ЭТО ОБЪЕКТ, А НЕ ТАЙМЕР ===")
+-- ================================================================
+do
+    local ent, rec = newStation("furnace")   -- у печи нет мини-игры
+    fillInput(rec, { defective_components = 1 })
+    local ply = newPlayer()
+
+    ok(ent:GetNodeKind() == "furnace", "станок инициализирован как печь")
+    ok(rec.inID ~= nil and rec.outID ~= nil, "у станка есть вход и выход")
+    ok(C.Count(rec.inID, "defective_components") == 1, "сырьё лежит во входе")
+
+    I.StartJob(ply, ent, "melt_components")
+    local job = rec.job and I.Jobs[rec.job] or nil
+    ok(job ~= nil, "задача создана")
+    ok(job.worker == ply, "у задачи есть работник — старый цех его не помнил")
+    ok(job.input and job.input.defective_components == 1, "задача помнит вложенное сырьё")
+    ok(job.stage == "assemble", "печь сразу переходит к сборке", job.stage)
+    ok(C.Count(rec.inID, "defective_components") == 0, "сырьё списано со входа")
+    ok(ent:GetBusy() == true, "станок помечен занятым")
+end
+
+-- ================================================================
+print("\n=== 2. ПРОГРЕСС ИДЁТ ТОЛЬКО РЯДОМ СО СТАНКОМ ===")
+-- ================================================================
+do
+    -- ГЛАВНАЯ ПРОВЕРКА ПО ЖАЛОБЕ ВЛАДЕЛЬЦА.
+    local ent, rec = newStation("furnace")
+    fillInput(rec, { defective_components = 1 })
+    local ply = newPlayer()
+    I.StartJob(ply, ent, "melt_components")
+    local job = I.Jobs[rec.job]
+
+    advance(2)
+    local near_progress = job.progress
+    ok(near_progress > 0, "рядом со станком прогресс идёт", near_progress)
+    ok(job.stage == "assemble", "стадия — сборка")
+
+    -- Уходим за радиус работы.
+    ply.pos = V(0, 5000, 0)
+    advance(CFG.GraceSeconds + 1)
+    ok(job.stage == "paused", "ОТОШЁЛ — работа встала на паузу", job.stage)
+    ok(job.pauseReason == "away", "причина паузы — отошёл", job.pauseReason)
+
+    -- Держимся вдали долго: прогресс НЕ должен расти.
+    local frozen = job.progress
+    advance(60)
+    ok(job.progress == frozen, "пока работника нет, прогресс стоит на месте",
+        tostring(frozen) .. " -> " .. tostring(job.progress))
+    ok(job.stage == "paused", "и не перешёл в «сделано»")
+    ok(C.IsEmpty(rec.outID), "продукта в выходе нет — работник не работал")
+
+    -- Возвращаемся.
+    ply.pos = V(0, 0, 0)
+    advance(CFG.TickInterval * 2)
+    ok(job.stage == "assemble", "ВЕРНУЛСЯ — работа продолжилась", job.stage)
+    ok(job.progress > frozen, "прогресс пошёл с того же места", job.progress - frozen)
+    ok(job.pauseReason == nil, "причина паузы снята")
+end
+
+-- ================================================================
+print("\n=== 3. СМЕРТЬ И ВЫХОД ИЗ ИГРЫ ===")
+-- ================================================================
+do
+    local ent, rec = newStation("furnace")
+    fillInput(rec, { defective_components = 1 })
+    local ply = newPlayer()
+    I.StartJob(ply, ent, "melt_components")
+    local job = I.Jobs[rec.job]
+
+    ply.Alive = function() return false end
+    advance(CFG.GraceSeconds + 1)
+    ok(job.stage == "paused" and job.pauseReason == "dead", "смерть работника ставит паузу", job.pauseReason)
+
+    ply.Alive = function() return true end
+    advance(CFG.TickInterval * 2)
+    ok(job.stage == "assemble", "ожил — продолжил")
+
+    -- Выход с сервера: объект игрока становится невалидным.
+    ply.__dead = true
+    advance(CFG.GraceSeconds + 1)
+    ok(job.stage == "paused" and job.pauseReason == "offline", "выход из игры ставит паузу", job.pauseReason)
+
+    local before = job.progress
+    advance(120)
+    ok(job.progress == before, "пока работника нет на сервере, прогресс стоит")
+    ok(job.stage == "paused", "задача не завершилась сама")
+end
+
+-- ================================================================
+print("\n=== 4. ПРОДУКТ ИДЁТ В ВЫХОД СТАНКА ===")
+-- ================================================================
+do
+    local ent, rec = newStation("furnace")
+    fillInput(rec, { defective_components = 1 })
+    local ply = newPlayer()
+    I.StartJob(ply, ent, "melt_components")
+    local job = I.Jobs[rec.job]
+
+    local need = job.assembleDuration
+    advance(need + 2)
+
+    ok(I.Jobs[job.id] == nil, "задача закрыта после сборки")
+    ok(rec.job == nil, "станок свободен")
+    ok(ent:GetBusy() == false, "признак занятости снят")
+    ok(C.Count(rec.outID, "scrap_metal") == 2, "продукт лежит в ВЫХОДЕ станка, а не в руках",
+        C.Count(rec.outID, "scrap_metal"))
+    ok(rec.wear > 0, "износ станка вырос", rec.wear)
+end
+
+-- ================================================================
+print("\n=== 5. СЫРЬЁ НЕ СГОРАЕТ ===")
+-- ================================================================
+do
+    -- Отмена работы возвращает сырьё.
+    local ent, rec = newStation("furnace")
+    fillInput(rec, { defective_components = 1 })
+    local ply = newPlayer()
+    I.StartJob(ply, ent, "melt_components")
+    local job = I.Jobs[rec.job]
+    advance(1)
+
+    I.CancelJob(job, "Отменено", true)
+    ok(C.Count(rec.outID, "defective_components") == 1, "сырьё ВЕРНУЛОСЬ при отмене",
+        C.Count(rec.outID, "defective_components"))
+    ok(I.Jobs[job.id] == nil, "задача удалена")
+    ok(rec.job == nil, "станок свободен")
+
+    -- Заброшенная задача закрывается сама и тоже возвращает сырьё.
+    local ent2, rec2 = newStation("furnace")
+    fillInput(rec2, { defective_components = 1 })
+    local ply2 = newPlayer()
+    I.StartJob(ply2, ent2, "melt_components")
+    local job2 = I.Jobs[rec2.job]
+    ply2.__dead = true
+    advance(CFG.GraceSeconds + 2)
+    job2.updatedAt = CurTime() - CFG.AbandonAfter - 10
+    advance(1)
+    ok(I.Jobs[job2.id] == nil, "заброшенная задача закрылась", job2.id)
+    ok(C.Count(rec2.outID, "defective_components") == 1, "сырьё возвращено и при забросе")
+end
+
+-- ================================================================
+print("\n=== 6. МИНИ-ИГРА И КАЧЕСТВО ===")
+-- ================================================================
+do
+    local function runMinigame(miss)
+        local ent, rec = newStation("weapon")
+        fillInput(rec, { scrap_metal = 5, components_box = 1 })
+        local ply = newPlayer()
+        I.StartJob(ply, ent, "arccw_makarov")
+        local job = I.Jobs[rec.job]
+        ok(job ~= nil, "задача на верстаке создана")
+        ok(job.stage == "process", "сначала идёт мини-игра", job.stage)
+        ok(job.expectedSteps == I.StepsFor("weapon"), "шагов столько, сколько задано для верстака")
+
+        local handler = NET_HANDLERS["GRM_IND_Step"]
+        ok(handler ~= nil, "обработчик шагов мини-игры зарегистрирован")
+
+        for i = 1, job.expectedSteps do
+            NOW = NOW + 0.5       -- защита от «прощёлкал быстрее возможного»
+            local lane = (job.sequence or {})[i] or 0
+            net.ReadEntity = function() return ent end
+            net.ReadUInt = function() if net._u == nil then net._u = i else return lane end; return i end
+            net.ReadFloat = function() return miss and job.window or 0 end
+            net.ReadBool = function() return miss == true end
+            handler(64, ply)
+            net._u = nil
+        end
+        return ent, rec, job, ply
+    end
+
+    -- Читалки под конкретный порядок: entity, index(UInt8), float, bool, lane(UInt4).
+    local function readOrder(ent, i, err, missed, lane)
+        local seq = { ent, i }
+        local idx = 0
+        net.ReadEntity = function() return ent end
+        net.ReadUInt = function()
+            idx = idx + 1
+            if idx == 1 then return i end
+            return lane
+        end
+        net.ReadFloat = function() return err end
+        net.ReadBool = function() return missed end
+    end
+
+    local function playMinigame(miss)
+        local ent, rec = newStation("weapon")
+        fillInput(rec, { scrap_metal = 5, components_box = 1 })
+        local ply = newPlayer()
+        I.StartJob(ply, ent, "arccw_makarov")
+        local job = I.Jobs[rec.job]
+        local handler = NET_HANDLERS["GRM_IND_Step"]
+
+        for i = 1, job.expectedSteps do
+            NOW = NOW + 0.5
+            readOrder(ent, i, miss and job.window or 0, miss == true, (job.sequence or {})[i] or 0)
+            handler(64, ply)
+        end
+        return ent, rec, job, ply
+    end
+
+    -- УСПЕШНОЕ ПРОХОЖДЕНИЕ.
+    local ent, rec, job, ply = playMinigame(false)
+    ok(job.stage == "assemble" or I.Jobs[job.id] == nil, "после мини-игры задача перешла к сборке", job.stage)
+    ok(job.quality == 100, "безупречное прохождение даёт качество 100", job.quality)
+    ok(job.outcome == "master", "результат — изделие с клеймом мастера", job.outcome)
+    ok(C.Count(rec.outID, "arccw_makarov") == 0, "продукт ЕЩЁ не выдан — впереди сборка")
+
+    advance(job.assembleDuration + 2)
+    ok(C.Count(rec.outID, "arccw_makarov") == 1, "после сборки пистолет в выходе станка",
+        C.Count(rec.outID, "arccw_makarov"))
+
+    -- ПРОВАЛ: брак и возврат половины сырья.
+    local ent2, rec2, job2 = playMinigame(true)
+    ok(job2.quality == 0, "сплошные промахи дают качество ноль", job2.quality)
+    ok(job2.outcome == "defect", "результат — брак", job2.outcome)
+    ok(I.Jobs[job2.id] == nil, "задача закрыта сразу, сборки не будет")
+    ok(C.Count(rec2.outID, "defective_weapon_parts") == 1, "брак положили в выход — его можно переплавить",
+        C.Count(rec2.outID, "defective_weapon_parts"))
+    local scrapBack = C.Count(rec2.outID, "scrap_metal")
+    ok(scrapBack > 0, "часть сырья вернулась, а не сгорела", scrapBack)
+    ok(scrapBack < 5, "вернулась ЧАСТЬ, а не всё — иначе провал выгоднее работы", scrapBack)
+end
+
+-- ================================================================
+print("\n=== 7. НЕЛЬЗЯ СДЕЛАТЬ НЕЧЕГО ИЗ НИЧЕГО ===")
+-- ================================================================
+do
+    local ent, rec = newStation("weapon")
+    local ply = newPlayer()
+    local okStart = I.StartJob(ply, ent, "arccw_makarov")
+    ok(okStart == false, "без сырья работа не начинается")
+    ok(rec.job == nil, "задачи не возникло")
+    ok(C.IsEmpty(rec.inID) and C.IsEmpty(rec.outID), "ничего не списалось")
+
+    -- Чужую задачу на занятом станке не начать.
+    fillInput(rec, { scrap_metal = 5, components_box = 1 })
+    I.StartJob(ply, ent, "arccw_makarov")
+    local firstJob = rec.job
+    fillInput(rec, { scrap_metal = 5, components_box = 1 })
+    ok(I.StartJob(ply, ent, "arccw_makarov") == false, "второй раз тот же станок не запустить")
+    ok(rec.job == firstJob, "задача осталась прежней")
+
+    -- Рецепт чужого станка не пройдёт.
+    local ent2, rec2 = newStation("gpu")
+    fillInput(rec2, { scrap_metal = 5, components_box = 1 })
+    ok(I.StartJob(ply, ent2, "arccw_makarov") == false, "на станке видеокарт оружие не собирают")
+end
+
+-- ================================================================
+print("\n=== 8. ВЫХОД ЗАБИТ — РАБОТА НЕ НАЧИНАЕТСЯ ===")
+-- ================================================================
+do
+    --[[ Продукт не должен пропадать из-за переполненного выхода. Проверяем
+         ДО старта: иначе игрок тратит время и сырьё, а получить нечего. ]]
+    local ent, rec = newStation("furnace")
+    local cap = C.Capacity(rec.outID)
+    ok(cap > 0, "у выхода станка есть лимит по весу", cap)
+
+    -- Забиваем выход тяжёлым грузом.
+    local unit = I.WeightOf("scrap_metal")
+    C.Add(rec.outID, "scrap_metal", math.floor(cap / unit))
+    ok(C.Free(rec.outID) < unit, "выход забит", C.Free(rec.outID))
+
+    fillInput(rec, { defective_components = 1 })
+    local ply = newPlayer()
+    ok(I.StartJob(ply, ent, "melt_components") == false, "при забитом выходе работа не начинается")
+    ok(C.Count(rec.inID, "defective_components") == 1, "сырьё не списано")
+end
+
+-- ================================================================
+print("\n=== ИТОГ ===")
+print("  пройдено: " .. pass .. ", провалено: " .. fail)
+if fail > 0 then os.exit(1) end

@@ -30,8 +30,9 @@ local function operation(id, ply)
         phone = { save = function(p) return GRM.Phone and GRM.Phone.SaveMapEntities(p) end, load = function(p) return GRM.Phone and GRM.Phone.LoadMapEntities(p) end },
         cctv = { save = function() return GRM.CCTV and GRM.CCTV.SavePermanent() end, load = function() return GRM.CCTV and GRM.CCTV.LoadPermanent() end },
         alarm = { save = function() return GRM.Alarm and GRM.Alarm.SavePermanent() end, load = function() return GRM.Alarm and GRM.Alarm.LoadPermanent() end },
-        factory = { save = function(p) return GRM.FactoryCycle and GRM.FactoryCycle.SaveMap(p, "admin hub") end, load = function(p) return GRM.FactoryCycle and GRM.FactoryCycle.LoadMap(p) end },
-        logistics = { save = function(p) return GRM.Logistics and GRM.Logistics.SaveMap(p) end, load = function(p) return GRM.Logistics and GRM.Logistics.LoadMap(p) end },
+        -- Старые GRM.FactoryCycle и GRM.Logistics удалены при переработке
+        -- производства и логистики (31.08). Остался один владелец данных.
+        industry = { save = function(p) return GRM.Industry and GRM.Industry.Save(p) end, load = function(p) return GRM.Industry and GRM.Industry.Load(p) end },
         vending = { save = function(p) return GRM.Food and GRM.Food.SaveVendingMachines(p) end, load = function(p) return GRM.Food and GRM.Food.LoadVendingMachines(p, true) end },
         roomtap = { save = function(p) return GRM.RoomTap and GRM.RoomTap.SaveMapEquipment(p) end, load = function(p) return GRM.RoomTap and GRM.RoomTap.LoadMapEquipment(p) end },
         wanted = { save = function() return GRM.Wanted and GRM.Wanted.Save() end, load = function() return GRM.Wanted and GRM.Wanted.Load() end },
@@ -53,7 +54,7 @@ local function operation(id, ply)
 end
 
 local function all(ply, mode)
-    local ids = { "phone", "cctv", "alarm", "factory", "logistics", "vending", "roomtap", "wanted", "mining", "doors", "arrest", "customization", "vendors", "vehicle_dealers", "garages", "quests", "garbage_bins", "perm" }
+    local ids = { "phone", "cctv", "alarm", "industry", "vending", "roomtap", "wanted", "mining", "doors", "arrest", "customization", "vendors", "vehicle_dealers", "garages", "quests", "garbage_bins", "perm" }
     local done, errors = 0, {}
     for _, id in ipairs(ids) do
         local ok, msg = operation(id .. "_" .. mode, ply)

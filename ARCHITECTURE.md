@@ -86,8 +86,12 @@ action — `resource.action`; hook — `GRM_<Domain><PastTense>`; backend — к
 | Файл | Назначение |
 |---|---|
 | `sh_grm_jobs.lua` + `_config` + `_v4`/`_v5` | Биржа труда (курьер/мусоровоз/таксист) |
-| `sh_grm_logistics_config.lua` + `_entities` | Логистика (точки, склады, матовозки) |
-| `sh_grm_factory_fullcycle_config.lua` + `_entities` | Завод полного цикла |
+| `sh_grm_industry_core.lua` | Производство и логистика: справочник, рецепты, качество, награды (чистые функции) |
+| `sh_grm_industry_container.lua` | Единая ёмкость: станок, склад, грузовик, инвентарь игрока |
+| `sh_grm_industry_entities.lua` | Узлы цеха и логистики (7 ролей, регистрация) |
+| `server/sv_grm_industry.lua` | Задачи, мини-игра, износ, рынок, сырьё |
+| `server/sv_grm_industry_logistics.lua` | Заказы складов, рейсы, грузовые отсеки |
+| `weapons/gmod_tool/stools/grm_industry.lua` | Инструмент установки и наладки узлов |
 | `sh_grm_911.lua` | Система 911 (ранения, реанимация, морг) |
 | `sh_grm_medical.lua` / `sh_grm_medical_full.lua` | Медицина |
 
@@ -121,8 +125,8 @@ action — `resource.action`; hook — `GRM_<Domain><PastTense>`; backend — к
 
 > Клиентские панели — в `lua/autorun/client/` (35 файлов): `cl_grm_factions_unified_ui.lua`,
 > `cl_grm_inventory_ui.lua`, `cl_grm_cctv.lua`, `cl_grm_phone.lua`, `cl_grm_quests.lua` и т.д.
-> Серверные — в `lua/autorun/server/` (23 файла): `sv_grm_logistics.lua`,
-> `sv_grm_factory_fullcycle.lua`, `sv_grm_phone.lua`, `sv_grm_cctv.lua` и т.д.
+> Серверные — в `lua/autorun/server/` (23 файла): `sv_grm_industry.lua`,
+> `sv_grm_industry_logistics.lua`, `sv_grm_phone.lua`, `sv_grm_cctv.lua` и т.д.
 
 ---
 
@@ -177,8 +181,7 @@ grm_faction_perms.json         — доступы по ролям
 grm_faction_duty.json          — статус службы по CharacterKey
 grm_wallet.json                — внешний писатель (безвреден, см. HANDOVER)
 gnews_log.txt                  — лог госновостей
-grm_logistics/                 — доступ, ящики, maps/<map>.json
-grm_factory_fullcycle/         — шкафы, рынок, скупщики, maps/<map>.json
+grm_industry/                  — узлы, задачи, заказы: map_<map>.json + orders_<map>.json
 grm_admin_log.json             — админ-лог
 grm_player_taxes.json          — налоги игроков
 spawn_points_global_<map>.json — глобальные спавнпоинты

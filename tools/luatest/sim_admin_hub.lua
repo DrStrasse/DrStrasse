@@ -169,8 +169,8 @@ end
 GRM.Phone = mkMod("phone", { "SaveMapEntities" }, { "LoadMapEntities" })
 GRM.CCTV = mkMod("cctv", { "SavePermanent" }, { "LoadPermanent" })
 GRM.Alarm = mkMod("alarm", { "SavePermanent" }, { "LoadPermanent" })
-GRM.FactoryCycle = mkMod("factory", { "SaveMap" }, { "LoadMap" })
-GRM.Logistics = mkMod("logistics", { "SaveMap" }, { "LoadMap" })
+-- Цех и логистика переписаны в один модуль (31.08).
+GRM.Industry = mkMod("industry", { "Save" }, { "Load" })
 GRM.Food = mkMod("vending", { "SaveVendingMachines" }, { "LoadVendingMachines" })
 GRM.RoomTap = mkMod("roomtap", { "SaveMapEquipment" }, { "LoadMapEquipment" })
 GRM.Wanted = mkMod("wanted", { "Save" }, { "Load" })

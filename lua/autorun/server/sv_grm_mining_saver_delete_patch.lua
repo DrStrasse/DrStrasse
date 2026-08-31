@@ -33,8 +33,7 @@ local function isRemovable(ent)
     local class = ent:GetClass()
 
     return GENERIC_CLASSES[class] == true
-        or string.StartWith(class, "grm_fc_")
-        or string.StartWith(class, "grm_logistics_")
+        or string.StartWith(class, "grm_ind_")
 end
 
 local function findAimedEntity(ply)
@@ -67,16 +66,12 @@ local function rewritePersistence(class)
         GRM_SaveEntities()
     end
 
-    -- New Factory Full Cycle has a separate save with stock/data.
-    if string.StartWith(class, "grm_fc_")
-        and GRM and GRM.FactoryCycle and GRM.FactoryCycle.SaveMap then
-        GRM.FactoryCycle.SaveMap(nil)
-    end
-
-    -- Faction Logistics also has separate persistent entity/config data.
-    if string.StartWith(class, "grm_logistics_")
-        and GRM and GRM.Logistics and GRM.Logistics.SaveMap then
-        GRM.Logistics.SaveMap(nil)
+    -- Производство и логистика (31.08 переписаны: grm_fc_* и grm_logistics_*
+    -- заменены на grm_ind_*). Узлы хранят содержимое в GRM.Container,
+    -- поэтому удаление любого узла требует перезаписи карты.
+    if string.StartWith(class, "grm_ind_")
+        and GRM and GRM.Industry and GRM.Industry.Save then
+        GRM.Industry.Save()
     end
 end
 
