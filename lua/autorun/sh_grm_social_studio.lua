@@ -580,6 +580,9 @@ local function closeStudio()
     if not ST.on then return end
     ST.on = false
     ST.playing = false
+    -- Ожидание скелета могло не дождаться: снимаем явно, чтобы таймер
+    -- не тикал в фоне после закрытия окна.
+    timer.Remove("GRM_SocStudio_Bones")
     sendAct("close")
     if IsValid(ST.frame) then ST.frame:Remove() end
     ST.frame = nil
@@ -642,7 +645,14 @@ local function openStudio()
     f:ShowCloseButton(false)
     f:MakePopup()
     f.Paint = function(_, w, h)
-        draw.RoundedBox(0, 0, 0, w, h, Color(10, 13, 18, 200))
+        --[[ НИКАКОЙ заливки на весь экран.
+
+             Здесь стояло draw.RoundedBox(0,0,0,w,h, Color(10,13,18,200)).
+             Фрейм растянут на весь экран, поэтому подложка тонировала
+             и саму сцену с моделью — владелец 31.08: «чё за
+             потемнение?». Сцену обязано быть видно как в игре, иначе
+             по ней не оценишь позу. Рисуем только шапку, панели
+             красят себя сами. ]]
         draw.RoundedBox(0, 0, 0, w, 52, Color(14, 18, 26, 252))
         draw.RoundedBox(0, 0, 51, w, 1, COL.line)
         draw.SimpleText("СТУДИЯ АНИМАЦИЙ", "GRMSocEd_H", 20, 26, COL.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
@@ -1068,8 +1078,31 @@ local function openStudio()
     local bonesc = vgui.Create("DScrollPanel", right)
     bonesc:Dock(FILL)
 
+    --[[ БАГ (владелец 31.08: «где список костей?»).
+
+         Имена костей брались РОВНО ОДИН РАЗ при открытии окна. Но
+         GetBoneCount у игрока даёт 0, пока движок не построил скелет
+         модели — а студия как раз в этот момент и открывается (сервер
+         только что дёрнул заморозку и сменил стойку). Пустой список
+         строился молча, и колонка «СКЕЛЕТ» оставалась голой до
+         перезахода. Видно это было и по подписи «КОСТЬ: R_UpperArm» —
+         значение по умолчанию, а не первое имя из списка.
+
+         Лечим двумя вещами: имена перечитываем при КАЖДОМ построении,
+         и пока их нет — пробуем снова (ниже по таймеру). ]]
     local function rebuildBones()
+        if not IsValid(bonesc) then return end
         bonesc:Clear()
+        if #names == 0 then names = boneNames(LocalPlayer()) end
+        if #names > 0 then
+            -- Кость по умолчанию могла не существовать у этой модели.
+            local have
+            for _, n in ipairs(names) do if n == ST.bone then have = true break end end
+            if not have then
+                ST.bone = names[1]
+                if ST.refreshSliders then ST.refreshSliders() end
+            end
+        end
         local q = string.lower(string.Trim(IsValid(search) and search:GetValue() or ""))
         for _, n in ipairs(names) do
             local shortN = string.gsub(n, "ValveBiped.Bip01_", "")
@@ -1095,6 +1128,26 @@ local function openStudio()
     search.OnChange = rebuildBones
     rebuildBones()
     ST.refreshSliders()
+
+    --[[ Скелет мог быть ещё не готов (см. комментарий выше). Дожидаемся
+         его короткими попытками, а не одним «авось успело». Как только
+         кости появились — строим список и прекращаем. Таймер именной и
+         снимается вместе с окном, поэтому в фоне ничего не остаётся. ]]
+    if #names == 0 then
+        local tries = 0
+        timer.Create("GRM_SocStudio_Bones", 0.25, 0, function()
+            tries = tries + 1
+            if not ST.on or not IsValid(bonesc) or tries > 40 then
+                timer.Remove("GRM_SocStudio_Bones")
+                return
+            end
+            names = boneNames(LocalPlayer())
+            if #names > 0 then
+                rebuildBones()
+                timer.Remove("GRM_SocStudio_Bones")
+            end
+        end)
+    end
 
     -------------------------------------------------------------------
     -- НИЗ: лента ключевых кадров.
