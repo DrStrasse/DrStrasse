@@ -130,8 +130,17 @@ local function invUsed(inv)
     for _, slot in pairs(inv.slots) do n = n + (slot.count or 0) end
     return n
 end
+--[[ ПРАВИЛО НАСТОЯЩЕГО ИНВЕНТАРЯ. AddItem сначала спрашивает
+     GetItemDef и, если предмета в справочнике НЕТ, возвращает ВСЁ
+     количество как «не влезло» (sh_grm_inventory.lua:549). Раньше
+     заглушка принимала любой предмет, поэтому баг «предметы
+     производства не зарегистрированы» дошёл до живого сервера:
+     стенды были зелёными, а игрок не мог взять ни лом, ни изделие. ]]
 GRM.Inventory = {
+    ItemDefs = {},
+    GetItemDef = function(id) return GRM.Inventory.ItemDefs[id] end,
     AddItem = function(ply, id, count)
+        if not GRM.Inventory.ItemDefs[id] then return count end
         local inv = invOf(ply)
         local put = math.min(count, math.max(0, 24 - invUsed(inv)))
         if put > 0 then inv.slots[#inv.slots + 1] = { id = id, count = put } end
@@ -176,6 +185,12 @@ end
 load("lua/autorun/sh_grm_industry_core.lua")
 load("lua/autorun/sh_grm_industry_container.lua")
 load("lua/autorun/server/sv_grm_industry.lua")
+
+--[[ Регистрация предметов производства в инвентаре. Грузим её тем же
+     файлом, что работает на сервере: без неё строгий инвентарь стенда
+     отказывается принимать лом и изделия, и стенд краснеет ровно так,
+     как краснел живой сервер. ]]
+load("lua/autorun/zz_grm_industry_items.lua")
 
 local I = GRM.Industry
 local C = GRM.Container
@@ -646,6 +661,83 @@ do
     callAction(boss, ent3, "job_start", "melt_components", 1)
     ok(rec3.job ~= nil, "суперадмин обходит запрет производства")
     ACCESS["industry.produce"].default = true
+end
+
+-- ================================================================
+print("\n=== 12. СБОР РЕСУРСОВ: СЫРЬЁ И ИЗДЕЛИЯ ПОПАДАЮТ В РУКИ ===")
+-- ================================================================
+do
+    --[[ ЖАЛОБА ВЛАДЕЛЬЦА: «сбор ресурсов не проходит». Причина была
+         не в станках и не в источнике: предметы производства вообще
+         не были зарегистрированы в инвентаре. GRM.Inventory.AddItem
+         без описания предмета возвращает ВСЁ количество как «не
+         влезло», адаптер контейнера честно отвечал «нет места», и
+         игрок не получал ничего при пустом инвентаре.
+
+         Инвентарь стенда подчинён тому же правилу (см. GRM.Inventory
+         выше), поэтому проверка ниже ловит повтор бага. ]]
+    local src = newEnt("supply")
+    src.pos = V(0, 0, 0)
+    I.InitNode(src)
+    local srcRec = I.NodeFor(src)
+
+    local ply = newPlayer("76561190000001201")
+    local box = C.ForPlayer(ply)
+    ok(srcRec.supply ~= nil, "у источника есть запас")
+    ok(C.Count(box.id, "scrap_metal") == 0, "инвентарь игрока пуст")
+
+    callAction(ply, src, "supply_take", "", 5)
+    ok(C.Count(box.id, "scrap_metal") == 5, "ЛОМ ИЗ ИСТОЧНИКА ПОПАЛ В ИНВЕНТАРЬ",
+        C.Count(box.id, "scrap_metal"))
+    ok(srcRec.supply.stock == 20, "запас источника уменьшился", srcRec.supply.stock)
+
+    -- Готовое изделие со станка тоже должно уходить в руки.
+    local st, stRec = newStation("components")
+    C.Add(stRec.outID, "components_box", 2)
+    local ply2 = newPlayer("76561190000001202")
+    callAction(ply2, st, "withdraw", "components_box", 1)
+    ok(C.Count(C.ForPlayer(ply2).id, "components_box") == 1,
+        "ИЗДЕЛИЕ СО СТАНКА ПОПАЛО В РУКИ", C.Count(C.ForPlayer(ply2).id, "components_box"))
+    ok(C.Count(stRec.outID, "components_box") == 1, "на станке осталось одно изделие",
+        C.Count(stRec.outID, "components_box"))
+end
+
+-- ================================================================
+print("\n=== 13. ПРЕДМЕТЫ ПРОИЗВОДСТВА ЗАРЕГИСТРИРОВАНЫ В ИНВЕНТАРЕ ===")
+-- ================================================================
+do
+    --[[ Тот самый справочник, которого не хватало. Проверяем по
+         боевому файлу регистрации, а не по копии: если предмет
+         забудут зарегистрировать, стенд скажет. ]]
+    ok(GRM.Inventory and GRM.Inventory.ItemDefs ~= nil, "справочник предметов есть")
+    local missing = {}
+    for id in pairs(I.Items or {}) do
+        if not (GRM.Inventory.ItemDefs and GRM.Inventory.ItemDefs[id]) then
+            missing[#missing + 1] = id
+        end
+    end
+    table.sort(missing)
+    ok(#missing == 0, "ВСЕ ПРЕДМЕТЫ ПРОИЗВОДСТВА ЗАРЕГИСТРИРОВАНЫ", table.concat(missing, ", "))
+
+    local def = GRM.Inventory.ItemDefs and GRM.Inventory.ItemDefs["scrap_metal"]
+    ok(def ~= nil, "металлолом описан")
+    ok(def and def.name == "Металлолом", "название совпадает со справочником цеха",
+        def and def.name)
+    ok(def and tonumber(def.weight) == I.Items.scrap_metal.weight,
+        "вес совпадает со справочником цеха", def and def.weight)
+
+    -- Оружие из рецептов: без регистрации его тоже нельзя выдать.
+    local guns = 0
+    for _, recipe in pairs(I.Recipes or {}) do
+        local out = recipe.output
+        if out and not I.Items[out] then
+            guns = guns + 1
+            if not GRM.Inventory.ItemDefs[out] then
+                ok(false, "оружие " .. tostring(out) .. " не зарегистрировано")
+            end
+        end
+    end
+    ok(guns > 0, "в рецептах есть оружейные изделия", guns)
 end
 
 -- ================================================================

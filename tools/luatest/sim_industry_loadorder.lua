@@ -63,6 +63,21 @@ _G.LocalPlayer = function() return stub.makeEntity({ class = "player", isPlayer 
 _G.system = { IsLinux = function() return true end, IsWindows = function() return false end }
 _G.DermaMenu = function() return setmetatable({}, { __index = function() return function() end end }) end
 _G.Derma_StringRequest = function() end
+--[[ Клиентские конвары. Инвентарь и ещё несколько модулей создают их
+     при загрузке; без заглушки файлы падают не по своей вине. ]]
+_G.CreateClientConVar = function(name, default)
+    local value = tostring(default == nil and "" or default)
+    return {
+        GetString = function() return value end,
+        GetInt = function() return math.floor(tonumber(value) or 0) end,
+        GetFloat = function() return tonumber(value) or 0 end,
+        GetBool = function() return value == "1" or value == "true" end,
+        SetString = function(_, v) value = tostring(v) end,
+        SetInt = function(_, v) value = tostring(math.floor(tonumber(v) or 0)) end,
+        SetFloat = function(_, v) value = tostring(tonumber(v) or 0) end,
+        SetBool = function(_, v) value = v and "1" or "0" end,
+    }
+end
 -- Реестр сущностей: нужен общему файлу узлов, он объявляет классы.
 _G.scripted_ents = {
     Register = function() end,
@@ -142,7 +157,13 @@ end
      sim_gmod_syntax и так отмечает. Здесь берём ровно то, от чего
      зависят клиентские файлы индустрии: фреймворк, производительность
      и само ядро. Порядок по-прежнему алфавитный, как у GMod. ]]
-local ROOT_FILES   = sorted("lua/autorun/sh_00_grm_*.lua lua/autorun/sh_06_grm_performance.lua lua/autorun/sh_grm_industry*.lua")
+--[[ В список добавлены инвентарь и файл регистрации предметов —
+     именно в том порядке, в котором их грузит GMod. Это важно:
+     инвентарь ПЕРЕСОЗДАЁТ справочник предметов, поэтому регистрация
+     обязана стоять после него. ]]
+local ROOT_FILES   = sorted("lua/autorun/sh_00_grm_*.lua lua/autorun/sh_06_grm_performance.lua "
+    .. "lua/autorun/sh_grm_industry*.lua lua/autorun/sh_grm_inventory.lua "
+    .. "lua/autorun/zz_grm_industry_items.lua")
 local CLIENT_FILES = sorted("lua/autorun/client/cl_grm_industry*.lua")
 
 local function loadFile(path)
@@ -356,6 +377,60 @@ if labelHook then
 
     local good, err = pcall(labelHook)
     ok(good, "ПОДПИСИ НАД УЗЛАМИ РИСУЮТСЯ БЕЗ ОШИБКИ", err)
+end
+
+-- ================================================================
+print("\n=== 8. ПРЕДМЕТЫ ПРОИЗВОДСТВА ДОСТУПНЫ ИНВЕНТАРЮ ===")
+-- ================================================================
+--[[ Без этой проверки производство работало вхолостую.
+     GRM.Inventory.AddItem первым делом спрашивает GetItemDef и, если
+     предмета в справочнике нет, возвращает ВСЁ количество как «не
+     влезло». Игрок видел «Нет места в инвентаре» при пустом
+     инвентаре, а лом со станка не получал. ]]
+loadAll(CLIENT_FILES)
+ok(GRM.Inventory ~= nil, "инвентарь поднялся")
+ok(GRM.Inventory.ItemDefs ~= nil, "справочник предметов инвентаря есть")
+
+--[[ Файл регистрации обязан стоять ПОСЛЕ инвентаря: тот создаёт
+     ItemDefs перезаписью, поэтому ранняя регистрация будет выброшена.
+     Без этой проверки стенд зелёный, а на сервере — пусто. ]]
+local invPos, itemsPos
+for i, path in ipairs(ROOT_FILES) do
+    if path:find("sh_grm_inventory%.lua$") then invPos = i end
+    if path:find("zz_grm_industry_items%.lua$") then itemsPos = i end
+end
+ok(invPos ~= nil, "инвентарь есть в цепочке")
+ok(itemsPos ~= nil, "файл регистрации предметов есть в цепочке")
+ok(invPos and itemsPos and itemsPos > invPos,
+    "регистрация предметов грузится ПОСЛЕ инвентаря", tostring(invPos) .. " / " .. tostring(itemsPos))
+
+local I3 = GRM and GRM.Industry
+if I3 and I3.Items and GRM.Inventory and GRM.Inventory.ItemDefs then
+    local missing = {}
+    for id in pairs(I3.Items) do
+        if GRM.Inventory.ItemDefs[id] == nil then missing[#missing + 1] = id end
+    end
+    table.sort(missing)
+    ok(#missing == 0, "ВСЕ ПРЕДМЕТЫ ПРОИЗВОДСТВА ЗАРЕГИСТРИРОВАНЫ В ИНВЕНТАРЕ",
+        table.concat(missing, ", "))
+    ok(GRM.Inventory.ItemDefs["scrap_metal"] ~= nil, "металлолом описан для инвентаря")
+
+    -- Оружие из рецептов тоже должно попадать в руки.
+    local missingGuns = {}
+    for _, recipe in pairs(I3.Recipes or {}) do
+        local out = recipe.output
+        if out and out ~= "" and not I3.Items[out] and GRM.Inventory.ItemDefs[out] == nil then
+            missingGuns[#missingGuns + 1] = out
+        end
+    end
+    table.sort(missingGuns)
+    ok(#missingGuns == 0, "ОРУЖИЕ ИЗ РЕЦЕПТОВ ЗАРЕГИСТРИРОВАНО", table.concat(missingGuns, ", "))
+
+    -- И описание должно быть полным, иначе инвентарь покажет пустышку.
+    local def = GRM.Inventory.ItemDefs["scrap_metal"]
+    ok(def and def.name ~= nil, "у предмета есть название")
+    ok(def and tonumber(def.weight) ~= nil, "у предмета есть вес")
+    ok(def and def.maxStack ~= nil, "у предмета есть размер стака")
 end
 
 -- ================================================================

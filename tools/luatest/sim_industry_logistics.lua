@@ -132,6 +132,12 @@ load("lua/autorun/sh_grm_industry_container.lua")
 load("lua/autorun/server/sv_grm_industry.lua")
 load("lua/autorun/server/sv_grm_industry_logistics.lua")
 
+--[[ Регистрация предметов производства в инвентаре. Грузим её тем же
+     файлом, что работает на сервере: без неё строгий инвентарь стенда
+     отказывается принимать лом и изделия, и стенд краснеет ровно так,
+     как краснел живой сервер. ]]
+load("lua/autorun/zz_grm_industry_items.lua")
+
 local I = GRM.Industry
 local C = GRM.Container
 local L = I.Config.Logistics
