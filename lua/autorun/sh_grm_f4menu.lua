@@ -762,10 +762,52 @@ local function buildMenu()
     f.GRM_BanAllowed = true
     F4._frame = f
     f:SetTitle("")
-    f:SetSize(880, 640)
+
+    --[[ РАЗМЕР (заказ владельца 31.08: «не должно быть маленьким,
+         желательно побольше»).
+
+         Было жёстко 880x640 — на широком мониторе это марка посреди
+         экрана, справочник команд читался в узкую щель.
+
+         Теперь тянемся по экрану, но с ограничениями: не меньше
+         прежнего (на маленьком мониторе окно не должно вылезти за
+         границы) и не больше разумного, иначе на 4K вкладки
+         растянулись бы через весь экран и читать их пришлось бы,
+         водя головой. ]]
+    local FW = math.Clamp(math.floor(ScrW() * 0.78), 880, 1600)
+    local FH = math.Clamp(math.floor(ScrH() * 0.82), 640, 1000)
+    f:SetSize(FW, FH)
     f:Center()
     f:MakePopup()
     f:ShowCloseButton(false)
+
+    --[[ ПЛАВНОЕ ОТКРЫТИЕ.
+
+         Окно проявляется и слегка «подрастает» из 92% размера. Alpha
+         ведёт DFrame сам (AlphaTo), а масштаб считаем в Think: он
+         должен идти в такт кадрам, иначе видны ступеньки.
+
+         SetAlpha(0) до AlphaTo обязателен: иначе первый кадр
+         отрисуется полностью непрозрачным и появится вспышка. ]]
+    local OPEN_T = 0.18
+    f:SetAlpha(0)
+    f:AlphaTo(255, OPEN_T, 0)
+    local openedAt = SysTime()
+    local baseW, baseH = FW, FH
+    f.Think = function(self)
+        local t = math.Clamp((SysTime() - openedAt) / OPEN_T, 0, 1)
+        if t >= 1 then
+            -- Доехали: снимаем Think, чтобы не считать каждый кадр зря.
+            if self:GetWide() ~= baseW then self:SetSize(baseW, baseH) self:Center() end
+            self.Think = nil
+            return
+        end
+        -- Замедление к концу: ease-out, как у выезда инвентаря.
+        local e = 1 - (1 - t) * (1 - t) * (1 - t)
+        local k = 0.92 + 0.08 * e
+        self:SetSize(math.floor(baseW * k), math.floor(baseH * k))
+        self:Center()
+    end
     f.Paint = function(_, pw, ph)
         draw.RoundedBox(8, 0, 0, pw, ph, C.bg)
         draw.RoundedBoxEx(8, 0, 0, pw, 46, C.head, true, true, false, false)
@@ -775,9 +817,17 @@ local function buildMenu()
 
     local x = vgui.Create("DButton", f)
     x:SetText("X") x:SetFont("GRMF4_Title") x:SetTextColor(color_white)
-    x:SetPos(836, 8) x:SetSize(32, 28)
+    x:SetSize(32, 28)
     x.DoClick = function() f:Close() end
     x.Paint = function(self, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and C.red or Color(45, 52, 68)) end
+
+    --[[ Кнопка закрытия держится ПРАВОГО края, а не стоит по жёсткому
+         X=836 от прежнего размера 880. Окно теперь тянется по экрану и
+         ещё меняет размер при открытии — с фиксированной координатой
+         крестик уехал бы за границу и стал бы недоступен. ]]
+    f.PerformLayout = function(self, pw)
+        if IsValid(x) then x:SetPos(pw - 44, 9) end
+    end
 
     local sheet = vgui.Create("DPropertySheet", f)
     sheet:Dock(FILL)

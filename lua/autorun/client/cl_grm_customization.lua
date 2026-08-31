@@ -382,11 +382,8 @@ local function selectedAccessoryWorld()
     return pos, boneAng, equipped, ang
 end
 
-local GIZMO_AXES = {
-    x = { color = Color(235, 75, 75), vector = function(ang) return ang:Forward() end },
-    y = { color = Color(80, 210, 110), vector = function(ang) return ang:Right() end },
-    z = { color = Color(75, 145, 255), vector = function(ang) return ang:Up() end },
-}
+-- Оси, их цвета и геометрия колец живут в общем модуле GRM.Gizmo:
+-- держать здесь вторую копию значит однажды поправить только одну.
 
 local function gizmoGeometry(origin)
     local dist=EyePos():Distance(origin)
@@ -397,64 +394,29 @@ local function gizmoGeometry(origin)
     return math.Clamp(math.max(base,half+4),12,48),math.Clamp(math.max(base*0.78,half+2),10,42)
 end
 
+--[[ Выбор оси перемещения — общий модуль GRM.Gizmo.
+
+     Свой перебор здесь был недетерминированным (pairs по таблице с
+     ключами x/y/z): при равном расстоянии до курсора выигрывала
+     случайная ось. Отсюда жалоба «беру один, он вращает другой». ]]
 local function pickGizmoAxis(mx, my)
     local origin, boneAng = selectedAccessoryWorld()
-    if not origin then return end
-    local os = origin:ToScreen()
-    local bestAxis, bestDistance, bestDX, bestDY
-    for axis, data in pairs(GIZMO_AXES) do
-        local axisLength=gizmoGeometry(origin)
-        local es = (origin + data.vector(boneAng) * axisLength):ToScreen()
-        local dx, dy = es.x - os.x, es.y - os.y
-        local len2 = dx * dx + dy * dy
-        if len2 > 4 then
-            local t = math.Clamp(((mx - os.x) * dx + (my - os.y) * dy) / len2, 0, 1)
-            local px, py = os.x + dx * t, os.y + dy * t
-            local distance = math.sqrt((mx - px)^2 + (my - py)^2)
-            if distance <= 14 and (not bestDistance or distance < bestDistance) then
-                local len = math.sqrt(len2)
-                bestAxis, bestDistance, bestDX, bestDY = axis, distance, dx / len, dy / len
-            end
-        end
-    end
-    return bestAxis, bestDX, bestDY
+    if not origin or not GRM.Gizmo then return end
+    local axisLength = gizmoGeometry(origin)
+    return GRM.Gizmo.Pick("move", origin, boneAng, axisLength, mx, my)
 end
 
-local function rotationBasis(axis, ang)
-    if axis == "x" then return ang:Right(), ang:Up() end
-    if axis == "y" then return ang:Forward(), ang:Up() end
-    return ang:Forward(), ang:Right()
-end
+--[[ Выбор кольца вращения — общий модуль GRM.Gizmo.
 
-local function rotationRingPoint(origin, boneAng, axis, radians, radius)
-    local a, b = rotationBasis(axis, boneAng)
-    return origin + a * math.cos(radians) * radius + b * math.sin(radians) * radius
-end
-
+     Прошлый код проверял кольцо ЦЕЛИКОМ, вместе с дальней от камеры
+     половиной. Кольцо, повёрнутое ребром, вырождается в отрезок, и
+     его обратная сторона перехватывала клики у соседней оси. В модуле
+     отбирается только видимая половина. ]]
 local function pickRotationAxis(mx, my)
     local origin, boneAng = selectedAccessoryWorld()
-    if not origin then return end
-    local bestAxis, bestDistance, bestDX, bestDY
-    local segments=64;local _,radius=gizmoGeometry(origin)
-    for axis in pairs(GIZMO_AXES) do
-        local previous = rotationRingPoint(origin, boneAng, axis, 0, radius):ToScreen()
-        for i = 1, segments do
-            local current = rotationRingPoint(origin, boneAng, axis, math.pi * 2 * i / segments, radius):ToScreen()
-            local dx, dy = current.x - previous.x, current.y - previous.y
-            local len2 = dx * dx + dy * dy
-            if len2 > 1 then
-                local t = math.Clamp(((mx - previous.x) * dx + (my - previous.y) * dy) / len2, 0, 1)
-                local px, py = previous.x + dx * t, previous.y + dy * t
-                local distance = math.sqrt((mx - px)^2 + (my - py)^2)
-                if distance <= 11 and (not bestDistance or distance < bestDistance) then
-                    local len = math.sqrt(len2)
-                    bestAxis, bestDistance, bestDX, bestDY = axis, distance, dx / len, dy / len
-                end
-            end
-            previous = current
-        end
-    end
-    return bestAxis, bestDX, bestDY
+    if not origin or not GRM.Gizmo then return end
+    local _, radius = gizmoGeometry(origin)
+    return GRM.Gizmo.Pick("rotate", origin, boneAng, radius, mx, my)
 end
 
 local function pickActiveGizmo(mx, my)
@@ -465,27 +427,23 @@ end
 hook.Add("PostDrawTranslucentRenderables", "GRM_Customization_TransformGizmo", function(drawingDepth, drawingSkybox, drawing3DSkybox)
     if not editor.active or drawingDepth or drawingSkybox or drawing3DSkybox then return end
     local origin, boneAng = selectedAccessoryWorld()
-    if not origin then return end
-    render.SetColorMaterial()
-    render.DrawWireframeSphere(origin,1.6,8,8,Color(245,245,255),false)
-    if editor.gizmoMode == "rotate" then
-        local segments=64;local _,radius=gizmoGeometry(origin)
-        for axis, data in pairs(GIZMO_AXES) do
-            local previous = rotationRingPoint(origin, boneAng, axis, 0, radius)
-            for i = 1, segments do
-                local current = rotationRingPoint(origin, boneAng, axis, math.pi * 2 * i / segments, radius)
-                render.DrawLine(previous, current, data.color, false)
-                previous = current
-            end
-        end
-    else
-        local axisLength=gizmoGeometry(origin)
-        for _, data in pairs(GIZMO_AXES) do
-            local endpoint = origin + data.vector(boneAng) * axisLength
-            render.DrawLine(origin, endpoint, data.color, false)
-            render.DrawWireframeSphere(endpoint, 1.15, 7, 7, data.color, false)
-        end
+    if not origin or not GRM.Gizmo then return end
+    local move, radius = gizmoGeometry(origin)
+    local size = editor.gizmoMode == "rotate" and radius or move
+    -- Подсветку пересчитываем каждый кадр, пока ось не схвачена.
+    if not editor.gizmoAxis then
+        local mx, my = gui.MousePos()
+        editor.gizmoHover = GRM.Gizmo.Pick(editor.gizmoMode, origin, boneAng, size, mx, my)
     end
+    GRM.Gizmo.Draw(editor.gizmoMode, origin, boneAng, size, editor.gizmoHover, editor.gizmoAxis)
+end)
+
+hook.Add("HUDPaint", "GRM_Customization_GizmoLabel", function()
+    if not editor.active or not GRM.Gizmo then return end
+    local axis = editor.gizmoAxis or editor.gizmoHover
+    if not axis then return end
+    local mx, my = gui.MousePos()
+    GRM.Gizmo.DrawLabel(editor.gizmoMode, axis, mx, my)
 end)
 
 local function closeEditor(restore)

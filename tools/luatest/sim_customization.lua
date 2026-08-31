@@ -63,7 +63,14 @@ ok(has(client,"if IsValid(ply)then drawAccessories(ply)"),"opaque fallback draws
 ok(has(client,"entry.lastFrame~=FrameNumber()"),"single draw per frame prevents flicker")
 ok(has(client,"LerpVector") and has(client,"LerpAngle") and has(client,"FrameTime() * 14"),"local transform changes are visually smoothed")
 ok(has(client,"GRM_Customization_TransformGizmo") and has(client,"pickGizmoAxis"),"visible XYZ move gizmo arrows can be dragged")
-ok(has(client,"pickRotationAxis") and has(client,"rotationRingPoint") and has(client,'gizmoMode == "rotate"'),"rotation mode provides draggable colored axis rings")
+--[[ Проверяем ПО СМЫСЛУ, а не по имени удалённой функции.
+
+     Здесь стояла проверка на rotationRingPoint — локальную копию
+     построения точек кольца. 31.08 гизмо вынесен в общий модуль
+     GRM.Gizmo (одна логика на редактор аксессуаров и студию анимаций),
+     и локальный дубль удалён как мёртвый код. Сама возможность тянуть
+     кольца никуда не делась, поэтому проверяем её, а не имя. ]]
+ok(has(client,"pickRotationAxis") and has(client,'GRM.Gizmo.Pick("rotate"') and has(client,'gizmoMode == "rotate"'),"rotation mode provides draggable colored axis rings")
 ok(has(client,"ПЕРЕМЕЩЕНИЕ") and has(client,"ВРАЩЕНИЕ") and has(client,"editor.angleSliders"),"editor switches move/rotate controls")
 ok(has(client,"0.05,0.1,0.25,0.5,1") and has(client,"0.25,0.5,1,2.5,5"),"fine controls have separate movement and rotation steps")
 ok(has(client,"Не уничтожаем весь render cache при каждом Save"),"repeat saves preserve render entity instead of disappearing")

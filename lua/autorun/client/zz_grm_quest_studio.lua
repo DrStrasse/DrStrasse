@@ -485,6 +485,9 @@ function Q.OpenGraphStudio(data)
     local defs = data.definitions or {}
     local work, blocks, selected, linking = nil, {}, 0, nil
     local rebuildCards, rebuildProps, rebuildList
+    -- Объявлены заранее: их зовёт addBlock, объявленный выше по файлу.
+    -- Без этого имена были бы глобальными (nil на момент вызова).
+    local scrollToBlock, findFreeSpot
 
     local f = vgui.Create("DFrame")
     Q.StudioFrame, Q.AdminFrame = f, f
@@ -535,13 +538,102 @@ function Q.OpenGraphStudio(data)
             "GRMQS_Small", 12, h / 2, COL.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
 
+    local CANVAS_W, CANVAS_H = 3000, 2000
+
     local canvas = vgui.Create("DPanel", mid)
     canvas:SetPos(0, 36)
-    canvas:SetSize(3000, 2000)
+    canvas:SetSize(CANVAS_W, CANVAS_H)
     canvas:SetPaintBackground(false)
+
+    --[[ ПАНОРАМИРОВАНИЕ ХОЛСТА (жалоба владельца 31.08: «вынос полос и
+         блоков за пределы видимости»).
+
+         КОРЕНЬ ПРОБЛЕМЫ. Холст 3000x2000 лежал в панели Dock(FILL)
+         БЕЗ КАКОЙ-ЛИБО ПРОКРУТКИ. Видно было только левый верхний угол
+         размером с окно (~870x900). Всё, что оказывалось правее или
+         ниже, пропадало НАВСЕГДА: доскроллить туда было нечем, мышью
+         не достать, вернуть блок обратно невозможно.
+
+         Именно поэтому награда и ачивка «терялись»: блоки ставились по
+         сетке вниз и вправо и уезжали за видимую границу.
+
+         Теперь холст можно двигать: ПКМ или средняя кнопка по пустому
+         месту — тянуть, колесо — вертикально, Shift+колесо —
+         горизонтально. Смещение всегда в пределах холста, улететь в
+         пустоту нельзя. ]]
+    local panX, panY = 0, 0
+
+    local function viewSize()
+        return mid:GetWide(), math.max(1, mid:GetTall() - 36)
+    end
+
+    local function applyPan()
+        local vw, vh = viewSize()
+        -- Не пускаем холст дальше его краёв: справа и снизу должна
+        -- оставаться геометрия, а не пустота за пределами холста.
+        local minX = math.min(0, vw - CANVAS_W)
+        local minY = math.min(0, vh - CANVAS_H)
+        panX = math.Clamp(panX, minX, 0)
+        panY = math.Clamp(panY, minY, 0)
+        canvas:SetPos(panX, 36 + panY)
+    end
+    applyPan()
+
+    --[[ Показать блок. Если он вне видимой области, подвинуть холст так,
+         чтобы карточка попала в неё целиком, с небольшим полем. ]]
+    scrollToBlock = function(b)
+        if not b then return end
+        local vw, vh = viewSize()
+        local M = 40
+        local bx, by = b.x or 0, b.y or 0
+        if bx + panX < M then panX = M - bx end
+        if bx + CARD_W + panX > vw - M then panX = vw - M - bx - CARD_W end
+        if by + panY < M then panY = M - by end
+        if by + CARD_H + panY > vh - M then panY = vh - M - by - CARD_H end
+        applyPan()
+    end
 
     local function blockByUID(uid)
         for _, b in ipairs(blocks) do if b.uid == tostring(uid) then return b end end
+    end
+
+    --[[ Свободное место под новый блок.
+
+         Ищем по сетке в ВИДИМОЙ сейчас области: блок должен появиться
+         там, где игрок смотрит, а не за краем. Клетка считается занятой,
+         если карточка пересекается с уже стоящей (с запасом на зазор). ]]
+    findFreeSpot = function()
+        local vw, vh = viewSize()
+        local stepX, stepY = CARD_W + 28, CARD_H + 24
+        local startX = math.max(20, -panX + 24)
+        local startY = math.max(20, -panY + 24)
+        local function occupied(x, y)
+            for _, ob in ipairs(blocks) do
+                local ox, oy = ob.x or 0, ob.y or 0
+                if x < ox + CARD_W + 12 and x + CARD_W + 12 > ox
+                    and y < oy + CARD_H + 12 and y + CARD_H + 12 > oy then
+                    return true
+                end
+            end
+            return false
+        end
+        -- Сначала пробуем уместиться в видимом окне.
+        local cols = math.max(1, math.floor((vw - 48) / stepX))
+        local rows = math.max(1, math.floor((vh - 48) / stepY))
+        for r = 0, rows - 1 do
+            for c = 0, cols - 1 do
+                local x, y = startX + c * stepX, startY + r * stepY
+                if not occupied(x, y) then return x, y end
+            end
+        end
+        -- Видимое занято — ищем по всему холсту.
+        for y = 20, CANVAS_H - CARD_H, stepY do
+            for x = 20, CANVAS_W - CARD_W, stepX do
+                if not occupied(x, y) then return x, y end
+            end
+        end
+        -- Совсем некуда: ставим в начало, но внутри холста.
+        return 40, 40
     end
 
     --[[ Порты. Выход справа, вход слева. У реплики с ответами — по порту
@@ -753,8 +845,12 @@ function Q.OpenGraphStudio(data)
             grip.Think = function(self)
                 if self._drag and input.IsMouseDown(MOUSE_LEFT) then
                     local px, py = canvas:CursorPos()
-                    b.x = math.max(0, px - (self._ox or 0))
-                    b.y = math.max(0, py - (self._oy or 0))
+                    --[[ Ограничиваем ВСЕ четыре стороны. Раньше стояло
+                         только math.max(0, ...) — слева блок упирался в
+                         край, а вправо и вниз уезжал за пределы холста,
+                         откуда его было не достать. ]]
+                    b.x = math.Clamp(px - (self._ox or 0), 0, CANVAS_W - CARD_W)
+                    b.y = math.Clamp(py - (self._oy or 0), 0, CANVAS_H - CARD_H)
                     card:SetPos(b.x, b.y)
                 elseif self._drag then self._drag = false end
             end
@@ -785,9 +881,48 @@ function Q.OpenGraphStudio(data)
         end
     end
 
-    canvas.OnMouseReleased = function() linking = nil end
-    canvas.Think = function()
+    --[[ Тянуть холст ПКМ или средней кнопкой. Левая занята связями и
+         перетаскиванием карточек, поэтому панорамирование — на другой
+         кнопке, иначе одно мешало бы другому. ]]
+    canvas.OnMousePressed = function(self, mc)
+        if mc == MOUSE_RIGHT or mc == MOUSE_MIDDLE then
+            local mx, my = gui.MousePos()
+            self._pan, self._px, self._py = true, mx, my
+            self._sx, self._sy = panX, panY
+            self:MouseCapture(true)
+        end
+    end
+    canvas.OnMouseReleased = function(self, mc)
+        linking = nil
+        if self._pan then
+            self._pan = false
+            self:MouseCapture(false)
+        end
+    end
+    canvas.OnMouseWheeled = function(_, delta)
+        -- Shift — горизонталь: граф растёт вправо, и ходить по нему
+        -- вдоль приходится чаще, чем вниз.
+        if input.IsKeyDown(KEY_LSHIFT) or input.IsKeyDown(KEY_RSHIFT) then
+            panX = panX + delta * 90
+        else
+            panY = panY + delta * 90
+        end
+        applyPan()
+        return true
+    end
+    canvas.Think = function(self)
         if linking and not input.IsMouseDown(MOUSE_LEFT) then linking = nil end
+        if self._pan then
+            if input.IsMouseDown(MOUSE_RIGHT) or input.IsMouseDown(MOUSE_MIDDLE) then
+                local mx, my = gui.MousePos()
+                panX = (self._sx or 0) + (mx - (self._px or mx))
+                panY = (self._sy or 0) + (my - (self._py or my))
+                applyPan()
+            else
+                self._pan = false
+                self:MouseCapture(false)
+            end
+        end
     end
 
     --[[ ПАЛИТРА. Кнопка добавляет блок в центр видимой области холста:
@@ -875,12 +1010,31 @@ function Q.OpenGraphStudio(data)
             uid = kind == "achieve" and "achieve" or kind
         end
 
+        --[[ МЕСТО ДЛЯ НОВОГО БЛОКА (жалоба владельца 31.08: «проблемы с
+             размещением блока наград и ачивок и их соединением с
+             другими блоками»).
+
+             Раньше координата была ЖЁСТКОЙ: x = 320, y = 120 + шаг по
+             остатку от деления на 5. Шестой блок ложился ровно на
+             первый, седьмой — на второй и так далее. Награда и ачивка
+             добавляются последними, поэтому именно они регулярно
+             оказывались ПОД уже стоящим блоком: карточка невидима,
+             порт связи накрыт чужой карточкой, соединить нечем.
+
+             Теперь ищем свободное место сеткой: идём по колонкам и
+             строкам и берём первую клетку, где нет пересечения с уже
+             стоящими блоками. Если всё занято — ставим в конец, но
+             внутри холста. ]]
+        local nx, ny = findFreeSpot()
         blocks[#blocks + 1] = {
             uid = uid,
-            kind = kind, data = data, x = 320, y = 120 + (#blocks % 5) * 40, links = {},
+            kind = kind, data = data, x = nx, y = ny, links = {},
         }
         selected = #blocks
         rebuildCards() rebuildProps()
+        -- Показать только что добавленный блок: если он оказался за
+        -- краем видимой области, игрок решит, что кнопка не сработала.
+        if scrollToBlock then scrollToBlock(blocks[#blocks]) end
     end
 
     -----------------------------------------------------------------
@@ -1700,7 +1854,24 @@ function Q.OpenGraphStudio(data)
         work.rewards = work.rewards or { money = 0, items = {} }
         work.cutscene = work.cutscene or { accept = {}, complete = {} }
         blocks = Q.QuestToBlocks(work)
+
+        --[[ СПАСЕНИЕ УЕХАВШИХ БЛОКОВ.
+
+             До появления границ карточку можно было утащить далеко за
+             холст, и координата такой уехала в сохранённый квест. При
+             открытии блок оказывался вне досягаемости: не видно, не
+             схватить, связь не построить.
+
+             Возвращаем всё в пределы холста при загрузке — иначе уже
+             сломанные квесты остались бы сломанными навсегда. ]]
+        for _, b in ipairs(blocks) do
+            b.x = math.Clamp(tonumber(b.x) or 0, 0, CANVAS_W - CARD_W)
+            b.y = math.Clamp(tonumber(b.y) or 0, 0, CANVAS_H - CARD_H)
+        end
+
         selected = 0
+        panX, panY = 0, 0
+        applyPan()
         rebuildCards() rebuildProps() rebuildList()
     end
 
