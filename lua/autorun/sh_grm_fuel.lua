@@ -441,115 +441,188 @@ if SERVER then
         return F.AttachHose(pump, veh, lpos)
     end
 
-    function F.StopNozzle(wep, msg)
-        if not IsValid(wep) then return end
-        local pump = wep:GetNWEntity("GRM_Pump")
-        local key = "GRM_Nozzle_" .. wep:EntIndex()
-        if timer.Exists(key) then timer.Remove(key) end
-        wep:SetNWBool("Inserted", false)
-        wep:SetNWEntity("GRM_Veh", NULL)
-        if IsValid(pump) then
-            pump:SetBusy(false)
-            pump:SetNWEntity("NozzleWep", wep)
-            if IsValid(wep:GetOwner()) then F.ClearHose(pump) end
+    --[[ ШЛАНГ ЖИВЁТ НА КОЛОНКЕ (заказ владельца 31.08: «шланг не должен
+         сам выходить из бака и не должен отдаваться игроку»).
+
+         КАК БЫЛО. Колонка выдавала игроку ОРУЖИЕ-пистолет, он носил
+         его к машине и вставлял в бак. Таймер заливки каждой итерацией
+         проверял, не отошёл ли игрок:
+
+             ply:GetPos():DistToSqr(pump:GetPos()) > 360²  → «шланг натянулся»
+             ply:GetPos():DistToSqr(порт)         > 190²  → «отошёл от бака»
+
+         То есть шланг вылетал из бака САМ, стоило игроку сделать шаг.
+         А пистолет в руках — это и есть «отдаётся игроку»: предмет,
+         который можно выбросить, уронить, унести и потерять.
+
+         КАК ТЕПЕРЬ. Игрок ничего не получает в руки. Он подходит к
+         колонке и жмёт E — шланг сам тянется к горловине и остаётся
+         там. Заливка идёт БЕЗ игрока: он может сидеть в машине,
+         отойти или уехать по делам. Шланг из бака выходит только
+         осознанно — повторным E на колонке, — либо по физике, если
+         машину утащили дальше длины шланга. ]]
+
+    --- Куда цеплять шланг: машина, на которую смотрит игрок, иначе
+    --  ближайшая с горловиной в пределах длины шланга.
+    function F.FindTarget(pump, ply)
+        if not IsValid(pump) then return nil, "Колонка не найдена" end
+        local maxLen = F.HoseLength or 360
+        local anchor = pump:LocalToWorld(Vector(14, -10, 22))
+        local VK = GRM.VehicleKeys or _G.VK
+        local function isVeh(e)
+            if not IsValid(e) then return false end
+            if VK and VK.IsVehicle then return VK.IsVehicle(e) end
+            return F.IsRealVehicle(e)
         end
-        local ply = wep:GetOwner()
-        if msg and IsValid(ply) and GRM.Notify then GRM.Notify(ply, msg, 180, 210, 140) end
+        local function reachable(veh)
+            if not isVeh(veh) then return nil end
+            veh = F.RootVehicle(veh) or veh
+            if F.FillPort(veh):DistToSqr(anchor) > maxLen * maxLen then return nil end
+            return veh
+        end
+
+        -- 1) та, на которую смотрит игрок
+        if IsValid(ply) and ply.GetEyeTrace then
+            local ok, tr = pcall(function() return ply:GetEyeTrace() end)
+            if ok and istable(tr) then
+                local hit = reachable(tr.Entity)
+                if hit then return hit end
+            end
+        end
+        -- 2) ближайшая по горловине
+        local best, bestD
+        for _, e in ipairs(ents.FindInSphere(pump:GetPos(), maxLen + 220)) do
+            local hit = reachable(e)
+            if hit then
+                local d = F.FillPort(hit):DistToSqr(anchor)
+                if not bestD or d < bestD then best, bestD = hit, d end
+            end
+        end
+        if best then return best end
+        return nil, "Рядом нет машины с доступной горловиной"
     end
 
-    function F.ReturnNozzle(wep, pump, ply)
-        F.StopNozzle(wep)
-        if IsValid(pump) then
-            F.ClearHose(pump)
-            pump:SetBusy(false)
-            pump:SetUser(NULL)
-            pump:SetNWEntity("NozzleWep", NULL)
-            pump:SetSessionL(0)
-            pump:SetSessionPay(0)
-        end
-        if IsValid(wep) then wep:Remove() end
-        if IsValid(ply) and GRM.Notify then GRM.Notify(ply, "Пистолет на колонке.", 180, 210, 140) end
-    end
-
-    function F.GiveNozzle(pump, ply)
-        if not (IsValid(pump) and IsValid(ply)) then return end
-        if ply:HasWeapon("weapon_grm_fuel_nozzle") then
-            if GRM.Notify then GRM.Notify(ply, "Пистолет уже в руках.", 255, 180, 80) end
-            return
-        end
-        local wep = ply:Give("weapon_grm_fuel_nozzle")
-        if not IsValid(wep) then return end
-        wep:SetNWEntity("GRM_Pump", pump)
-        ply:SelectWeapon("weapon_grm_fuel_nozzle")
-        pump:SetUser(ply)
-        pump:SetNWEntity("NozzleWep", wep)
-        pump:SetSessionL(0)
-        pump:SetSessionPay(0)
-        F.ClearHose(pump)
-        if GRM.Notify then GRM.Notify(ply, "Пистолет снят. Вставь в бак у заднего крыла.", 120, 220, 140) end
-    end
-
-    function F.StartNozzle(wep, pump, veh, ply)
-        if not (IsValid(wep) and IsValid(pump) and IsValid(veh) and IsValid(ply)) then return end
+    --- Вставить шланг в бак и начать заливку. Пистолет игроку не выдаётся.
+    function F.PlugHose(pump, veh, ply)
+        if not IsValid(pump) then return false, "Колонка не найдена" end
+        if IsValid(pump.GRMHoseCar) then return false, "Шланг уже в баке" end
+        if not IsValid(veh) then return false, "Машина не найдена" end
         veh = F.RootVehicle(veh) or veh
         F.ApplyNW(veh)
+
         local need = veh:GetNWString("GRM_FuelType", "petrol")
         if need ~= pump:GetFuelKind() then
-            if GRM.Notify then GRM.Notify(ply, "Не тот тип. Нужен: " .. tostring((F.Types or {})[need] or need), 255, 120, 80) end
-            return
+            return false, "Не тот тип. Нужен: " .. tostring((F.Types or {})[need] or need)
         end
-        wep:SetNWBool("Inserted", true)
-        wep:SetNWEntity("GRM_Veh", veh)
+        if not F.HoseToTank(pump, veh) then
+            return false, "Шланг не дотягивается до горловины"
+        end
+
+        pump.GRMHoseCar = veh
+        pump.GRMHoseBy = ply
+        pump.GRMFuelFull, pump.GRMFuelNoMoney = nil, nil
+        if pump.SetHoseCar then pump:SetHoseCar(veh) end
         pump:SetBusy(true)
         pump:SetSessionL(0)
         pump:SetSessionPay(0)
         pump:SetTankNow(veh:GetNWFloat("GRM_Fuel", 0))
         pump:SetTankMax(veh:GetNWFloat("GRM_FuelMax", F.TankSize(veh)))
-        -- Шланг крепим к горловине бака, а не «куда-то в машину».
-        F.HoseToTank(pump, veh)
         pump:EmitSound("ambient/water/leak_1.wav", 50, 95)
-        local key = "GRM_Nozzle_" .. wep:EntIndex()
-        timer.Create(key, 0.35, 0, function()
-            if not (IsValid(wep) and IsValid(pump) and IsValid(veh) and IsValid(ply)) then
-                F.StopNozzle(wep)
-                return
-            end
-            if not wep:GetNWBool("Inserted") then return end
-            if ply:GetPos():DistToSqr(pump:GetPos()) > (F.HoseLength or 360) * (F.HoseLength or 360) then
-                F.StopNozzle(wep, "Шланг натянулся — пистолет вырвало.")
-                return
-            end
-            local portPos = F.FillPort(veh)
-            if ply:GetPos():DistToSqr(portPos) > 190 * 190 then
-                F.StopNozzle(wep, "Отошёл от бака.")
-                return
-            end
-            local price = F.PriceOf(pump)
-            if GRM.HasMoney and not GRM.HasMoney(ply, price) then
-                F.StopNozzle(wep, "Деньги кончились.")
-                return
-            end
-            local added = select(1, F.AddLiters(veh, 1.15, pump:GetFuelKind())) or 0
-            if added <= 0 then
-                F.StopNozzle(wep, "Бак полный.")
-                return
-            end
-            local cost = math.ceil(price * added)
-            if GRM.TakeMoney then GRM.TakeMoney(ply, cost, "Заправка") end
-            local owner = pump:GetOwnerKey() or ""
-            if owner ~= "" then
-                pump:SetCash(pump:GetCash() + cost)
-            end
-            pump:SetSessionL((pump:GetSessionL() or 0) + added)
-            pump:SetSessionPay((pump:GetSessionPay() or 0) + cost)
-            pump:SetTankNow(veh:GetNWFloat("GRM_Fuel", 0))
-            pump:SetTankMax(veh:GetNWFloat("GRM_FuelMax", F.TankSize()))
-            wep:SetNWFloat("SessL", pump:GetSessionL())
-            wep:SetNWFloat("SessPay", pump:GetSessionPay())
-            wep:SetNWFloat("TankNow", pump:GetTankNow())
-            wep:SetNWFloat("TankMax", pump:GetTankMax())
+        timer.Create("GRM_Fuel_Pump_" .. pump:EntIndex(), 0.35, 0, function()
+            F.PumpTick(pump)
         end)
-        if GRM.Notify then GRM.Notify(ply, "Пистолет в баке. Идёт заливка.", 120, 220, 140) end
+        return true
+    end
+
+    --[[ ОДИН ТАКТ ЗАЛИВКИ.
+
+         Здесь нет ни одной проверки положения ИГРОКА — ровно из-за них
+         шланг и вылетал из бака сам. Заливка прекращается только по
+         делу:
+
+           • бак полон        — шланг ОСТАЁТСЯ в баке, ждёт человека;
+           • деньги кончились — шланг ОСТАЁТСЯ в баке;
+           • машина пропала   — шланга больше не существует;
+           • машину утащили дальше длины шланга — сорвало по физике.
+
+         В первых двух случаях колонка просто перестаёт качать и
+         сообщает об этом один раз: убирает шланг человек, а не таймер. ]]
+    function F.PumpTick(pump)
+        if not IsValid(pump) then return end
+        local veh = pump.GRMHoseCar
+        if not IsValid(veh) then
+            F.ForgetHose(pump)
+            return
+        end
+        -- машину утащили дальше шланга — это физика, а не «само выпало»
+        local anchor = pump:LocalToWorld(Vector(14, -10, 22))
+        local maxLen = F.HoseLength or 360
+        if F.FillPort(veh):DistToSqr(anchor) > maxLen * maxLen then
+            F.UnplugHose(pump, nil, "Машину утащили — шланг сорвало.")
+            return
+        end
+
+        local ply = pump.GRMHoseBy
+        local price = F.PriceOf(pump)
+        if not IsValid(ply) then return end   -- игрок вышел: шланг ждёт в баке
+        if GRM.HasMoney and not GRM.HasMoney(ply, price) then
+            if not pump.GRMFuelNoMoney then
+                pump.GRMFuelNoMoney = true
+                pump:SetBusy(false)
+                if GRM.Notify then GRM.Notify(ply,
+                    "Деньги кончились. Шланг в баке — убери его на колонке.", 255, 180, 80) end
+            end
+            return
+        end
+
+        local added = select(1, F.AddLiters(veh, 1.15, pump:GetFuelKind())) or 0
+        if added <= 0 then
+            if not pump.GRMFuelFull then
+                pump.GRMFuelFull = true
+                pump:SetBusy(false)
+                if GRM.Notify then GRM.Notify(ply,
+                    "Бак полон. Шланг в баке — убери его на колонке.", 120, 220, 140) end
+            end
+            return
+        end
+
+        local cost = math.ceil(price * added)
+        if GRM.TakeMoney then GRM.TakeMoney(ply, cost, "Заправка") end
+        local owner = pump:GetOwnerKey() or ""
+        if owner ~= "" then pump:SetCash(pump:GetCash() + cost) end
+        pump:SetSessionL((pump:GetSessionL() or 0) + added)
+        pump:SetSessionPay((pump:GetSessionPay() or 0) + cost)
+        pump:SetTankNow(veh:GetNWFloat("GRM_Fuel", 0))
+        pump:SetTankMax(veh:GetNWFloat("GRM_FuelMax", F.TankSize(veh)))
+    end
+
+    --- Снять учёт шланга, не трогая деньги (машина пропала).
+    function F.ForgetHose(pump)
+        if not IsValid(pump) then return end
+        timer.Remove("GRM_Fuel_Pump_" .. pump:EntIndex())
+        F.ClearHose(pump)
+        pump.GRMHoseCar, pump.GRMHoseBy = nil, nil
+        pump.GRMFuelFull, pump.GRMFuelNoMoney = nil, nil
+        if pump.SetHoseCar then pump:SetHoseCar(NULL) end
+        pump:SetBusy(false)
+    end
+
+    --[[ УБРАТЬ ШЛАНГ ИЗ БАКА.
+
+         Только осознанно: кнопкой на колонке. Ни таймер, ни расстояние
+         до игрока сюда не ведут — иначе это снова «шланг сам вышел». ]]
+    function F.UnplugHose(pump, ply, msg)
+        if not IsValid(pump) then return false end
+        local who = IsValid(ply) and ply or pump.GRMHoseBy
+        local sess, pay = pump:GetSessionL() or 0, pump:GetSessionPay() or 0
+        F.ForgetHose(pump)
+        pump:SetSessionL(0)
+        pump:SetSessionPay(0)
+        if msg and IsValid(who) and GRM.Notify then GRM.Notify(who, msg, 255, 200, 120) end
+        if sess > 0 and IsValid(who) and GRM.Notify then
+            GRM.Notify(who, ("Залито %.1f л на %.0f GRM."):format(sess, pay), 120, 220, 140)
+        end
+        return true
     end
 
     local function nearbyPumps(origin, radius)
@@ -755,7 +828,7 @@ if SERVER then
         if IsValid(ply) and ply:GetPos():DistToSqr(pump:GetPos()) > 280 * 280 and not ply:IsSuperAdmin() then
             return false, "Подойдите ближе"
         end
-        F.ClearHose(pump)
+        if IsValid(pump.GRMHoseCar) then F.UnplugHose(pump) else F.ForgetHose(pump) end
         local pos = pump:GetPos()
         if GRM.Perm and GRM.Perm.Remove then
             pcall(GRM.Perm.Remove, ply, pump, false)

@@ -19,30 +19,28 @@ local function sag(a, b, segs)
     return out
 end
 
+--[[ ШЛАНГ РИСУЕТСЯ ОТ КОЛОНКИ К ГОРЛОВИНЕ.
+
+     Раньше конец шланга был привязан к пистолету в руках игрока:
+     пошёл — и шланг пошёл за тобой, а из бака вылетел. Теперь шланг
+     лежит на колонке: либо висит на крючке, либо тянется к горловине
+     той машины, в чей бак он вставлен. ]]
 function ENT:Draw()
     self:DrawModel()
-    local wep = self:GetNWEntity("NozzleWep")
-    if IsValid(wep) then
-        local dest
-        if wep:GetNWBool("Inserted") then
-            local veh = wep:GetNWEntity("GRM_Veh")
-            dest = (IsValid(veh) and GRM.Fuel and GRM.Fuel.TankWorld) and GRM.Fuel.TankWorld(veh)
-                or (IsValid(veh) and veh:WorldSpaceCenter())
-        else
-            local ply = wep:GetOwner()
-            if IsValid(ply) then
-                local att = ply:LookupAttachment("anim_attachment_RH")
-                local a = att and att > 0 and ply:GetAttachment(att)
-                dest = a and a.Pos or (ply:GetShootPos() + ply:GetRight() * 8 - ply:GetUp() * 12)
-            end
-        end
-        if dest then
-            local a = self:LocalToWorld(Vector(14, -10, 22))
-            local pts = sag(a, dest, 14)
-            render.SetMaterial(mat())
-            for i = 1, #pts - 1 do
-                render.DrawBeam(pts[i], pts[i + 1], 3.4, 0, 1, Color(28, 24, 20, 255))
-            end
+    local a = self:LocalToWorld(Vector(14, -10, 22))
+    local dest
+    local car = self.GetHoseCar and self:GetHoseCar() or nil
+    if IsValid(car) then
+        dest = (GRM.Fuel and GRM.Fuel.FillPort) and GRM.Fuel.FillPort(car)
+            or car:WorldSpaceCenter()
+    else
+        dest = self:LocalToWorld(Vector(6, -12, 4))   -- крючок на колонке
+    end
+    if dest then
+        local pts = sag(a, dest, 14)
+        render.SetMaterial(mat())
+        for i = 1, #pts - 1 do
+            render.DrawBeam(pts[i], pts[i + 1], 3.4, 0, 1, Color(28, 24, 20, 255))
         end
     end
     local lp = LocalPlayer()
@@ -68,7 +66,8 @@ function ENT:Draw()
             draw.SimpleText(string.format("бак  %.0f / %.0f л", now, mx), "DermaDefault", 0, 50, Color(200, 210, 220), TEXT_ALIGN_CENTER)
         else
             local own = self:GetOwnerKey() or ""
-            local hint = IsValid(wep) and "шланг снят  ·  E повесить" or "E — пистолет   SHIFT+E — касса"
+            local hint = IsValid(car) and "шланг в баке  ·  E убрать"
+                or "E — заправить   SHIFT+E — касса"
             draw.SimpleText(hint, "DermaDefault", 0, 4, Color(200, 210, 220), TEXT_ALIGN_CENTER)
             draw.SimpleText(own ~= "" and "частная колонка" or "свободна · можно выкупить", "DermaDefault", 0, 24, Color(140, 160, 180), TEXT_ALIGN_CENTER)
         end

@@ -8,6 +8,7 @@ ENT.AdminSpawnable = true
 function ENT:SetupDataTables()
     self:NetworkVar("String", 0, "FuelKind")
     self:NetworkVar("Entity", 0, "User")
+    self:NetworkVar("Entity", 1, "HoseCar")   -- машина, в чьём баке шланг
     self:NetworkVar("Bool", 0, "Busy")
     self:NetworkVar("String", 1, "OwnerKey")
     self:NetworkVar("String", 2, "StationID")

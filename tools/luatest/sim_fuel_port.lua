@@ -82,7 +82,12 @@ os.time = function() return 1700000000 end
 hook = { _t = {} }
 function hook.Add(e, i, f) hook._t[e] = hook._t[e] or {}; hook._t[e][i] = f end
 function hook.Run(e, ...) end
-timer = { Simple = function(_, f) f() end, Create = function() end, Remove = function() end, Exists = function() return false end }
+timer = { _t = {},
+    Simple = function(_, f) f() end,
+    Create = function(id, delay, reps, fn) timer._t[id] = fn end,
+    Remove = function(id) timer._t[id] = nil end,
+    Exists = function(id) return timer._t[id] ~= nil end }
+NULL = { _valid = false }
 concommand = { Add = function() end }
 util = { AddNetworkString = function() end, TableToJSON = function() return "[]" end,
     JSONToTable = function() return {} end }
@@ -90,8 +95,17 @@ file = { Exists = function() return false end, Read = function() return "" end,
     Write = function() end, CreateDir = function() end }
 net = setmetatable({}, { __index = function() return function() return "" end end })
 game = { GetMap = function() return "rp_city" end }
-ents = { FindByClass = function() return {} end, FindInSphere = function() return {} end,
-    GetAll = function() return {} end, Create = function() return { _valid = false } end }
+local WORLD = {}
+ents = { FindByClass = function() return {} end,
+    FindInSphere = function(pos, r)
+        local o = {}
+        for _, e in ipairs(WORLD) do
+            if e._valid ~= false and e:GetPos():DistToSqr(pos) <= r * r then o[#o + 1] = e end
+        end
+        return o
+    end,
+    GetAll = function() return WORLD end,
+    Create = function() return { _valid = false } end }
 
 -- веревки: считаем, сколько раз шланг реально натянули
 local ROPES, LASTROPE = 0, nil
@@ -101,7 +115,21 @@ constraint = {
 }
 
 GRM = { Perf = {} }
-GRM.Notify = function() end
+local NOTES, WALLET = {}, {}
+GRM.Notify = function(p, msg) NOTES[#NOTES + 1] = tostring(msg) end
+GRM.HasMoney = function(p, n) return (WALLET[p] or 0) >= (n or 0) end
+GRM.TakeMoney = function(p, n) WALLET[p] = (WALLET[p] or 0) - (n or 0) end
+GRM.GiveMoney = function(p, n) WALLET[p] = (WALLET[p] or 0) + (n or 0) end
+local function mkPlayer(key, money)
+    local p = { _valid = true, _key = key, _pos = Vector(0, 0, 0) }
+    p.GetPos = function(s) return s._pos end
+    p.Nick = function() return key end
+    p.IsSuperAdmin = function() return false end
+    p.GetEyeTrace = function() return { Entity = nil, HitPos = Vector(0, 0, 0) } end
+    p.KeyDown = function() return false end
+    WALLET[p] = money or 0
+    return p
+end
 GRM.Vehicles = {
     EnsureUID = function() end,
     UID = function(e) return istable(e) and e._uid or "" end,
@@ -158,15 +186,37 @@ local function mkCar(opts)
     return c
 end
 
-local function mkPumpAt(pos)
+local pumpSeq = 0
+local function mkPumpAt(pos, kind)
+    pumpSeq = pumpSeq + 1
     local p = {
-        _valid = true, _pos = pos, _nw = {},
-        GetClass = function() return "grm_fuel_pump" end,
-        GetPos = function(s) return s._pos end,
-        LocalToWorld = function(s, v) return Vector(s._pos.x + v.x, s._pos.y + v.y, s._pos.z + v.z) end,
-        WorldToLocal = function(s, v) return Vector(v.x - s._pos.x, v.y - s._pos.y, v.z - s._pos.z) end,
-        GetFuelKind = function() return "petrol" end,
+        _valid = true, _pos = pos, _nw = {}, _idx = pumpSeq,
+        _busy = false, _sessL = 0, _sessPay = 0, _cash = 0, _owner = "",
+        _tankNow = 0, _tankMax = 100, _hoseCar = nil, _kind = kind or "petrol",
     }
+    p.GetClass = function() return "grm_fuel_pump" end
+    p.EntIndex = function(s) return s._idx end
+    p.GetPos = function(s) return s._pos end
+    p.LocalToWorld = function(s, v) return Vector(s._pos.x + v.x, s._pos.y + v.y, s._pos.z + v.z) end
+    p.WorldToLocal = function(s, v) return Vector(v.x - s._pos.x, v.y - s._pos.y, v.z - s._pos.z) end
+    p.GetFuelKind = function(s) return s._kind end
+    p.GetBusy = function(s) return s._busy end
+    p.SetBusy = function(s, v) s._busy = v and true or false end
+    p.GetSessionL = function(s) return s._sessL end
+    p.SetSessionL = function(s, v) s._sessL = tonumber(v) or 0 end
+    p.GetSessionPay = function(s) return s._sessPay end
+    p.SetSessionPay = function(s, v) s._sessPay = tonumber(v) or 0 end
+    p.GetTankNow = function(s) return s._tankNow end
+    p.SetTankNow = function(s, v) s._tankNow = tonumber(v) or 0 end
+    p.GetTankMax = function(s) return s._tankMax end
+    p.SetTankMax = function(s, v) s._tankMax = tonumber(v) or 100 end
+    p.GetOwnerKey = function(s) return s._owner end
+    p.GetCash = function(s) return s._cash end
+    p.SetCash = function(s, v) s._cash = tonumber(v) or 0 end
+    p.GetHoseCar = function(s) return s._hoseCar end
+    p.SetHoseCar = function(s, v) s._hoseCar = v end
+    p.EmitSound = function() end
+    WORLD[#WORLD + 1] = p
     return p
 end
 
@@ -299,6 +349,96 @@ do
     F.ApplyNW(car)
     ok(math.abs(rec.liters - 23) < 0.01,
         "РАСХОД МАШИНЫ ЗЕРКАЛИТСЯ В УЧЁТ", ("учёт %.1f / бак %.1f"):format(rec.liters, car:GetFuel()))
+end
+
+-----------------------------------------------------------------------
+print("\n=== 6. ШЛАНГ НА КОЛОНКЕ: НЕ В РУКАХ И НЕ ВЫХОДИТ САМ ===")
+-----------------------------------------------------------------------
+do
+    --[[ ЗАКАЗ ВЛАДЕЛЬЦА: «шланг не должен сам выходить из бака и не
+         должен отдаваться игроку».
+
+         Раньше колонка выдавала игроку ОРУЖИЕ-пистолет. Таймер заливки
+         каждую итерацию проверял расстояние до ИГРОКА и выдёргивал
+         пистолет сообщением «Отошёл от бака» / «Шланг натянулся». ]]
+    local pump = mkPumpAt(Vector(0, 0, 0))
+    local car = mkCar({ uid = "car:stay", pos = Vector(220, 0, 0),
+        fuelPos = Vector(-40, 20, 25), maxFuel = 80 })
+    local ply = mkPlayer("777:char1", 100000)
+    ply._pos = Vector(30, 0, 0)
+
+    -- Игроку ничего не выдаётся.
+    ply.Give = function() GIVEN = (GIVEN or 0) + 1; return nil end
+    local okP, whyP = F.PlugHose(pump, car, ply)
+    ok(okP == true, "шланг вставлен в бак", tostring(whyP))
+    ok(F.GiveNozzle == nil, "ПИСТОЛЕТ ИГРОКУ НЕ ВЫДАЁТСЯ — функции больше нет",
+        tostring(F.GiveNozzle))
+    ok(pump.GRMHoseCar == car, "шланг числится за машиной")
+
+    -- Игрок ушёл далеко — шланг должен ОСТАТЬСЯ в баке.
+    local tick = timer._t["GRM_Fuel_Pump_" .. pump:EntIndex()]
+    ok(type(tick) == "function", "таймер заливки запущен")
+    ply._pos = Vector(3000, 3000, 0)
+    for i = 1, 5 do if tick then tick() end end
+    ok(pump.GRMHoseCar == car,
+        "ШЛАНГ ОСТАЛСЯ В БАКЕ, КОГДА ИГРОК УШЁЛ", tostring(pump.GRMHoseCar))
+    ok(pump:GetSessionL() > 0, "ЗАЛИВКА ИДЁТ БЕЗ ИГРОКА",
+        tostring(pump:GetSessionL()))
+
+    -- Бак полон: качать перестали, но шланг остался — убирает человек.
+    car:SetFuel(car:GetMaxFuel())
+    local rec = F.Get("car:stay")
+    rec.liters = car:GetMaxFuel()
+    for i = 1, 8 do if tick then tick() end end
+    ok(pump.GRMHoseCar == car, "ПОСЛЕ ПОЛНОГО БАКА ШЛАНГ НЕ ВЫСКОЧИЛ",
+        tostring(pump.GRMHoseCar))
+    ok(pump:GetBusy() == false, "качать перестали", tostring(pump:GetBusy()))
+
+    -- Убираем осознанно.
+    local before = pump:GetSessionL()
+    F.UnplugHose(pump, ply, "Шланг убран.")
+    ok(pump.GRMHoseCar == nil, "ПОСЛЕ КОМАНДЫ ШЛАНГ УБРАН", tostring(pump.GRMHoseCar))
+    ok(timer.Exists("GRM_Fuel_Pump_" .. pump:EntIndex()) == false,
+        "таймер остановлен")
+end
+
+do
+    -- Деньги кончились — шланг тоже остаётся в баке.
+    local pump = mkPumpAt(Vector(0, 0, 0))
+    local car = mkCar({ uid = "car:money", pos = Vector(200, 0, 0),
+        fuelPos = Vector(-40, 20, 25), maxFuel = 80 })
+    local ply = mkPlayer("888:char1", 5)      -- хватит на пару тактов
+    ply._pos = Vector(20, 0, 0)
+    F.PlugHose(pump, car, ply)
+    local tick = timer._t["GRM_Fuel_Pump_" .. pump:EntIndex()]
+    for i = 1, 12 do if tick then tick() end end
+    ok(pump.GRMHoseCar == car, "КОНЧИЛИСЬ ДЕНЬГИ — ШЛАНГ НЕ ВЫЛЕТЕЛ",
+        tostring(pump.GRMHoseCar))
+end
+
+do
+    -- Машину утащили дальше шланга — сорвало по физике.
+    local pump = mkPumpAt(Vector(0, 0, 0))
+    local car = mkCar({ uid = "car:pull", pos = Vector(200, 0, 0),
+        fuelPos = Vector(-40, 20, 25), maxFuel = 80 })
+    local ply = mkPlayer("999:char1", 100000)
+    F.PlugHose(pump, car, ply)
+    ok(pump.GRMHoseCar == car, "шланг в баке")
+    car._pos = Vector(5000, 0, 0)
+    F.PumpTick(pump)
+    ok(pump.GRMHoseCar == nil,
+        "МАШИНУ УТАЩИЛИ ДАЛЬШЕ ШЛАНГА — СОРВАЛО", tostring(pump.GRMHoseCar))
+end
+
+do
+    -- Шланг цепляется к горловине, а не «к машине вообще».
+    local pump = mkPumpAt(Vector(0, 0, 0))
+    local far = mkCar({ uid = "car:toofar", pos = Vector(900, 0, 0), fuelPos = Vector(-40, 20, 25) })
+    local ply = mkPlayer("555:char1", 100000)
+    ply._pos = Vector(10, 0, 0)
+    local okP, whyP = F.PlugHose(pump, far, ply)
+    ok(okP == false, "до далёкой машины шланг не дотягивается", tostring(whyP))
+    ok(pump.GRMHoseCar == nil, "шланг не повис в пустоте", tostring(pump.GRMHoseCar))
 end
 
 print(("\n\nFUEL PORT: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
