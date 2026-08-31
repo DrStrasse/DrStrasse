@@ -22,7 +22,16 @@ local C = GRM.Container
 local UI = I.UI
 local NET = I.NET
 
-local C_ = UI.C
+--[[ Палитру (UI.C) заполняет cl_grm_industry_ui.lua, а файлы в
+     lua/autorun/client грузятся по алфавиту — этот файл идёт РАНЬШЕ,
+     чем ui. Раньше здесь было `local C_ = UI.C`, и на клиенте всё
+     падало при загрузке: «attempt to index local 'UI' (a nil
+     value)» — окно просто не появлялось. Читаем поле лениво, в
+     момент обращения, когда палитра уже создана. ]]
+local C_ = setmetatable({}, { __index = function(_, key)
+    local palette = I.UI and I.UI.C
+    return palette and palette[key]
+end })
 
 -- ================================================================
 --  МИНИ-ИГРА

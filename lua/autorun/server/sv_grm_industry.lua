@@ -30,17 +30,13 @@ I.Jobs   = I.Jobs or {}
 I.Levels = I.Levels or {}      -- [charKey][station] = уровень навыка
 I.NodeHandlers = I.NodeHandlers or {}
 
-local NET = {
-    open    = "GRM_IND_Open",
-    action  = "GRM_IND_Action",
-    job     = "GRM_IND_Job",
-    mg      = "GRM_IND_Minigame",
-    step    = "GRM_IND_Step",
-    note    = "GRM_IND_Note",
-}
-I.NET = NET
-
-for _, name in pairs(NET) do util.AddNetworkString(name) end
+--[[ Имена сетей объявлены в общем ядре — клиент и сервер обязаны
+     называть сообщения одинаково. Регистрируем их здесь: сделать
+     это можно только на сервере. ]]
+local NET = I.NET
+if NET then
+    for _, name in pairs(NET) do util.AddNetworkString(name) end
+end
 
 local DATA_DIR  = "grm_industry"
 local MAP_FILE  = DATA_DIR .. "/map_" .. tostring(game.GetMap() or "unknown") .. ".json"
