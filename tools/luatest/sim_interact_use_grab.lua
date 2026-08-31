@@ -1,26 +1,27 @@
 --[[--------------------------------------------------------------------
     sim_interact_use_grab — короткий E не должен открывать дверь, когда
-    игрок собирался вызвать кольцо действий.
+    игрок вызывает кольцо действий.
 
-    ЖАЛОБА ВЛАДЕЛЬЦА (31.08): «Взаимодействие с дверями на Е что-то как
-    то не круто выходит. И меню вылазит интерактивное и двери сразу
-    открываются».
+    ЖАЛОБА ВЛАДЕЛЬЦА (31.08): «И меню вылазит интерактивное и двери
+    сразу открываются». После первой попытки починки — «Всё ещё не
+    исправлено».
 
-    ПРИЧИНА. IN_USE снимался в StartCommand только при УЖЕ ОТКРЫТОМ
-    кольце. Но кольцо появляется через 0.22 с удержания, и всё это
-    время нажатие уходило на сервер как обычное «использовать» — дверь
-    успевала открыться. В итоге игрок получал и распахнутую дверь, и
-    кольцо поверх неё.
+    ПОЧЕМУ ПЕРВАЯ ПОПЫТКА НЕ СРАБОТАЛА, И ПОЧЕМУ СТЕНД ЭТОГО НЕ ПОЙМАЛ.
 
-    ФИКС. IN_USE перехватывается с ПЕРВОГО тика нажатия, пока модуль
-    решает, клик это или удержание. Чтобы короткий клик не пропал, он
-    проигрывается вручную: на отпускании раньше порога поднимается
-    флаг, и следующие несколько тиков IN_USE выставляется
-    принудительно.
+    Модуль ловил нажатие в PlayerButtonDown и оттуда поднимал флаг, а
+    IN_USE снимал уже в StartCommand. Но PlayerButtonDown вызывается
+    ПОСЛЕ того, как команда для сервера сформирована и отправлена: к
+    моменту, когда флаг поднят, первый тик с зажатым «использовать» уже
+    ушёл. Серверу одного тика достаточно, чтобы открыть дверь.
 
-    ЧТО ПРОВЕРЯЕМ. Реальную последовательность тиков на боевом модуле:
-    нажатие → тики удержания → отпускание → тики после. Смотрим, что
-    именно уходит на сервер в каждый момент.
+    А прошлая версия ЭТОГО СТЕНДА вызывала PlayerButtonDown ПЕРЕД
+    тиком — то есть моделировала порядок, которого в движке не бывает.
+    Стенд был зелёным при живом баге. Классическая ловушка: проверка
+    описывала не игру, а то, как я себе её представлял.
+
+    ЗДЕСЬ ПОРЯДОК ЧЕСТНЫЙ: сначала StartCommand (команда уходит на
+    сервер), и только потом PlayerButtonDown/Up. Именно так работает
+    движок, и именно поэтому логика E должна жить в StartCommand.
 
     Запуск: luajit tools/luatest/sim_interact_use_grab.lua
 ----------------------------------------------------------------------]]
@@ -73,10 +74,8 @@ VMeta.__mul = function(a, b) return Vector(a.x * b, a.y * b, a.z * b) end
 function Vector(x, y, z) return setmetatable({ x = x or 0, y = y or 0, z = z or 0 }, VMeta) end
 function Angle(p, y, r) return { p = p or 0, y = y or 0, r = r or 0 } end
 
--- Битовые операции: ими выставляется кнопка в SetButtons.
 bit = {
-    bor = function(a, b) 
-        -- Достаточно объединения флагов, значения у нас степени двойки.
+    bor = function(a, b)
         if a % (b * 2) >= b then return a end
         return a + b
     end,
@@ -111,8 +110,8 @@ gui = {
 }
 local KEYS_DOWN = {}
 input = { IsKeyDown = function(k) return KEYS_DOWN[k] == true end }
---[[ Панель-заглушка: кольцу нужен объект с методами VGUI. Возвращать
-     невалидную пустышку нельзя — модуль сразу падает на SetSize. ]]
+--[[ Панель-заглушка с любыми методами: кольцу нужен живой объект VGUI,
+     невалидная пустышка роняет модуль на первом же SetSize. ]]
 vgui = {
     Create = function()
         local p = { _valid = true }
@@ -147,7 +146,6 @@ assert(loadfile("lua/autorun/sh_grm_interact.lua"))()
 local I = GRM.Interact
 assert(I, "модуль не загрузился")
 
--- Дверь перед игроком.
 local door = { _valid = true, _locked = true, _nw = {}, _nwb = {} }
 function door:GetNWString(k, d) return self._nw[k] or d or "" end
 function door:GetNWBool(k, d) if self._nwb[k] == nil then return d or false end return self._nwb[k] end
@@ -155,57 +153,83 @@ function door:GetParent() return { _valid = false } end
 _G.__TRACE_HIT = door
 
 -----------------------------------------------------------------------
--- Поддельная команда движка: смотрим, что реально уходит на сервер.
+-- Поддельная команда движка.
 -----------------------------------------------------------------------
 local function mkCmd(buttons)
     local c = { _b = buttons or 0, _cleared = false, _mx = nil }
     function c:GetButtons() return self._b end
     function c:SetButtons(v) self._b = v end
-    function c:RemoveKey(k) if self._b % (k * 2) >= k then self._b = self._b - k end end
+    function c:KeyDown(k) return self._b % (k * 2) >= k end
+    function c:RemoveKey(k) if self:KeyDown(k) then self._b = self._b - k end end
     function c:ClearMovement() self._cleared = true end
     function c:SetViewAngles() end
     function c:SetMouseX(v) self._mx = v end
     function c:SetMouseY() end
-    function c:HasUse() return self._b % (IN_USE * 2) >= IN_USE end
+    function c:HasUse() return self:KeyDown(IN_USE) end
     return c
 end
 
--- Один игровой тик: игрок держит E (или нет).
+--[[ ОДИН ИГРОВОЙ ТИК В ПРАВИЛЬНОМ ПОРЯДКЕ.
+
+     Движок сначала строит команду и отдаёт её в StartCommand (после
+     чего она уходит на сервер), и только ЗАТЕМ, обнаружив изменение
+     состояния кнопок, зовёт PlayerButtonDown / PlayerButtonUp.
+
+     Прошлая версия стенда делала наоборот — и потому не видела бага. ]]
+local prevDown = false
 local function tick(holdingE)
-    local cmd = mkCmd(holdingE and IN_USE or 0)
+    KEYS_DOWN[KEY_E] = holdingE and true or false
+
     fire("Think")
-    fire("StartCommand", ply, cmd)
+    local cmd = mkCmd(holdingE and IN_USE or 0)
+    fire("StartCommand", ply, cmd)      -- команда уходит на сервер ЗДЕСЬ
+
+    -- И только теперь движок сообщает о смене состояния клавиши.
+    if holdingE and not prevDown then fire("PlayerButtonDown", ply, KEY_E) end
+    if not holdingE and prevDown then fire("PlayerButtonUp", ply, KEY_E) end
+    prevDown = holdingE and true or false
+
     return cmd
 end
 
+local function reset()
+    -- Отпускаем клавишу и даём модулю прийти в исходное состояние.
+    for _ = 1, 6 do NOW = NOW + 0.02 tick(false) end
+    if I.Radial and I.Radial.open then I.CloseRadial() end
+end
+
 -----------------------------------------------------------------------
-print("\n=== 1. ВОСПРОИЗВЕДЕНИЕ БАГА: E НЕ ДОЛЖЕН ОТКРЫВАТЬ ДВЕРЬ СРАЗУ ===")
+print("\n=== 1. ВОСПРОИЗВЕДЕНИЕ БАГА: ПЕРВЫЙ ЖЕ ТИК ===")
 -----------------------------------------------------------------------
 do
-    KEYS_DOWN[KEY_E] = true
-    fire("PlayerButtonDown", ply, KEY_E)
+    reset()
+    --[[ Самый первый тик с зажатым E. Именно он раньше уходил на
+         сервер и открывал дверь: PlayerButtonDown к этому моменту ещё
+         не вызывался, флага не было, и снимать было нечего. ]]
+    NOW = NOW + 0.02
+    local first = tick(true)
+    ok(not first:HasUse(),
+        "ИСПРАВЛЕНО: ПЕРВЫЙ тик нажатия не уходит на сервер — дверь не открывается")
+end
 
-    --[[ Первые тики после нажатия. Игрок ещё держит клавишу, модуль
-         решает — клик или удержание. Дверь трогать НЕЛЬЗЯ. ]]
+do
+    -- И последующие тики удержания тоже.
     local leaked = 0
     for _ = 1, 5 do
         NOW = NOW + 0.02
         if tick(true):HasUse() then leaked = leaked + 1 end
     end
-    ok(leaked == 0,
-        "ИСПРАВЛЕНО: за время удержания IN_USE ни разу не ушёл на сервер", leaked)
+    ok(leaked == 0, "за всё удержание IN_USE ни разу не прошёл", leaked)
 end
 
 -----------------------------------------------------------------------
 print("\n=== 2. УДЕРЖАНИЕ ОТКРЫВАЕТ КОЛЬЦО ===")
 -----------------------------------------------------------------------
 do
-    -- Досидели до порога.
     NOW = NOW + I.HoldTime
     tick(true)
     ok(I.Radial.open == true, "после порога кольцо открылось")
 
-    -- И пока оно открыто, дверь по-прежнему не трогается.
     local leaked = 0
     for _ = 1, 3 do
         NOW = NOW + 0.02
@@ -222,25 +246,21 @@ end
 print("\n=== 3. КОРОТКИЙ КЛИК ОСТАЁТСЯ ОБЫЧНЫМ E ===")
 -----------------------------------------------------------------------
 do
-    -- Закрываем кольцо и начинаем заново.
     I.CloseRadial()
-    KEYS_DOWN[KEY_E] = false
-    NOW = NOW + 1
+    reset()
 
-    fire("PlayerButtonDown", ply, KEY_E)
-    KEYS_DOWN[KEY_E] = true
-
-    -- Пара тиков — и сразу отпустили (это клик, не удержание).
     NOW = NOW + 0.02
-    ok(not tick(true):HasUse(), "во время клика E ещё придержан")
-
+    ok(not tick(true):HasUse(), "нажатие придержано")
     NOW = NOW + 0.03
-    KEYS_DOWN[KEY_E] = false
-    fire("PlayerButtonUp", ply, KEY_E)
+    tick(true)
+
+    -- Отпустили заметно раньше порога — это клик.
+    NOW = NOW + 0.02
+    tick(false)
 
     ok(I.Radial.open == false, "кольцо от короткого клика не открылось")
 
-    --[[ Самое важное: «съеденный» клик должен вернуться игре, иначе
+    --[[ Самое важное: «съеденный» клик обязан вернуться игре, иначе
          дверь вообще перестанет открываться обычным способом. ]]
     local delivered = 0
     for _ = 1, 5 do
@@ -257,8 +277,6 @@ end
 print("\n=== 4. ПОСЛЕ КЛИКА IN_USE НЕ ЗАЛИПАЕТ ===")
 -----------------------------------------------------------------------
 do
-    --[[ Если бы флаг не гас, «использовать» жалось бы бесконечно:
-         дверь хлопала бы сама, а игрок не смог бы отпустить. ]]
     local stuck = 0
     for _ = 1, 10 do
         NOW = NOW + 0.02
@@ -274,10 +292,8 @@ do
     --[[ Смотрим в пустоту: E должен работать как обычно, иначе модуль
          сломал бы подбор предметов и посадку в транспорт везде, где
          нет дверей. ]]
+    reset()
     _G.__TRACE_HIT = nil
-    NOW = NOW + 1
-    fire("PlayerButtonDown", ply, KEY_E)
-    KEYS_DOWN[KEY_E] = true
 
     local passed = 0
     for _ = 1, 4 do
@@ -285,11 +301,10 @@ do
         if tick(true):HasUse() then passed = passed + 1 end
     end
     ok(passed == 4, "без цели E проходит на сервер каждый тик", passed)
-
-    KEYS_DOWN[KEY_E] = false
-    fire("PlayerButtonUp", ply, KEY_E)
     ok(I.Radial.open == false, "и кольцо не открывается")
+
     _G.__TRACE_HIT = door
+    reset()
 end
 
 -----------------------------------------------------------------------
@@ -297,9 +312,7 @@ print("\n=== 6. ОТКЛЮЧЁННЫЙ МОДУЛЬ НЕ ТРОГАЕТ E ===")
 -----------------------------------------------------------------------
 do
     CVARS["grm_cl_interact"] = "0"
-    NOW = NOW + 1
-    fire("PlayerButtonDown", ply, KEY_E)
-    KEYS_DOWN[KEY_E] = true
+    reset()
 
     local passed = 0
     for _ = 1, 4 do
@@ -309,33 +322,64 @@ do
     ok(passed == 4, "с выключенным конваром E не перехватывается", passed)
     ok(I.Radial.open == false, "кольцо не появляется")
 
-    KEYS_DOWN[KEY_E] = false
-    fire("PlayerButtonUp", ply, KEY_E)
     CVARS["grm_cl_interact"] = "1"
+    reset()
 end
 
 -----------------------------------------------------------------------
-print("\n=== 7. ИСХОДНИК ===")
+print("\n=== 7. В ТРАНСПОРТЕ И МЁРТВЫМ НЕ ПЕРЕХВАТЫВАЕМ ===")
+-----------------------------------------------------------------------
+do
+    reset()
+    ply.InVehicle = function() return true end
+    local passed = 0
+    for _ = 1, 3 do
+        NOW = NOW + 0.02
+        if tick(true):HasUse() then passed = passed + 1 end
+    end
+    ok(passed == 3, "сидя в машине E не перехватывается", passed)
+    ply.InVehicle = function() return false end
+    reset()
+
+    ply.Alive = function() return false end
+    local passed2 = 0
+    for _ = 1, 3 do
+        NOW = NOW + 0.02
+        if tick(true):HasUse() then passed2 = passed2 + 1 end
+    end
+    ok(passed2 == 3, "мёртвым тоже", passed2)
+    ply.Alive = function() return true end
+    reset()
+end
+
+-----------------------------------------------------------------------
+print("\n=== 8. ИСХОДНИК: ЛОГИКА ЖИВЁТ В StartCommand ===")
 -----------------------------------------------------------------------
 do
     local fh = assert(io.open("lua/autorun/sh_grm_interact.lua", "rb"))
     local src = fh:read("*a") fh:close()
 
-    local sc = src:match('hook%.Add%("StartCommand", "GRM_Interact_Freeze".-\nend%)')
+    --[[ Ключевое требование: решение о перехвате принимается ТАМ ЖЕ,
+         где формируется команда. PlayerButtonDown для этого не годится —
+         он опаздывает на кадр относительно потока команд. ]]
+    local sc = src:match('hook%.Add%("StartCommand", "GRM_Interact_Use".-\nend%)')
     ok(sc ~= nil, "обработчик команды найден")
-
-    --[[ Перехват обязан стоять на СОСТОЯНИИ УДЕРЖАНИЯ (armed), а не
-         только на открытом кольце — в этом и была суть бага. ]]
-    ok(sc and sc:find("if armed then", 1, true) ~= nil,
-        "IN_USE снимается уже во время удержания, а не только при открытом кольце")
+    ok(sc and sc:find("I.FindTarget", 1, true) ~= nil,
+        "цель ищется прямо в StartCommand, в тот же тик")
+    ok(sc and sc:find("cmd:RemoveKey(IN_USE)", 1, true) ~= nil,
+        "и там же снимается IN_USE")
     ok(sc and sc:find("passUse", 1, true) ~= nil,
         "есть механизм возврата короткого клика")
 
+    --[[ Старая (неверная) схема: нажатие ловилось в PlayerButtonDown.
+         Если она вернётся, баг вернётся вместе с ней. ]]
+    ok(src:find('hook.Add("PlayerButtonDown", "GRM_Interact_Use"', 1, true) == nil,
+        "нажатие больше НЕ ловится через PlayerButtonDown")
+
+    -- Отпускание при открытом кольце — там хук уместен, гонки уже нет.
     local up = src:match('hook%.Add%("PlayerButtonUp", "GRM_Interact_UseUp".-\nend%)')
-    ok(up and up:find("passUse = 3", 1, true) ~= nil,
-        "клик раньше порога помечается для проигрывания")
-    ok(up and up:find("< I.HoldTime", 1, true) ~= nil,
-        "порог отличает клик от удержания")
+    ok(up and up:find("I.Apply()", 1, true) ~= nil,
+        "отпускание применяет выбор при открытом кольце")
 end
 
 -----------------------------------------------------------------------

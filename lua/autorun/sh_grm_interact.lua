@@ -561,101 +561,123 @@ end)
 -- Клавиша E: удержание открывает кольцо, отпускание применяет.
 -----------------------------------------------------------------------
 local holdStart, holdEnt, holdKind, armed = 0, nil, nil, false
-local passUse = 0        -- сколько тиков пропустить обычный E наружу
+local passUse = 0        -- сколько тиков доиграть «съеденный» короткий клик
+local wasUse = false     -- держал ли игрок E в прошлом тике
 I.HoldTime = 0.22        -- сколько держать, чтобы вместо обычного E пришло кольцо
 
---[[ ПОЧЕМУ E ПЕРЕХВАТЫВАЕТСЯ СРАЗУ (жалоба владельца 31.08: «и меню
-     вылазит интерактивное и двери сразу открываются»).
+--[[ ВСЯ ЛОГИКА E ЖИВЁТ В StartCommand (жалоба владельца 31.08,
+     повторно: «Всё ещё не исправлено»).
 
-     БЫЛО. IN_USE снимался только в StartCommand и только когда кольцо
-     УЖЕ открыто. Но кольцо появляется через 0.22 с удержания, а всё
-     это время нажатие уходило на сервер как обычное «использовать» —
-     дверь успевала открыться. Игрок получал и распахнутую дверь, и
-     кольцо поверх неё.
+     ПЕРВАЯ ПОПЫТКА БЫЛА НЕВЕРНОЙ. Я ловил нажатие в PlayerButtonDown и
+     оттуда поднимал флаг, а снимал IN_USE уже в StartCommand. Но
+     PlayerButtonDown вызывается ПОСЛЕ того, как команда для сервера
+     сформирована и отправлена: к моменту, когда флаг поднят, первый
+     тик с зажатым «использовать» уже ушёл. Серверу одного тика
+     достаточно, чтобы открыть дверь — поэтому она и открывалась.
 
-     СТАЛО. IN_USE снимается с ПЕРВОГО тика нажатия, пока мы решаем,
-     что это — клик или удержание. Дверь не трогается.
+     ПРАВИЛЬНО так: смотреть кнопку прямо в StartCommand, там же, где
+     команда и формируется. Нажатие мы видим в тот же тик, в котором
+     оно уходит, и снимаем его ДО отправки. Ни один тик не проскакивает.
 
-     А чтобы короткий клик не пропал, мы проигрываем его сами: на
-     отпускании раньше порога поднимаем флаг passUse, и следующие
-     несколько тиков IN_USE наоборот ПРИНУДИТЕЛЬНО выставляется. Для
-     сервера это выглядит как обычное короткое нажатие — двери,
-     посадка в транспорт и подбор предметов работают как раньше.
+     PlayerButtonDown для этой задачи не годится в принципе — он
+     сообщает о факте нажатия, но опаздывает на кадр относительно
+     потока команд. ]]
+local function useDown(cmd)
+    return cmd:KeyDown(IN_USE)
+end
 
-     Несколько тиков, а не один: сервер должен увидеть и нажатие, и
-     отпускание, иначе «использование» не засчитается. ]]
-hook.Add("PlayerButtonDown", "GRM_Interact_Use", function(ply, key)
-    if ply ~= LocalPlayer() then return end
-    if key ~= KEY_E then return end
-    if GetConVarNumber("grm_cl_interact") == 0 then return end
-    if gui.IsGameUIVisible() or gui.IsConsoleVisible() then return end
-    if IsValid(ply) and ply.IsTyping and ply:IsTyping() then return end
-    if R.open then return end
-
-    local ent, kind = I.FindTarget(ply, I.Range)
-    if not ent then return end
-    holdStart, holdEnt, holdKind, armed = RealTime(), ent, kind, true
-end)
-
---[[ Кольцо появляется по УДЕРЖАНИЮ. Короткое нажатие остаётся обычным
-     E — его проигрывает passUse (см. StartCommand ниже). ]]
-hook.Add("Think", "GRM_Interact_Hold", function()
-    if not armed or R.open then return end
-    if RealTime() - holdStart < I.HoldTime then return end
-    if not IsValid(holdEnt) then armed = false return end
-    -- Клавишу всё ещё держат?
-    if not input.IsKeyDown(KEY_E) then armed = false return end
-    armed = false
-    I.OpenRadial(holdEnt, holdKind)
-end)
-
-hook.Add("PlayerButtonUp", "GRM_Interact_UseUp", function(ply, key)
-    if ply ~= LocalPlayer() then return end
-    if key ~= KEY_E then return end
-
-    if R.open then
-        armed = false
-        I.Apply()
-        return
-    end
-
-    --[[ Отпустили раньше порога — это был обычный клик. Возвращаем его
-         игре: мы же его только что съели, чтобы дверь не открылась
-         раньше времени. ]]
-    if armed and (RealTime() - holdStart) < I.HoldTime then
-        passUse = 3
-    end
-    armed = false
-end)
-
-hook.Add("StartCommand", "GRM_Interact_Freeze", function(ply, cmd)
+hook.Add("StartCommand", "GRM_Interact_Use", function(ply, cmd)
     if ply ~= LocalPlayer() then return end
 
-    -- Проигрываем «съеденный» короткий клик.
+    -- Доигрываем короткий клик, который сами же и придержали.
     if passUse > 0 then
         passUse = passUse - 1
         cmd:SetButtons(bit.bor(cmd:GetButtons(), IN_USE))
+        wasUse = false
         return
     end
 
-    --[[ Пока клавиша зажата и мы ещё не решили, клик это или удержание,
-         обычное «использовать» наружу не пускаем. Это и есть фикс:
-         раньше дверь открывалась в эти 0.22 с. ]]
-    if armed then
+    ------------------------------------------------------------------
+    -- Кольцо открыто: мышь выбирает действие, игрок стоит.
+    ------------------------------------------------------------------
+    if R.open then
+        cmd:ClearMovement()
+        cmd:RemoveKey(IN_ATTACK)
+        cmd:RemoveKey(IN_ATTACK2)
+        cmd:RemoveKey(IN_USE)
+        cmd:SetViewAngles(ply:EyeAngles())
+        cmd:SetMouseX(0)
+        cmd:SetMouseY(0)
+        wasUse = useDown(cmd)
+        return
+    end
+
+    local down = useDown(cmd)
+
+    ------------------------------------------------------------------
+    -- Момент нажатия: решаем, перехватывать ли эту клавишу.
+    ------------------------------------------------------------------
+    if down and not wasUse then
+        wasUse = true
+        armed = false
+        if GetConVarNumber("grm_cl_interact") == 0 then return end
+        if gui.IsGameUIVisible() or gui.IsConsoleVisible() then return end
+        if ply.IsTyping and ply:IsTyping() then return end
+        if not ply:Alive() or ply:InVehicle() then return end
+
+        local ent, kind = I.FindTarget(ply, I.Range)
+        -- Нет цели — не наше дело, E работает как обычно.
+        if not ent then return end
+
+        holdStart, holdEnt, holdKind, armed = RealTime(), ent, kind, true
+        -- Придерживаем ЭТОТ ЖЕ тик: именно здесь дверь и открывалась.
         cmd:RemoveKey(IN_USE)
         return
     end
 
-    if not R.open then return end
+    ------------------------------------------------------------------
+    -- Клавишу держат дальше.
+    ------------------------------------------------------------------
+    if down and armed then
+        cmd:RemoveKey(IN_USE)
+        -- Порог пройден — показываем кольцо.
+        if RealTime() - holdStart >= I.HoldTime and IsValid(holdEnt) then
+            armed = false
+            I.OpenRadial(holdEnt, holdKind)
+        end
+        wasUse = true
+        return
+    end
 
-    -- Кольцо открыто: мышь выбирает действие, а не крутит игрока.
-    cmd:ClearMovement()
-    cmd:RemoveKey(IN_ATTACK)
-    cmd:RemoveKey(IN_ATTACK2)
-    cmd:RemoveKey(IN_USE)
-    cmd:SetViewAngles(ply:EyeAngles())
-    cmd:SetMouseX(0)
-    cmd:SetMouseY(0)
+    ------------------------------------------------------------------
+    -- Отпустили.
+    ------------------------------------------------------------------
+    if not down and wasUse then
+        wasUse = false
+        --[[ Отпустили раньше порога — это был обычный клик. Возвращаем
+             его игре: мы же его только что съели. Несколько тиков, а
+             не один: серверу нужно увидеть и нажатие, и отпускание. ]]
+        if armed and (RealTime() - holdStart) < I.HoldTime then
+            passUse = 3
+        end
+        armed = false
+        return
+    end
+
+    wasUse = down
+end)
+
+--[[ Отпускание клавиши при ОТКРЫТОМ кольце применяет выбор.
+
+     Здесь PlayerButtonUp уместен: кольцо уже на экране, гонки с
+     потоком команд нет, а хук даёт точный момент отпускания. ]]
+hook.Add("PlayerButtonUp", "GRM_Interact_UseUp", function(ply, key)
+    if ply ~= LocalPlayer() then return end
+    if key ~= KEY_E then return end
+    if R.open then
+        armed = false
+        I.Apply()
+    end
 end)
 
 print("[GRM Interact] client v" .. I.Version)

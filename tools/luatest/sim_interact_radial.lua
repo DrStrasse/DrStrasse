@@ -390,21 +390,26 @@ do
          открывают двери, садятся в машину, поднимают предметы. Кольцо
          только по удержанию. ]]
     ok(src:find("I.HoldTime", 1, true) ~= nil, "порог удержания задан")
-    local hold = src:match("hook%.Add%(\"Think\", \"GRM_Interact_Hold\".-\nend%)")
-    ok(hold and hold:find("RealTime() - holdStart < I.HoldTime", 1, true) ~= nil,
+
+    --[[ Логика E переехала в StartCommand (31.08): PlayerButtonDown
+         опаздывает на кадр относительно потока команд, и первый тик
+         с «использовать» успевал уйти на сервер — дверь открывалась.
+         Проверяем ту же суть, но в новом месте. ]]
+    local sc = src:match("hook%.Add%(\"StartCommand\", \"GRM_Interact_Use\".-\nend%)")
+    ok(sc ~= nil, "обработчик команды найден")
+    ok(sc and sc:find("RealTime() - holdStart >= I.HoldTime", 1, true) ~= nil,
         "кольцо открывается только после порога")
-    ok(hold and hold:find("input.IsKeyDown(KEY_E)", 1, true) ~= nil,
-        "и только если клавишу всё ещё держат")
+    ok(sc and sc:find("I.FindTarget", 1, true) ~= nil,
+        "цель определяется в том же тике, что и команда")
 
     local up = src:match("hook%.Add%(\"PlayerButtonUp\", \"GRM_Interact_UseUp\".-\nend%)")
     ok(up and up:find("I.Apply()", 1, true) ~= nil, "отпускание применяет выбор")
 
-    --[[ Пока кольцо открыто, IN_USE надо снимать: иначе дверь
-         откроется обычным способом ещё до выбора пункта. ]]
-    local freeze = src:match("hook%.Add%(\"StartCommand\", \"GRM_Interact_Freeze\".-\nend%)")
-    ok(freeze and freeze:find("RemoveKey(IN_USE)", 1, true) ~= nil,
+    --[[ IN_USE снимается и во время удержания, и при открытом кольце:
+         иначе дверь откроется обычным способом до выбора пункта. ]]
+    ok(sc and sc:find("cmd:RemoveKey(IN_USE)", 1, true) ~= nil,
         "обычное «использовать» на время кольца отключено")
-    ok(freeze and freeze:find("SetMouseX(0)", 1, true) ~= nil,
+    ok(sc and sc:find("SetMouseX(0)", 1, true) ~= nil,
         "мышь не крутит игрока, пока он выбирает")
 
     -- Клавиатуру у панели не забираем — иначе не придёт отпускание.
