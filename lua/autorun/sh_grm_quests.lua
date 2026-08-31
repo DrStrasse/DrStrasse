@@ -1170,6 +1170,33 @@ if SERVER then
     local function adminOpen(ply)if not IsValid(ply)or not ply:IsSuperAdmin()then return end;net.Start("GRM_Quest_AdminOpen")net.WriteTable(Q.AdminData())net.Send(ply)end
     Q.OpenAdmin=adminOpen
     concommand.Add("grm_quests_admin",adminOpen)
+
+    --[[ Сброс из консоли: grm_quest_reset <questID> [ник или SteamID64]
+         Без второго аргумента сбрасывает СЕБЕ — самый частый случай,
+         когда админ проверяет собственную правку. ]]
+    concommand.Add("grm_quest_reset",function(ply,_,args)
+        if not (IsValid(ply) and ply:IsSuperAdmin()) then return end
+        local questID=trim(args and args[1],64)
+        if questID=="" then
+            ply:ChatPrint("[Квесты] grm_quest_reset <ID квеста> [ник или SteamID64]")
+            return
+        end
+        local target=ply
+        local who=trim(args and args[2],64)
+        if who~="" then
+            target=nil
+            local low=string.lower(who)
+            for _,p2 in ipairs(player.GetAll()) do
+                if p2:SteamID64()==who or string.find(string.lower(p2:Nick()),low,1,true) then
+                    target=p2 break
+                end
+            end
+            if not IsValid(target) then ply:ChatPrint("[Квесты] Игрок не найден: "..who) return end
+        end
+        local done,why=Q.ResetQuest(ply,target,questID)
+        ply:ChatPrint(done and ("[Квесты] Прохождение сброшено: "..questID.." у "..target:Nick())
+            or ("[Квесты] "..tostring(why)))
+    end)
     hook.Add("PlayerSayTransform","GRM_Quest_AdminChat",function(ply,pack)if not istable(pack)then return end;local cmd=string.lower(trim(pack[1],64));if cmd=="/grm_quests_admin"or cmd=="!grm_quests_admin"then adminOpen(ply);pack[1]="";pack.SkipPlayerSay=true end end)
     local function openJournal(ply)if not IsValid(ply)then return end;sync(ply);net.Start("GRM_Quest_Journal")net.Send(ply)end
     concommand.Add("grm_quests",openJournal)
@@ -1188,6 +1215,13 @@ if SERVER then
             adminOpen(ply);notice(ply,true,"Квест сохранён: "..def.id)
         elseif op=="reset_progress"then local id=trim(net.ReadString(),64);local target=trim(net.ReadString(),96);if target=="@self"then target=characterKey(ply)elseif target~="*"and target:match("^%d+$")then target=target..":char1"end;local count=Q.ResetProgress(id,target);notice(ply,true,"Сброшен прогресс: "..count.." записей")
         elseif op=="delete"then local id=trim(net.ReadString(),64);local old=Q.Definitions[id];if old and old.achievement and GRM.Ach and GRM.Ach.Unregister then GRM.Ach.Unregister(old.achievement.id)end;Q.Definitions[id]=nil;Q.SaveDefinitions();adminOpen(ply);notice(ply,true,"Квест удалён")
+        elseif op=="reset"then
+            --[[ Кнопка «Сбросить прохождение» в студии. Право проверяет
+                 Q.ResetQuest на сервере: клиентская кнопка ничего не
+                 решает, её можно вызвать напрямую пакетом. ]]
+            local id=trim(net.ReadString(),64)
+            local done,why=Q.ResetQuest(ply,ply,id)
+            notice(ply,done==true,done and ("Прохождение сброшено: "..id) or tostring(why))
         elseif op=="request"then adminOpen(ply)end
     end)
 
@@ -1249,6 +1283,57 @@ if SERVER then
          координаты руками в студии — гарантированная опечатка.
          Если точки с таким id ещё нет, создаём: автор мог добавить блок
          в графе и сразу пойти ставить маркер, не сохраняя квест. ]]
+    --[[--------------------------------------------------------------
+        СБРОС ПРОХОЖДЕНИЯ (заказ владельца 31.08).
+
+        ЗАЧЕМ. Квест проходится один раз: после завершения он лежит в
+        прогрессе со статусом completed, и NPC его больше не предлагает.
+        Проверить правку сюжета было можно только сменой персонажа или
+        ручной чисткой файла прогресса.
+
+        ТОЛЬКО СУПЕРАДМИН. Без этого любой игрок обнулял бы себе
+        прохождение и фармил награду по кругу — это дыра в экономике, а
+        не удобство. Проверка стоит на СЕРВЕРЕ: клиентская ничего не
+        стоит, её можно обойти подменой клиента.
+    ----------------------------------------------------------------]]
+    function Q.ResetQuest(actor,target,questID)
+        -- Право: только суперадмин. Консоль сервера (actor == nil) права
+        -- НЕ получает: команду может выполнить кто угодно из RCON-обёрток,
+        -- а сброс чужого прогресса должен быть именным.
+        if not (IsValid(actor) and actor.IsSuperAdmin and actor:IsSuperAdmin()) then return false,"Только суперадмин" end
+        if not IsValid(target) then return false,"Игрок не найден" end
+
+        questID=trim(questID,64)
+        local def=Q.Definitions[questID]
+        if not istable(def) then return false,"Квест не найден: "..questID end
+
+        local all,key=progressFor(target)
+        if not istable(all) or not istable(all[questID]) then
+            return false,"У игрока нет прохождения этого квеста"
+        end
+
+        --[[ Убираем запись ЦЕЛИКОМ, а не правим статус: вместе с ней
+             уходят пройденные чекпоинты и номер этапа. Оставь их — и
+             маркеры останутся скрытыми, пройти заново будет нельзя. ]]
+        all[questID]=nil
+
+        --[[ Ачивку тоже снимаем: она выдаётся один раз, и без сброса
+             повторное прохождение не покажет её выдачу — то есть
+             проверить полный цикл не получится. ]]
+        local a=def.achievement
+        if istable(a) and a.enabled and GRM.Ach and isfunction(GRM.Ach.Reset) then
+            pcall(GRM.Ach.Reset,target,a.id)
+        end
+
+        Q.SaveProgress();sync(target)
+        if Q.RefreshCheckpointVisibility then Q.RefreshCheckpointVisibility() end
+        if GRM.Audit and GRM.Audit.Write then
+            GRM.Audit.Write("quests","progress.reset",actor,{questID=questID},{target=key})
+        end
+        hook.Run("GRM_QuestReset",actor,target,questID)
+        return true
+    end
+
     function Q.SetCheckpointPos(questID,cpID,pos)
         local def=Q.Definitions[tostring(questID or "")]
         if not istable(def) then return false,"Квест не найден" end

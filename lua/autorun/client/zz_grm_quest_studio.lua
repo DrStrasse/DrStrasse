@@ -562,15 +562,40 @@ function Q.OpenGraphStudio(data)
     end
 
     canvas.Paint = function(_, cw, chh)
+        --[[ ЛИНИЯ СВЯЗИ. Жалоба владельца 31.08: «линия к блоку награда
+             рисуется вообще хрен пойми куда».
+
+             Формула была одна на все случаи:
+                 C1 = x1 + dx,  C2 = x2 - dx,  dx = |x2-x1| * 0.5
+
+             Для связи СЛЕВА НАПРАВО это верно. Но если цель ЛЕВЕЕ
+             источника (награда левее кат-сцены на скриншоте),
+             контрольные точки выворачиваются: C1 уезжает за спину цели,
+             C2 — за спину источника. Кривая делает широкую петлю сквозь
+             чужие карточки. Замер на координатах со скриншота: вылет
+             37 px за пределы обоих блоков в каждую сторону.
+
+             Для обратной связи вынос ограничиваем: петля остаётся
+             аккуратной и огибает блоки, а не улетает за экран. ]]
         local function curve(x1, y1, x2, y2, col)
-            local dx = math.max(40, math.abs(x2 - x1) * 0.5)
+            local back = x2 < x1
+            local dx
+            if back then
+                dx = math.min(90, math.max(40, math.abs(x2 - x1) * 0.25))
+            else
+                dx = math.max(40, math.abs(x2 - x1) * 0.5)
+            end
             local px, py = x1, y1
             surface.SetDrawColor(col)
             for i = 1, 18 do
                 local t = i / 18
                 local mt = 1 - t
                 local x = mt^3 * x1 + 3 * mt^2 * t * (x1 + dx) + 3 * mt * t^2 * (x2 - dx) + t^3 * x2
-                local y = mt^3 * y1 + 3 * mt^2 * t * y1 + 3 * mt * t^2 * y2 + t^3 * y2
+                --[[ У обратной связи разводим линию по вертикали: иначе
+                     она накладывается на прямые связи между теми же
+                     блоками и читается как одна. ]]
+                local bend = back and 26 or 0
+                local y = mt^3 * y1 + 3 * mt^2 * t * (y1 + bend) + 3 * mt * t^2 * (y2 + bend) + t^3 * y2
                 surface.DrawLine(px, py, x, y)
                 px, py = x, y
             end
@@ -1931,6 +1956,24 @@ function Q.OpenGraphStudio(data)
                 lines[#lines + 1] = (it.level == "error" and "[!] " or "[?] ") .. it.text
             end
             Derma_Message(table.concat(lines, "\n"), "Проверка квеста", "Понятно")
+        end
+
+        --[[ СБРОС ПРОХОЖДЕНИЯ (заказ владельца 31.08: «админу нужен
+             сброс квеста, чтобы проверить его заново»).
+
+             Кнопка рядом с «Проверить»: правишь квест и тут же проходишь
+             заново, не уходя в консоль. Право проверяет сервер —
+             клиентская кнопка ничего не решает. ]]
+        local reset = mkBtn(left, "СБРОСИТЬ ПРОХОЖДЕНИЕ", Color(58, 82, 112))
+        reset:Dock(TOP) reset:SetTall(26) reset:DockMargin(8, 0, 8, 6)
+        reset.DoClick = function()
+            if not work then return end
+            Derma_Query("Сбросить ВАШЕ прохождение «" .. tostring(work.title) ..
+                "»?\n\nКвест можно будет пройти заново: снимутся этапы, чекпоинты и ачивка.",
+                "Студия", "Сбросить", function()
+                    net.Start("GRM_Quest_AdminOp") net.WriteString("reset")
+                    net.WriteString(work.id or "") net.SendToServer()
+                end, "Отмена")
         end
 
         local del = mkBtn(left, "Удалить квест", COL.red)

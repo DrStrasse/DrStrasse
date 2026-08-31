@@ -817,11 +817,35 @@ function P.LoadMapEntities(ply)
     if IsValid(ply) and not ply:IsSuperAdmin() then notify(ply, "Только superadmin.", true) return end
     if not file.Exists(savePath(), "DATA") then return end
 
+    --[[ СНАЧАЛА ЧИТАЕМ, ПОТОМ СНОСИМ (находка аудита 31.08).
+
+         Раньше телефоны удалялись ДО разбора файла. Если JSON повреждён
+         (обрыв записи при падении сервера, полный диск), разбор возвращал
+         nil, `or {}` подставлял пустоту — и восстанавливать было нечего.
+         Вся телефонная сеть карты исчезала молча.
+
+         Это был единственный загрузчик проекта без pcall: остальные
+         одиннадцать обёрнуты и уводят битый файл в карантин. ]]
+    local raw = file.Read(savePath(), "DATA") or ""
+    local parsed, data = pcall(util.JSONToTable, raw)
+    if not (parsed and istable(data)) then
+        --[[ Битый файл НЕ затираем: уводим в карантин, иначе следующее
+             сохранение запишет пустоту поверх и данные исчезнут
+             окончательно. Имя с меткой времени, как в валюте и
+             документах. ]]
+        local quarantine = SAVE_DIR .. "/corrupt_" .. os.time() .. "_"
+            .. string.lower(game.GetMap() or "unknown") .. ".json"
+        if raw ~= "" then file.Write(quarantine, raw) end
+        ErrorNoHalt("[GRM Phone] Файл телефонов повреждён, карантин: " .. quarantine .. "\n")
+        notify(ply, "Файл телефонов повреждён. Ничего не удалено, копия в " .. quarantine, true)
+        return
+    end
+
+    -- Данные целы — только теперь убираем старое.
     for _, class in ipairs({ "grm_phone", "grm_payphone", "grm_pbx_station", "grm_phone_wiretap", "grm_phone_terminal" }) do
         for _, ent in ipairs(ents.FindByClass(class)) do ent:Remove() end
     end
 
-    local data = util.JSONToTable(file.Read(savePath(), "DATA") or "") or {}
     local count = 0
     for _, rec in ipairs(data) do
         local ent = ents.Create(rec.class)
