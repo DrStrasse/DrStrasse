@@ -133,6 +133,28 @@ function I.ClientCanVehicle(ent, ply)
     return true
 end
 
+--[[ Владелец ли игрок этой машины — прикидка для показа пункта «Ключи».
+
+     Отдельно от ClientCanVehicle: доступ к замку есть у всей фракции, а
+     раздавать ключи вправе только хозяин. Решение, как всегда, за
+     сервером — здесь лишь рисование. ]]
+function I.ClientIsVehicleOwner(ent, ply)
+    local V = _G.VK
+    if not V or not IsValid(ent) or not IsValid(ply) then return false end
+    if ply.IsSuperAdmin and ply:IsSuperAdmin() then return true end
+
+    local ownerType, ownerSteam = "", ""
+    if V.GetOwnerState then
+        ownerType, ownerSteam = V.GetOwnerState(ent)
+    else
+        ownerType = ent:GetNW2String("VK_OwnerType", "")
+        ownerSteam = ent:GetNW2String("VK_OwnerSteam", "")
+    end
+    local OT = V.OWNER_TYPE or { PLAYER = "player" }
+    if ownerType ~= OT.PLAYER or ownerSteam == "" then return false end
+    return ownerSteam == ply:SteamID64() or ownerSteam == ply:SteamID()
+end
+
 --[[ Действия для цели. Один список на клиента и сервер: клиент рисует
      его в кольце, сервер по нему же проверяет, что пришло.
 
@@ -212,6 +234,25 @@ function I.Actions(ply, ent, kind)
         out[#out + 1] = {
             id = "veh_trunk", name = "Багажник", enabled = can,
             why = not can and "Нет ключа или доступа" or nil,
+        }
+
+        --[[ ЛИЧНЫЕ КЛЮЧИ — здесь, а не на отдельной клавише.
+
+             В старом свепе транспорта это висело на R и знал о нём
+             только тот, кто прочитал подсказку оружия. Управлять
+             ключами может ВЛАДЕЛЕЦ, а не всякий, у кого есть доступ:
+             член фракции ездит на служебной машине, но раздавать от
+             неё ключи не должен. Поэтому отдельная проверка уровня
+             владельца, а не общий can. ]]
+        local owner
+        if SERVER then
+            owner = V.CanInteract and V.CanInteract(ent, ply, true) or false
+        else
+            owner = I.ClientIsVehicleOwner(ent, ply)
+        end
+        out[#out + 1] = {
+            id = "veh_keys", name = "Ключи", enabled = owner,
+            why = not owner and "Только владелец машины" or nil,
         }
         return out
     end
@@ -371,6 +412,14 @@ local function runAction(ply, ent, id)
         end
         return
     end
+
+    --[[ veh_keys здесь НЕ обрабатывается намеренно.
+
+         Окно выдачи личных ключей живёт в модуле ключей ТС и открывается
+         его штатным запросом VK_RequestPlayerList: там сервер сам
+         проверяет владельца и сам собирает список игроков. Клиент шлёт
+         этот запрос напрямую (см. I.Apply), а мы не заводим вторую копию
+         правил — она разошлась бы с оригиналом. ]]
 end
 
 net.Receive(NET_ACT, function(len, ply)
@@ -425,130 +474,218 @@ local C = {
     shadow  = Color(0, 0, 0, 225),
 }
 
-local R = {
+-----------------------------------------------------------------------
+-- ПАНЕЛЬ ДЕЙСТВИЙ (переделано 31.08 по заказу владельца).
+--
+-- «подсказка вылетает — нажмите ЛКМ для взаимодействия, он нажимает и
+--  удержанием ЛКМ возникает красивое меню чем-то похожее на круговое,
+--  но только прямоугольное и с плавно возникающими кнопками,
+--  полупрозрачными, с обводкой».
+--
+-- ЧТО ИЗМЕНИЛОСЬ ПРОТИВ ПРЕЖНЕЙ ВЕРСИИ:
+--   * кольцо заменено вертикальным списком карточек — в прямоугольнике
+--     помещается длинная подпись и причина отказа, в секторе они не
+--     влезали;
+--   * кнопки появляются по очереди с лёгким наездом снизу, а не все
+--     разом: глаз успевает проследить список;
+--   * выбор мышью обычный, наведением — попадать в сектор по углу для
+--     четырёх пунктов было лишним усложнением;
+--   * подсказка рисуется РЯДОМ с объектом (проекция его позиции на
+--     экран), а не в центре экрана.
+-----------------------------------------------------------------------
+local P = {
     open = false,
     items = {},
     sel = nil,
     ent = nil,
     kind = nil,
+    at = 0,
 }
-I.Radial = R
-R.InnerR = 92
-R.OuterR = 230
-R.LabelR = 162
+I.Panel = P
+-- Наружу отдаём под старым именем: на него смотрят стенды и StartCommand.
+I.Radial = P
+
+P.W = 268                 -- ширина карточки
+P.H = 46                  -- высота карточки
+P.Gap = 8
+P.HeadH = 54              -- шапка с названием объекта
+P.Appear = 0.055          -- задержка появления между кнопками
 
 local hover = { ent = nil, kind = nil, alpha = 0 }
 
---[[ Выбор пункта по УГЛУ от центра — как в меню соц.анимаций: вести
-     мышь в сторону быстрее, чем попадать в мелкую цель. Внутри
-     мёртвой зоны выбора нет: это способ закрыть кольцо, ничего не
-     сделав. ]]
-function R.Pick(mx, my, cx, cy, count)
-    if count <= 0 then return nil end
-    local dx, dy = mx - cx, my - cy
-    if math.sqrt(dx * dx + dy * dy) < R.InnerR then return nil end
-    -- Экранный Y растёт вниз, поэтому -dy: иначе кольцо зеркальное.
-    local ang = math.deg(math.atan2(dx, -dy))
-    if ang < 0 then ang = ang + 360 end
-    local step = 360 / count
-    local idx = math.floor((ang + step * 0.5) / step) + 1
-    if idx > count then idx = idx - count end
-    return idx
+--[[ Геометрия панели. Отдельной функцией: её же зовёт выбор мышью, и
+     рассогласование раскладки с выбором — тот самый класс багов, на
+     котором в проекте уже ловились гизмо и кольцо анимаций. ]]
+function P.Rect(count, sw, sh)
+    local h = P.HeadH + count * P.H + (count - 1) * P.Gap + 16
+    local x = math.floor((sw or ScrW()) * 0.5 - P.W * 0.5)
+    local y = math.floor((sh or ScrH()) * 0.5 - h * 0.5)
+    return x, y, P.W, h
 end
 
-function R.SlotPos(i, count, cx, cy, radius)
-    local a = math.rad((i - 1) * (360 / count) - 90)
-    return cx + math.cos(a) * radius, cy + math.sin(a) * radius
+function P.ItemRect(i, count, sw, sh)
+    local x, y = P.Rect(count, sw, sh)
+    return x + 10, y + P.HeadH + (i - 1) * (P.H + P.Gap), P.W - 20, P.H
 end
 
-function I.CloseRadial()
-    R.open = false
-    R.items, R.sel, R.ent, R.kind = {}, nil, nil, nil
-    if IsValid(R.panel) then R.panel:Remove() end
-    R.panel = nil
+function P.Pick(mx, my, count, sw, sh)
+    for i = 1, count do
+        local ix, iy, iw, ih = P.ItemRect(i, count, sw, sh)
+        if mx >= ix and mx <= ix + iw and my >= iy and my <= iy + ih then return i end
+    end
+    return nil
+end
+
+function I.ClosePanel()
+    P.open = false
+    P.items, P.sel, P.ent, P.kind = {}, nil, nil, nil
+    if IsValid(P.panel) then P.panel:Remove() end
+    P.panel = nil
     gui.EnableScreenClicker(false)
 end
+-- Прежнее имя: его зовут хуки и стенды.
+I.CloseRadial = I.ClosePanel
 
-function I.OpenRadial(ent, kind)
-    if IsValid(R.panel) then return end
+function I.OpenPanel(ent, kind)
+    if IsValid(P.panel) then return end
     local ply = LocalPlayer()
     if not IsValid(ply) or not IsValid(ent) then return end
 
-    R.items = I.Actions(ply, ent, kind)
-    if #R.items == 0 then return end
-    R.ent, R.kind, R.sel = ent, kind, nil
+    P.items = I.Actions(ply, ent, kind)
+    if #P.items == 0 then return end
+    P.ent, P.kind, P.sel, P.at = ent, kind, nil, RealTime()
 
     local f = vgui.Create("DPanel")
-    R.panel = f
-    R.open = true
+    P.panel = f
+    P.open = true
     f:SetSize(ScrW(), ScrH())
     f:SetPos(0, 0)
     f:SetPaintBackground(false)
     f:MakePopup()
-    -- Клавиатуру не забираем: иначе не придёт отпускание E и кольцо
-    -- зависнет (ровно этим болел инвентарь).
+    -- Клавиатуру не забираем: иначе не придёт отпускание ЛКМ и панель
+    -- зависнет. Ровно этим болел инвентарь.
     f:SetKeyboardInputEnabled(false)
     gui.EnableScreenClicker(true)
-    f.OnRemove = function() R.open = false R.panel = nil end
+    f.OnRemove = function() P.open = false P.panel = nil end
 
     f.Paint = function(_, w, h)
-        local cx, cy = w * 0.5, h * 0.5
+        local count = #P.items
         local mx, my = gui.MousePos()
-        local count = #R.items
+        P.sel = P.Pick(mx, my, count, w, h)
 
-        --[[ Отрисовка — общий модуль GRM.Radial (31.08, заказ владельца
-             «во всех радиальных меню дизайн поправь»). Свой набор
-             полигонов здесь был четвёртой копией одного и того же кода
-             и выглядел иначе, чем биндер. ]]
-        local RD = GRM.Radial
-        R.sel = RD.Pick(mx, my, cx, cy, count, R.InnerR)
+        local x, y, pw, ph = P.Rect(count, w, h)
+        local age = RealTime() - P.at
 
-        local name = I.TargetName(R.ent, R.kind)
-        local owner, locked = I.TargetSub(R.ent, R.kind)
+        --[[ Панель тоже въезжает: без этого она «щёлкает» на экране, и
+             глазу не за что зацепиться. Ease-out — движение мягко
+             тормозит, как у выезда инвентаря. ]]
+        local pa = math.Clamp(age / 0.13, 0, 1)
+        local pe = 1 - (1 - pa) * (1 - pa) * (1 - pa)
+        y = math.floor(y + (1 - pe) * 18)
+        local alpha = math.floor(pe * 255)
 
-        -- Пункты: подпись + причина отказа прямо под ней.
-        local items = {}
-        for i, act in ipairs(R.items) do
-            items[i] = {
-                name = act.name,
-                sub = (act.enabled == false) and act.why or nil,
-                enabled = act.enabled,
-                accent = act.accent == "good" and "good" or nil,
-            }
-        end
-        RD.Draw(cx, cy, items, R.sel, R.InnerR, R.OuterR, { labelR = R.LabelR })
+        -- Подложка: полупрозрачная, с обводкой.
+        draw.RoundedBox(8, x, y, pw, ph, Color(14, 18, 26, math.floor(226 * pe)))
+        surface.SetDrawColor(58, 74, 98, math.floor(200 * pe))
+        surface.DrawOutlinedRect(x, y, pw, ph, 1)
 
-        -- Центр: что за объект и заперт ли он.
-        draw.SimpleText(name, "GRMInt_Name", cx, cy - 14, RD.Col.text,
-            TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        draw.SimpleText(locked and "ЗАПЕРТО" or "ОТКРЫТО", "GRMInt_Small", cx, cy + 8,
-            locked and RD.Col.bad or RD.Col.good, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        -- Шапка: что за объект и заперт ли он.
+        local name = I.TargetName(P.ent, P.kind)
+        local owner, locked = I.TargetSub(P.ent, P.kind)
+        draw.SimpleText(GRM.Utf8Ellipsis(name, 24), "GRMInt_Name", x + 14, y + 16,
+            Color(236, 242, 250, alpha), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText(locked and "ЗАПЕРТО" or "ОТКРЫТО", "GRMInt_Small",
+            x + pw - 14, y + 16,
+            locked and Color(226, 96, 92, alpha) or Color(104, 214, 138, alpha),
+            TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
         if owner ~= "" then
-            draw.SimpleText(GRM.Utf8Ellipsis(owner, 22), "GRMInt_Small", cx, cy + 28,
-                RD.Col.dimText, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            draw.SimpleText(GRM.Utf8Ellipsis(owner, 34), "GRMInt_Small", x + 14, y + 36,
+                Color(150, 166, 186, alpha), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        end
+        surface.SetDrawColor(48, 60, 80, math.floor(180 * pe))
+        surface.DrawRect(x + 10, y + P.HeadH - 8, pw - 20, 1)
+
+        for i, act in ipairs(P.items) do
+            --[[ Кнопки проявляются по очереди. Своя дельта на каждую:
+                 список «набегает» сверху вниз и читается как единое
+                 движение, а не как вспышка. ]]
+            local d = math.Clamp((age - (i - 1) * P.Appear) / 0.16, 0, 1)
+            if d > 0 then
+                local e = 1 - (1 - d) * (1 - d) * (1 - d)
+                local a = math.floor(e * 255)
+                local ix, iy, iw, ih = P.ItemRect(i, count, w, h)
+                iy = math.floor(iy + (1 - e) * 12 + (1 - pe) * 18)
+
+                local on = (P.sel == i)
+                local off = (act.enabled == false)
+
+                -- Полупрозрачная заливка + обводка, как и просили.
+                local bg = Color(30, 38, 52, math.floor(196 * e))
+                if off then bg = Color(30, 30, 36, math.floor(150 * e))
+                elseif on then bg = Color(52, 116, 198, math.floor(232 * e)) end
+                draw.RoundedBox(6, ix, iy, iw, ih, bg)
+
+                local edge = Color(62, 78, 102, math.floor(190 * e))
+                if on then edge = Color(126, 182, 255, math.floor(230 * e)) end
+                surface.SetDrawColor(edge)
+                surface.DrawOutlinedRect(ix, iy, iw, ih, on and 2 or 1)
+
+                --[[ Цветная полоска слева отделяет опасное действие от
+                     обычного, не мешая читать подпись. ]]
+                local accent = Color(90, 110, 140, a)
+                if off then accent = Color(96, 92, 96, a)
+                elseif act.accent == "good" then accent = Color(104, 214, 138, a)
+                elseif act.accent == "warn" then accent = Color(240, 170, 90, a) end
+                draw.RoundedBox(2, ix + 6, iy + 9, 3, ih - 18, accent)
+
+                -- Текст только светлый: тёмный на тёмном нечитаем.
+                local tcol = Color(232, 238, 246, a)
+                if off then tcol = Color(150, 146, 150, a)
+                elseif on then tcol = Color(255, 255, 255, a) end
+                local hasWhy = off and act.why
+                draw.SimpleText(act.name, "GRMInt_Hint", ix + 18,
+                    hasWhy and (iy + ih * 0.36) or (iy + ih * 0.5), tcol,
+                    TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                if hasWhy then
+                    draw.SimpleText(act.why, "GRMInt_Small", ix + 18, iy + ih * 0.7,
+                        Color(198, 132, 132, a), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                end
+            end
         end
 
-        draw.SimpleTextOutlined("отпустите E — применить  ·  ПКМ — отмена", "GRMInt_Small",
-            cx, cy + R.OuterR + 26, RD.Col.dimText,
-            TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, RD.Col.shadow)
+        draw.SimpleText("отпустите ЛКМ — применить  ·  ПКМ — отмена", "GRMInt_Small",
+            x + pw * 0.5, y + ph + 14, Color(150, 166, 186, alpha),
+            TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end
 
     f.OnMousePressed = function(_, key)
-        if key == MOUSE_RIGHT then I.CloseRadial() return end
+        if key == MOUSE_RIGHT then I.ClosePanel() return end
         if key == MOUSE_LEFT then I.Apply() end
     end
 end
+I.OpenRadial = I.OpenPanel
 
 function I.Apply()
-    local act = R.sel and R.items[R.sel]
-    local ent = R.ent
-    I.CloseRadial()
+    local act = P.sel and P.items[P.sel]
+    local ent = P.ent
+    I.ClosePanel()
     if not act or not IsValid(ent) then return end
     if act.enabled == false then
         surface.PlaySound("buttons/button10.wav")
         return
     end
     surface.PlaySound("common/wpn_select.wav")
+
+    --[[ «Ключи» — штатный запрос модуля ключей ТС: он сам проверит
+         владельца и сам соберёт список игроков. Своей копии правил не
+         заводим, иначе разойдётся с оригиналом. ]]
+    if act.id == "veh_keys" then
+        net.Start("VK_RequestPlayerList")
+            net.WriteEntity(ent)
+        net.SendToServer()
+        return
+    end
+
     net.Start(NET_ACT)
         net.WriteEntity(ent)
         net.WriteString(act.id)
@@ -556,102 +693,124 @@ function I.Apply()
 end
 
 -----------------------------------------------------------------------
--- Точка и подсказка при подходе.
+-- Подсказка при подходе: РЯДОМ с объектом, а не в центре экрана.
 -----------------------------------------------------------------------
 hook.Add("HUDPaint", "GRM_Interact_Hint", function()
-    if R.open then return end
+    if P.open then return end
     if GetConVarNumber("grm_cl_interact") == 0 then return end
     local ply = LocalPlayer()
     if not IsValid(ply) or not ply:Alive() then return end
     if ply:InVehicle() then return end
 
-    --[[ Общий трейс из глаз через GRM.Perf: один на кадр на все
-         HUD-модули. Свой GetEyeTrace здесь означал бы ещё 60 трейсов
-         в секунду поверх существующих. ]]
     local ent, kind = I.FindTarget(ply, I.HintRange)
 
     -- Плавное появление: моргающая подсказка раздражает сильнее, чем
     -- её отсутствие.
     local want = (ent ~= nil) and 1 or 0
-    hover.alpha = math.Approach(hover.alpha, want, FrameTime() * 6)
+    hover.alpha = math.Approach(hover.alpha, want, FrameTime() * 5)
     if ent then hover.ent, hover.kind = ent, kind end
     if hover.alpha <= 0.01 then return end
 
     local target = hover.ent
     if not IsValid(target) then return end
 
-    local a = math.floor(hover.alpha * 255)
-    local cx, cy = ScrW() * 0.5, ScrH() * 0.5
+    --[[ Точку ставим НА ОБЪЕКТ: владелец просил подсказку «не на
+         машине, а рядом». Берём центр видимой части объекта и
+         проецируем на экран — так надпись привязана к двери или машине,
+         а не висит посреди прицела. ]]
+    local mins, maxs = target:GetRenderBounds()
+    local world = target:LocalToWorld((mins + maxs) * 0.5)
+    local scr = world:ToScreen()
+    if not scr or scr.visible == false then return end
 
-    -- Маленькая точка в центре экрана.
+    local a = math.floor(hover.alpha * 255)
+    -- Смещаем вбок от центра объекта, чтобы не перекрывать его.
+    local x = math.floor(scr.x) + 26
+    local y = math.floor(scr.y)
+
+    local name = I.TargetName(target, hover.kind)
+    local _, locked = I.TargetSub(target, hover.kind)
+
+    -- Маленькая точка-якорь у самого объекта.
     surface.SetDrawColor(236, 242, 250, a)
     draw.NoTexture()
     local dot = {}
     for i = 0, 12 do
         local ang = math.rad(i / 12 * 360)
-        dot[#dot + 1] = { x = cx + math.cos(ang) * 3, y = cy + math.sin(ang) * 3 }
+        dot[#dot + 1] = { x = scr.x + math.cos(ang) * 2.5, y = scr.y + math.sin(ang) * 2.5 }
     end
     surface.DrawPoly(dot)
+    surface.DrawLine(scr.x + 4, scr.y, x - 6, y)
 
-    local name = I.TargetName(target, hover.kind)
-    local _, locked = I.TargetSub(target, hover.kind)
+    --[[ Небольшая плашка: владелец просил «небольшая» и «адекватно».
+         Ширину считаем по тексту, чтобы не было пустой простыни. ]]
+    surface.SetFont("GRMInt_Hint")
+    local tw = surface.GetTextSize(name)
+    surface.SetFont("GRMInt_Small")
+    local hw = surface.GetTextSize("ЛКМ — действия")
+    local bw = math.max(tw, hw) + 22
+    local bh = 46
 
-    --[[ Текст СВЕТЛЫЙ и с обводкой. Тёмный текст на тёмной плашке —
-         именно та беда, на которую жаловался владелец; а поверх мира
-         даже светлый текст без обводки теряется на светлой стене. ]]
-    draw.SimpleTextOutlined(name, "GRMInt_Hint", cx, cy + 22,
-        Color(236, 242, 250, a), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, a))
-    draw.SimpleTextOutlined(locked and "заперто" or "открыто", "GRMInt_Small", cx, cy + 40,
-        locked and Color(226, 96, 92, a) or Color(104, 214, 138, a),
-        TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, a))
-    draw.SimpleTextOutlined("Удерживайте E — действия", "GRMInt_Small", cx, cy + 60,
-        Color(158, 172, 190, a), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, a))
+    draw.RoundedBox(6, x, y - bh * 0.5, bw, bh, Color(14, 18, 26, math.floor(0.9 * a)))
+    surface.SetDrawColor(58, 74, 98, math.floor(0.8 * a))
+    surface.DrawOutlinedRect(x, y - bh * 0.5, bw, bh, 1)
+    -- Полоска состояния слева: заперто или нет, видно без чтения.
+    draw.RoundedBox(2, x + 5, y - bh * 0.5 + 8, 3, bh - 16,
+        locked and Color(226, 96, 92, a) or Color(104, 214, 138, a))
+
+    draw.SimpleText(name, "GRMInt_Hint", x + 14, y - 9,
+        Color(236, 242, 250, a), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    draw.SimpleText("ЛКМ — действия", "GRMInt_Small", x + 14, y + 10,
+        Color(150, 166, 186, a), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
 end)
 
 -----------------------------------------------------------------------
--- Клавиша E: удержание открывает кольцо, отпускание применяет.
+-- ЛКМ: удержание открывает панель, отпускание применяет.
 -----------------------------------------------------------------------
 local holdStart, holdEnt, holdKind, armed = 0, nil, nil, false
-local passUse = 0        -- сколько тиков доиграть «съеденный» короткий клик
-local wasUse = false     -- держал ли игрок E в прошлом тике
-I.HoldTime = 0.22        -- сколько держать, чтобы вместо обычного E пришло кольцо
+local passAtk = 0        -- сколько тиков доиграть «съеденный» короткий клик
+local wasAtk = false     -- держал ли игрок ЛКМ в прошлом тике
+I.HoldTime = 0.22        -- сколько держать, чтобы вместо обычного клика пришло меню
 
---[[ ВСЯ ЛОГИКА E ЖИВЁТ В StartCommand (жалоба владельца 31.08,
-     повторно: «Всё ещё не исправлено»).
+--[[ ВСЯ ЛОГИКА КНОПКИ ЖИВЁТ В StartCommand.
 
-     ПЕРВАЯ ПОПЫТКА БЫЛА НЕВЕРНОЙ. Я ловил нажатие в PlayerButtonDown и
-     оттуда поднимал флаг, а снимал IN_USE уже в StartCommand. Но
-     PlayerButtonDown вызывается ПОСЛЕ того, как команда для сервера
-     сформирована и отправлена: к моменту, когда флаг поднят, первый
-     тик с зажатым «использовать» уже ушёл. Серверу одного тика
-     достаточно, чтобы открыть дверь — поэтому она и открывалась.
+     Урок 31.08: PlayerButtonDown вызывается ПОСЛЕ того, как команда
+     сформирована и отправлена. Пока мы там поднимали флаг, первый тик
+     с зажатой кнопкой уже уходил на сервер — и дверь открывалась
+     раньше, чем появлялось меню. Смотреть кнопку надо там же, где
+     формируется команда.
 
-     ПРАВИЛЬНО так: смотреть кнопку прямо в StartCommand, там же, где
-     команда и формируется. Нажатие мы видим в тот же тик, в котором
-     оно уходит, и снимаем его ДО отправки. Ни один тик не проскакивает.
+     ЛКМ вместо E (заказ владельца): E остаётся штатным «использовать»,
+     а меню теперь на ЛКМ. Короткий клик по-прежнему проходит наружу —
+     иначе сломались бы удары, стрельба и физган. ]]
+local function atkDown(cmd)
+    return cmd:KeyDown(IN_ATTACK)
+end
 
-     PlayerButtonDown для этой задачи не годится в принципе — он
-     сообщает о факте нажатия, но опаздывает на кадр относительно
-     потока команд. ]]
-local function useDown(cmd)
-    return cmd:KeyDown(IN_USE)
+--[[ Когда кнопку трогать НЕЛЬЗЯ. С оружием в руках ЛКМ — это выстрел,
+     и перехватывать его у двери недопустимо: игрок целился, а получил
+     меню. Поэтому меню работает только с пустыми руками или со
+     связкой ключей. ]]
+local function weaponAllows(ply)
+    local wep = ply:GetActiveWeapon()
+    if not IsValid(wep) then return true end
+    local cls = wep:GetClass()
+    return cls == "weapon_fists" or cls == "grm_keyring"
+        or cls == "ds_key_swep" or cls == "vehicle_keys_swep"
 end
 
 hook.Add("StartCommand", "GRM_Interact_Use", function(ply, cmd)
     if ply ~= LocalPlayer() then return end
 
     -- Доигрываем короткий клик, который сами же и придержали.
-    if passUse > 0 then
-        passUse = passUse - 1
-        cmd:SetButtons(bit.bor(cmd:GetButtons(), IN_USE))
-        wasUse = false
+    if passAtk > 0 then
+        passAtk = passAtk - 1
+        cmd:SetButtons(bit.bor(cmd:GetButtons(), IN_ATTACK))
+        wasAtk = false
         return
     end
 
-    ------------------------------------------------------------------
-    -- Кольцо открыто: мышь выбирает действие, игрок стоит.
-    ------------------------------------------------------------------
-    if R.open then
+    if P.open then
         cmd:ClearMovement()
         cmd:RemoveKey(IN_ATTACK)
         cmd:RemoveKey(IN_ATTACK2)
@@ -659,73 +818,61 @@ hook.Add("StartCommand", "GRM_Interact_Use", function(ply, cmd)
         cmd:SetViewAngles(ply:EyeAngles())
         cmd:SetMouseX(0)
         cmd:SetMouseY(0)
-        wasUse = useDown(cmd)
+        wasAtk = atkDown(cmd)
         return
     end
 
-    local down = useDown(cmd)
+    local down = atkDown(cmd)
 
-    ------------------------------------------------------------------
-    -- Момент нажатия: решаем, перехватывать ли эту клавишу.
-    ------------------------------------------------------------------
-    if down and not wasUse then
-        wasUse = true
+    if down and not wasAtk then
+        wasAtk = true
         armed = false
         if GetConVarNumber("grm_cl_interact") == 0 then return end
         if gui.IsGameUIVisible() or gui.IsConsoleVisible() then return end
         if ply.IsTyping and ply:IsTyping() then return end
         if not ply:Alive() or ply:InVehicle() then return end
+        if not weaponAllows(ply) then return end
 
         local ent, kind = I.FindTarget(ply, I.Range)
-        -- Нет цели — не наше дело, E работает как обычно.
         if not ent then return end
 
         holdStart, holdEnt, holdKind, armed = RealTime(), ent, kind, true
-        -- Придерживаем ЭТОТ ЖЕ тик: именно здесь дверь и открывалась.
-        cmd:RemoveKey(IN_USE)
+        -- Придерживаем ЭТОТ ЖЕ тик, до отправки на сервер.
+        cmd:RemoveKey(IN_ATTACK)
         return
     end
 
-    ------------------------------------------------------------------
-    -- Клавишу держат дальше.
-    ------------------------------------------------------------------
     if down and armed then
-        cmd:RemoveKey(IN_USE)
-        -- Порог пройден — показываем кольцо.
+        cmd:RemoveKey(IN_ATTACK)
         if RealTime() - holdStart >= I.HoldTime and IsValid(holdEnt) then
             armed = false
-            I.OpenRadial(holdEnt, holdKind)
+            I.OpenPanel(holdEnt, holdKind)
         end
-        wasUse = true
+        wasAtk = true
         return
     end
 
-    ------------------------------------------------------------------
-    -- Отпустили.
-    ------------------------------------------------------------------
-    if not down and wasUse then
-        wasUse = false
-        --[[ Отпустили раньше порога — это был обычный клик. Возвращаем
-             его игре: мы же его только что съели. Несколько тиков, а
-             не один: серверу нужно увидеть и нажатие, и отпускание. ]]
+    if not down and wasAtk then
+        wasAtk = false
+        --[[ Отпустили раньше порога — обычный клик. Возвращаем его игре:
+             несколько тиков, а не один, иначе сервер не засчитает. ]]
         if armed and (RealTime() - holdStart) < I.HoldTime then
-            passUse = 3
+            passAtk = 3
         end
         armed = false
         return
     end
 
-    wasUse = down
+    wasAtk = down
 end)
 
---[[ Отпускание клавиши при ОТКРЫТОМ кольце применяет выбор.
-
-     Здесь PlayerButtonUp уместен: кольцо уже на экране, гонки с
-     потоком команд нет, а хук даёт точный момент отпускания. ]]
+--[[ Отпускание при ОТКРЫТОЙ панели применяет выбор. Здесь
+     PlayerButtonUp уместен: панель уже на экране, гонки с потоком
+     команд нет. ]]
 hook.Add("PlayerButtonUp", "GRM_Interact_UseUp", function(ply, key)
     if ply ~= LocalPlayer() then return end
-    if key ~= KEY_E then return end
-    if R.open then
+    if key ~= MOUSE_LEFT then return end
+    if P.open then
         armed = false
         I.Apply()
     end

@@ -314,36 +314,39 @@ end
 print("\n=== 4. ГЕОМЕТРИЯ КОЛЬЦА ===")
 -----------------------------------------------------------------------
 do
-    --[[ Клиентская часть за if SERVER не выполнилась, поэтому кольцо
-         проверяем на его же формулах, выдернутых из файла. Главное —
-         согласованность раскладки и выбора: иначе игрок целится в один
-         пункт, а срабатывает соседний. ]]
+    --[[ 31.08 кольцо заменено ПРЯМОУГОЛЬНОЙ панелью (заказ владельца:
+         «меню чем-то похожее на круговое, но только прямоугольное»).
+         Проверяем то же свойство, что и раньше: раскладка кнопок и
+         выбор мышью обязаны совпадать, иначе игрок жмёт одно, а
+         срабатывает другое.
+
+         Сами формулы живут в модуле; здесь берём их оттуда, чтобы
+         стенд не проверял собственную копию. ]]
     local src = readf("lua/autorun/sh_grm_interact.lua")
-    local pickSrc = src:match("(function R%.Pick.-\nend)")
-    local slotSrc = src:match("(function R%.SlotPos.-\nend)")
-    ok(pickSrc and slotSrc, "формулы кольца найдены в модуле")
+    local rectSrc = src:match("(function P%.Rect.-\nend)")
+    local itemSrc = src:match("(function P%.ItemRect.-\nend)")
+    local pickSrc = src:match("(function P%.Pick.-\nend)")
+    ok(rectSrc and itemSrc and pickSrc, "формулы панели найдены в модуле")
 
-    local env = { math = math, R = { InnerR = 92, OuterR = 230, LabelR = 162 } }
-    local chunk = assert(loadstring(pickSrc .. "\n" .. slotSrc .. "\nreturn R"))
+    local env = { math = math, P = { W = 268, H = 46, Gap = 8, HeadH = 54 },
+        ScrW = function() return 1920 end, ScrH = function() return 1080 end }
+    local chunk = assert(loadstring(
+        "local P = P\n" .. rectSrc .. "\n" .. itemSrc .. "\n" .. pickSrc .. "\nreturn P"))
     setfenv(chunk, env)
-    local RR = chunk()
+    local PP = chunk()
 
-    local CX, CY = 960, 540
     local bad = {}
-    for count = 2, 8 do
+    for count = 1, 6 do
         for i = 1, count do
-            local lx, ly = RR.SlotPos(i, count, CX, CY, RR.LabelR)
-            if RR.Pick(lx, ly, CX, CY, count) ~= i then
+            local ix, iy, iw, ih = PP.ItemRect(i, count, 1920, 1080)
+            if PP.Pick(ix + iw * 0.5, iy + ih * 0.5, count, 1920, 1080) ~= i then
                 bad[#bad + 1] = count .. "/" .. i
             end
         end
     end
-    ok(#bad == 0, "наведение на подпись даёт именно её пункт", bad[1])
-
-    ok(RR.Pick(CX, CY, CX, CY, 4) == nil,
-        "в центре выбора нет — там название объекта")
-    ok(RR.Pick(CX, CY - RR.OuterR + 10, CX, CY, 4) == 1, "верхний пункт первый")
-    ok(RR.Pick(CX, CY - 200, CX, CY, 0) == nil, "пустой список не роняет выбор")
+    ok(#bad == 0, "клик в центр кнопки выбирает именно её", bad[1])
+    ok(PP.Pick(5, 5, 4, 1920, 1080) == nil, "клик мимо панели ничего не выбирает")
+    ok(PP.Pick(960, 540, 0, 1920, 1080) == nil, "пустой список не роняет выбор")
 end
 
 -----------------------------------------------------------------------
@@ -372,8 +375,17 @@ do
 
     ok(pal:find("shadow", 1, true) ~= nil,
         "есть чёрная обводка — светлый текст поверх мира иначе теряется")
-    ok(src:find("SimpleTextOutlined", 1, true) ~= nil,
-        "надписи поверх мира рисуются с обводкой")
+    --[[ Обводка была нужна кольцу: текст лежал прямо на мире и терялся
+         на светлой стене. У прямоугольной панели весь текст стоит на
+         СВОЕЙ непрозрачной подложке с рамкой, поэтому обводка больше не
+         требуется. Проверяем то, что важно на деле: под текстом всегда
+         есть подложка. ]]
+    ok(src:find("draw.RoundedBox(8, x, y, pw, ph", 1, true) ~= nil,
+        "у панели есть непрозрачная подложка под текстом")
+    ok(src:find("surface.DrawOutlinedRect(x, y, pw, ph, 1)", 1, true) ~= nil,
+        "и обводка по краю, как просил владелец")
+    ok(src:find("draw.RoundedBox(6, x, y - bh * 0.5, bw, bh", 1, true) ~= nil,
+        "у подсказки рядом с объектом тоже своя плашка")
 
     -- Стилистика проекта: та же тёмная подложка, что у прочих окон GRM.
     ok(pal:find("bg", 1, true) ~= nil and pal:find("card", 1, true) ~= nil,

@@ -688,7 +688,7 @@ local function openArmory(p,e)
 
     local myWeapons = {}
     for _,w in ipairs(p:GetWeapons()) do
-        if IsValid(w) and w:GetClass()~="weapon_fists" and w:GetClass()~="grm_handcuffs" and w:GetClass()~="grm_cuffed" and w:GetClass()~="vehicle_keys_swep" and w:GetClass()~="ds_key_swep" then
+        if IsValid(w) and w:GetClass()~="weapon_fists" and w:GetClass()~="grm_handcuffs" and w:GetClass()~="grm_cuffed" and w:GetClass()~="vehicle_keys_swep" and w:GetClass()~="ds_key_swep" and w:GetClass()~="grm_keyring" then
             myWeapons[#myWeapons+1] = { class = w:GetClass(), name = w:GetPrintName() or w:GetClass() }
         end
     end
@@ -777,7 +777,7 @@ local function armoryDepositActive(p,e)
         return
     end
     local class=w:GetClass()
-    if class=="grm_handcuffs" or class=="grm_cuffed" or class=="vehicle_keys_swep" or class=="ds_key_swep" then
+    if class=="grm_handcuffs" or class=="grm_cuffed" or class=="vehicle_keys_swep" or class=="ds_key_swep" or class=="grm_keyring" then
         notify(p,false,"Служебный предмет нельзя положить в шкаф")
         return
     end

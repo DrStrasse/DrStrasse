@@ -180,12 +180,21 @@ hook.Add("HUDPaint", "VK_PassiveVehicleOwnerHUD", function()
     if not VK.IsVehicle(veh) then return end
     if ply:GetPos():DistToSqr(veh:GetPos()) > (VK.HUD_RANGE or 220) ^ 2 then return end
 
+    --[[ Новый модуль взаимодействия рисует свою подсказку рядом с
+         машиной. Если оставить и эту, получим ДВЕ плашки об одном и том
+         же: старая по центру экрана, новая у объекта. Пока модуль
+         включён — молчим, он главный. ]]
+    if GRM.Interact then
+        local cv = GetConVar("grm_cl_interact")
+        if not cv or cv:GetInt() ~= 0 then return end
+    end
+
     local ownerType, _, ownerNick, factionName, locked = VK.GetOwnerState(veh)
     local trunkOpen = veh:GetNW2Bool("VK_TrunkOpen", false)
     local x, y = ScrW() / 2, ScrH() / 2 + 56
 
-    -- Название техники (GetVehicleDisplayName) убрано по заказу («Comedy
-    -- Effect») — остаются владелец, статус замка и подсказки управления.
+    -- Название техники (GetVehicleDisplayName) убрано по заказу владельца:
+    -- остаются владелец, статус замка и подсказки управления.
     if ownerType ~= "" or locked then
         local ownerText, ownerColor
         if ownerType == VK.OWNER_TYPE.PLAYER then

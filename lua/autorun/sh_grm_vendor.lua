@@ -122,7 +122,10 @@ V.Catalogs.food = V.Catalogs.food or {
 V.Catalogs.rare = V.Catalogs.rare or {
     -- SWEP (оружие) — продаются через ply:Give()
     ["ds_lockpick"]          = { name = "Взломщик (QTE)",        price = 2500,  model = "models/weapons/w_c4.mdl",            desc = "Взлом дверей, кейпадов и сканеров через QTE-мини-игру", maxStack = 1, isWeapon = true },
-    ["ds_key_swep"]          = { name = "Дверные ключи",       price = 500,   model = "models/weapons/w_keys.mdl",          desc = "Блокировка/разблокировка дверей",   maxStack = 1, isWeapon = true },
+    -- Единая связка вместо прежних двух свепов (двери + транспорт).
+    -- Старые классы остались в сборке ради уже выданных предметов,
+    -- но из продажи убраны, чтобы не плодить дубли на руках.
+    ["grm_keyring"]          = { name = "Связка ключей",       price = 500,   model = "models/weapons/w_keys.mdl",          desc = "Двери и транспорт: удерживайте ЛКМ рядом — меню действий", maxStack = 1, isWeapon = true },
     ["ds_battering_ram"]     = { name = "Полицейский таран",   price = 5000,  model = "models/weapons/w_rocket_launcher.mdl", desc = "Вскрытие дверей по ордеру",         maxStack = 1, isWeapon = true, license = "police" },
     ["grm_handcuffs"]        = { name = "Наручники",           price = 1500,  model = "models/weapons/w_cuffs.mdl",         desc = "Задержание подозреваемых",           maxStack = 1, isWeapon = true, license = "police" },
     ["weapon_grm_megaphone"] = { name = "Мегафон",             price = 3000,  model = "models/props_lab/tpplug.mdl",        desc = "Громкая связь для оповещений",       maxStack = 1, isWeapon = true },

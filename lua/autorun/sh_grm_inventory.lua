@@ -1239,7 +1239,7 @@ if SERVER then
             return false
         end
         -- SWEP наручников / ключей — не дропаем служебное
-        if class == "grm_handcuffs" or class == "grm_cuffed" or class == "vehicle_keys_swep" then
+        if class == "grm_handcuffs" or class == "grm_cuffed" or class == "vehicle_keys_swep" or class == "grm_keyring" then
             if GRM.Notify then GRM.Notify(ply, "Служебное оружие нельзя выбросить", 255, 180, 60) end
             return false
         end
