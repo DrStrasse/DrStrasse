@@ -434,6 +434,119 @@ if I3 and I3.Items and GRM.Inventory and GRM.Inventory.ItemDefs then
 end
 
 -- ================================================================
+print("\n=== 9. ЁМКОСТЬ РАБОТАЕТ ПРИ ЗАГРУЗКЕ В ПОРЯДКЕ GMOD ===")
+-- ================================================================
+--[[ ПОЧЕМУ РАЗДЕЛ ПОЯВИЛСЯ. Владелец прислал:
+         ошибка действия 'supply_take':
+         sh_grm_industry_container.lua:223:
+         attempt to index upvalue 'I' (a nil value)
+
+     Файл ёмкости по алфавиту идёт РАНЬШЕ ядра (container < core) и
+     брал `local I = GRM.Industry` в момент загрузки — получал nil.
+     Всё загружалось без единой ошибки, а первый же перенос предмета
+     падал. Стенд грузил файлы в правильном порядке, но НИ РАЗУ не
+     переносил предмет — поэтому молчал. ]]
+loadAll(CLIENT_FILES)
+
+local contPos, corePos
+for i, path in ipairs(ROOT_FILES) do
+    if path:find("sh_grm_industry_container%.lua$") then contPos = i end
+    if path:find("sh_grm_industry_core%.lua$") then corePos = i end
+end
+ok(contPos and corePos and contPos < corePos,
+    "файл ёмкости грузится РАНЬШЕ ядра — иначе раздел ничего не проверяет",
+    tostring(contPos) .. " / " .. tostring(corePos))
+
+local C = GRM and GRM.Container
+ok(C ~= nil, "контейнер поднялся")
+if C then
+    local id = "sim:loadorder"
+    local good, err = pcall(function()
+        C.Ensure(id, "store", "sim", -1)
+        C.Add(id, "scrap_metal", 3)
+        C.Count(id, "scrap_metal")
+        C.Weight(id)
+        C.List(id)
+        C.MoveUpTo(id, "sim:loadorder2", "scrap_metal", 1)
+        C.Take(id, "scrap_metal", 1)
+        C.Remove(id)
+    end)
+    ok(good, "ПЕРЕНОС ПРЕДМЕТОВ РАБОТАЕТ ПОСЛЕ ЗАГРУЗКИ В ПОРЯДКЕ GMOD", err)
+
+    -- Вес берётся из справочника ядра — значит ядро точно поднялось.
+    C.Ensure(id, "store", "sim", -1)
+    local w = C.Weight(id)
+    C.Add(id, "scrap_metal", 2)
+    ok(C.Weight(id) > w, "вес считается по справочнику ядра", C.Weight(id))
+    C.Remove(id)
+end
+
+-- ================================================================
+print("\n=== 10. ПОДПИСИ НЕ МОРГАЮТ ===")
+-- ================================================================
+--[[ ЖАЛОБА ВЛАДЕЛЬЦА: «подписи к предметам моргают».
+
+     GRM.Perf.Throttle пропускает вызов РОВНО ОДИН РАЗ за интервал
+     (sh_06_grm_performance.lua:34). Это ограничитель частоты
+     ВЫЧИСЛЕНИЙ. А он стоял на всём хуке, включая cam.Start3D2D:
+     хук зовётся шестьдесят раз в секунду, рисует четыре.
+
+     Проверяем самым простым способом: считаем вызовы отрисовки и
+     дёргаем хук два раза подряд. Второй раз — с тем же CurTime,
+     то есть расчёт обязан взяться из кэша, а нарисовать — обязателен.
+     Заморгало — значит второй вызов ничего не нарисовал. ]]
+loadAll(CLIENT_FILES)
+
+local DRAWN = 0
+_G.cam.Start3D2D = function() DRAWN = DRAWN + 1 end
+_G.cam.End3D2D = function() end
+
+local lblHook = stub.hooks["PostDrawTranslucentRenderables"]
+    and stub.hooks["PostDrawTranslucentRenderables"]["GRM_IndustryNodeLabels"]
+ok(lblHook ~= nil, "обработчик подписей зарегистрирован")
+
+if lblHook then
+    -- Узел рядом с игроком, иначе рисовать нечего и проверка пустая.
+    stub.makeEntity({ class = "grm_ind_station", pos = Vector(60, 0, 0) })
+    local ply = stub.makeEntity({ class = "player", isPlayer = true, pos = Vector(0, 0, 0) })
+    ply.EyePos = function() return Vector(0, 0, 64) end
+    ply.EyeAngles = function() return Angle(0, 0, 0) end
+    _G.LocalPlayer = function() return ply end
+    -- Сетевые переменные узла — как в настоящей сущности.
+    local last = nil
+    for _, e in ipairs(stub.entities) do
+        if e.class == "grm_ind_station" then
+            last = e
+            for name, vType in pairs(NODE_VARS) do
+                e["Get" .. name] = function() return VAR_DEFAULT[vType] end
+            end
+            e.GetNodeLabel = function() return "Печь №1" end
+        end
+    end
+    ok(last ~= nil, "узел для подписи создан")
+
+    local function drawOnce()
+        local before = DRAWN
+        local good, err = pcall(lblHook)
+        return good, err, DRAWN - before
+    end
+
+    local g1, e1, n1 = drawOnce()
+    ok(g1, "первый кадр отрисовался без ошибки", e1)
+    ok(n1 >= 1, "на первом кадре подпись нарисована", n1)
+
+    -- Второй кадр — сразу же, без сдвига времени: расчёт из кэша,
+    -- но отрисовка обязательна. Именно здесь моргание и ловится.
+    local g2, e2, n2 = drawOnce()
+    ok(g2, "второй кадр отрисовался без ошибки", e2)
+    ok(n2 >= 1, "ПОДПИСЬ РИСУЕТСЯ НА КАЖДОМ КАДРЕ, А НЕ РАЗ В ИНТЕРВАЛ", n2)
+
+    -- И третий, на всякий случай.
+    local _, _, n3 = drawOnce()
+    ok(n3 >= 1, "третий кадр тоже нарисован", n3)
+end
+
+-- ================================================================
 print("\n=== ИТОГ ===")
 -- ================================================================
 print(string.format("  пройдено: %d, провалено: %d", total - fails, fails))

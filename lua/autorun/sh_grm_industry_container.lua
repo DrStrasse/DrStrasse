@@ -23,6 +23,17 @@ if SERVER then AddCSLuaFile() end
 
 GRM = GRM or {}
 GRM.Container = GRM.Container or {}
+--[[ Таблицу создаём здесь, а не ждём ядра. ПО АЛФАВИТУ ЭТОТ ФАЙЛ
+     ИДЁТ РАНЬШЕ sh_grm_industry_core.lua (container < core),
+     поэтому `local I = GRM.Industry` ниже получал nil. Всё загружалось
+     без единой ошибки, а первый же перенос предмета падал:
+         attempt to index upvalue 'I' (a nil value)
+     Игрок видел «Сбой действия» и не мог взять лом из источника.
+
+     Поля (WeightOf, NameOf, Items) заполняет ядро — они нужны только
+     в момент обращения, а не при загрузке, поэтому создавать таблицу
+     здесь безопасно. ]]
+GRM.Industry = GRM.Industry or {}
 local C = GRM.Container
 
 C.Version = "1.0.0"

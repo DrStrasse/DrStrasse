@@ -296,34 +296,75 @@ function UI.NodeTitle(ent)
     return title, sub
 end
 
-hook.Add("PostDrawTranslucentRenderables", "GRM_IndustryNodeLabels", function()
-    if not (GRM.Perf and GRM.Perf.Throttle) then return end
-    if not GRM.Perf.Throttle("industry.labels", 0.25) then return end
+--[[ ПОДПИСИ НАД УЗЛАМИ: РАСЧЁТ РЕЖЕМ, РИСУЕМ КАЖДЫЙ КАДР.
 
+     Раньше GRM.Perf.Throttle стоял на ВСЁМ хуке, включая отрисовку.
+     А Throttle пропускает вызов РОВНО ОДИН РАЗ за интервал
+     (sh_06_grm_performance.lua:34) — это ограничитель частоты
+     вычислений, а не рисования. Получалось: хук вызывается шестьдесят
+     раз в секунду, а рисует четыре. Отсюда и моргание.
+
+     Правильно так: обход сущностей и чтение сетевых переменных
+     обновляем четыре раза в секунду в кэш, а рисуем из кэша на
+     каждом кадре. ]]
+local LABEL_REFRESH = 0.25
+local labelCache, labelCacheAt = {}, -1
+
+local function collectLabels(eye)
+    local out = {}
+    for _, class in ipairs(UI.NodeClasses) do
+        local list = (GRM.Perf and GRM.Perf.Entities and GRM.Perf.Entities(class))
+            or ents.FindByClass(class)
+        for _, ent in ipairs(list or {}) do
+            if IsValid(ent) and ent:GetPos():DistToSqr(eye) <= LABEL_RANGE * LABEL_RANGE then
+                local title, sub = UI.NodeTitle(ent)
+                out[#out + 1] = {
+                    ent    = ent,
+                    title  = title,
+                    sub    = sub,
+                    height = (ent.OBBMaxs and ent:OBBMaxs().z or 30) + 18,
+                }
+            end
+        end
+    end
+    return out
+end
+
+hook.Add("PostDrawTranslucentRenderables", "GRM_IndustryNodeLabels", function()
     local ply = LocalPlayer()
     if not IsValid(ply) then return end
     local eye = ply:EyePos()
 
-    for _, class in ipairs(UI.NodeClasses) do
-        local list = (GRM.Perf.Entities and GRM.Perf.Entities(class)) or ents.FindByClass(class)
-        for _, ent in ipairs(list or {}) do
-            if IsValid(ent) and ent:GetPos():DistToSqr(eye) <= LABEL_RANGE * LABEL_RANGE then
-                local title, sub = UI.NodeTitle(ent)
-                local height = (ent.OBBMaxs and ent:OBBMaxs().z or 30) + 18
-                local ang = Angle(0, ply:EyeAngles().y - 90, 90)
-                cam.Start3D2D(ent:GetPos() + Vector(0, 0, height), ang, 0.11)
-                    surface.SetFont("GRMInd_Head")
-                    local w = surface.GetTextSize(title)
-                    draw.SimpleText(title, "GRMInd_Head", 0, 0, UI.C.text, TEXT_ALIGN_CENTER)
-                    if sub ~= "" then
-                        draw.SimpleText(sub, "GRMInd_Small", 0, 22, UI.C.yellow, TEXT_ALIGN_CENTER)
-                        local w2 = surface.GetTextSize(sub)
-                        if w2 > w then w = w2 end
-                    end
-                    surface.SetDrawColor(UI.C.accent)
-                    surface.DrawOutlinedRect(-w / 2 - 8, -6, w + 16, 42, 2)
-                cam.End3D2D()
-            end
+    --[[ Расчёт — не чаще четырёх раз в секунду. Считает слой
+         производительности: GRM.Perf.Throttle пропускает ровно один
+         вызов за интервал, это как раз то, что нужно для обхода
+         сущностей и чтения сетевых переменных. Но под его запрет
+         нельзя ставить отрисовку — иначе подписи моргают. ]]
+    local now = CurTime()
+    local refresh = (now - labelCacheAt >= LABEL_REFRESH)
+    if refresh and GRM.Perf and GRM.Perf.Throttle then
+        refresh = GRM.Perf.Throttle("industry.labels", LABEL_REFRESH)
+    end
+    if refresh then
+        labelCache, labelCacheAt = collectLabels(eye), now
+    end
+
+    -- Отрисовка — КАЖДЫЙ кадр, иначе подписи моргают.
+    local ang = Angle(0, ply:EyeAngles().y - 90, 90)
+    for _, item in ipairs(labelCache or {}) do
+        if IsValid(item.ent) then
+            cam.Start3D2D(item.ent:GetPos() + Vector(0, 0, item.height), ang, 0.11)
+                surface.SetFont("GRMInd_Head")
+                local w = surface.GetTextSize(item.title)
+                draw.SimpleText(item.title, "GRMInd_Head", 0, 0, UI.C.text, TEXT_ALIGN_CENTER)
+                if item.sub ~= "" then
+                    draw.SimpleText(item.sub, "GRMInd_Small", 0, 22, UI.C.yellow, TEXT_ALIGN_CENTER)
+                    local w2 = surface.GetTextSize(item.sub)
+                    if w2 > w then w = w2 end
+                end
+                surface.SetDrawColor(UI.C.accent)
+                surface.DrawOutlinedRect(-w / 2 - 8, -6, w + 16, 42, 2)
+            cam.End3D2D()
         end
     end
 end)
