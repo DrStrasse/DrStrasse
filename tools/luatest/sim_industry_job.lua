@@ -100,7 +100,23 @@ GRM.Persistence = {
     SaveJSON = function() return true end,
 }
 GRM.Audit = { Write = function() end }
-GRM.Access = { Register = function() end, Can = function() return true end }
+--[[ Права повторяют СЕМАНТИКУ настоящего GRM.Access.Check: суперадмин
+     обходит запрет, а при отсутствии гранта решение принимает
+     `default`. В настоящем модуле default == false, то есть capability
+     ЗАПРЕЩЕНА по умолчанию — именно поэтому проверки ниже обязаны
+     утверждать, что открытые действия объявили default = true. ]]
+local ACCESS = {}
+GRM.Access = {
+    Register = function(id, definition) ACCESS[id] = definition end,
+    Can = function(ply, capability)
+        local def = ACCESS[capability]
+        if not def then return false, "unknown_capability" end
+        if IsValid(ply) and ply.IsSuperAdmin and ply:IsSuperAdmin() and def.superadminBypass ~= false then
+            return true, "superadmin"
+        end
+        return def.default == true, "default"
+    end,
+}
 --[[ Инвентарь игрока: у каждого персонажа свои слоты. Без него адаптер
      контейнера честно возвращает «не влезло», и проверка «чужой забрал
      готовое» падала бы не на политике доступа, а на отсутствии карманов. ]]
@@ -218,6 +234,11 @@ local function newPlayer(sid)
     p._sid = sid or "76561190000000001"
     p.SteamID64 = function() return p._sid end
     p.Alive = function() return true end
+    p._super = false
+    p.IsSuperAdmin = function() return p._super end
+    p.GetNWString = function(_, key) return key == "GRM_Faction" and (p._faction or "") or "" end
+    p.HasWeapon = function() return false end
+    p.Give = function() end
     return p
 end
 
@@ -567,6 +588,64 @@ do
     local stranger = newPlayer("76561190000000066")
     callAction(stranger, ent3, "job_resume")
     ok(job3.worker == busy, "идущую работу чужой не перехватывает")
+end
+
+-- ================================================================
+print("\n=== 10. ПРАВА ПОДКЛЮЧЕНЫ (пункт 9) ===")
+-- ================================================================
+do
+    --[[ БЫЛО: capability были зарегистрированы, но нигде не спрашивались —
+         производство держалось на честном слове. ]]
+    ok(ACCESS["industry.produce"] ~= nil, "capability производства зарегистрирована")
+    ok(ACCESS["industry.manage"] ~= nil, "capability наладки зарегистрирована")
+    ok(ACCESS["industry.logistics"] ~= nil, "capability логистики зарегистрирована")
+
+    --[[ САМОЕ ВАЖНОЕ. GRM.Access.Check при отсутствии гранта возвращает
+         `default == true`, то есть capability по умолчанию ЗАПРЕЩЕНА.
+         Если у открытых действий не выставить default = true, подключение
+         проверок разом заперло бы производство — вразрез с решением
+         владельца «станки общие». ]]
+    ok(ACCESS["industry.produce"].default == true,
+        "производство ОТКРЫТО по умолчанию (иначе станки перестанут работать)")
+    ok(ACCESS["industry.logistics"].default == true, "рейсы открыты по умолчанию")
+    ok(ACCESS["industry.manage"].default ~= true, "наладка закрыта по умолчанию")
+
+    ok(I.ActionCapability.job_start == "industry.produce", "запуск работы требует права производства")
+    ok(I.ActionCapability.station_setup == "industry.manage", "смена типа станка требует права наладки")
+
+    -- Обычный игрок может работать: право открыто по умолчанию.
+    local ent, rec = newStation("furnace")
+    fillInput(rec, { defective_components = 1 })
+    local worker = newPlayer("76561190000000301")
+    callAction(worker, ent, "job_start", "melt_components", 1)
+    ok(rec.job ~= nil, "работник запустил работу", rec.job)
+    I.CancelJob(I.Jobs[rec.job], "тест", false)
+
+    -- Наладку станка обычному игроку нельзя.
+    local ent2, rec2 = newStation("furnace")
+    local kindBefore = ent2:GetNodeKind()
+    callAction(worker, ent2, "station_setup", "weapon", 1)
+    ok(ent2:GetNodeKind() == kindBefore, "ОБЫЧНОМУ ИГРОКУ НАЛАДКА НЕ ДОСТУПНА", ent2:GetNodeKind())
+
+    -- Суперадмин наладку делает.
+    local boss = newPlayer("76561190000000302")
+    boss._super = true
+    callAction(boss, ent2, "station_setup", "weapon", 1)
+    ok(ent2:GetNodeKind() == "weapon", "суперадмин меняет тип станка", ent2:GetNodeKind())
+
+    --[[ Если фракция или админ ЗАКРОЮТ право производства, станок обязан
+         остановиться. Без этой проверки выданный запрет ни на что не влиял. ]]
+    ACCESS["industry.produce"].default = false
+    local ent3, rec3 = newStation("furnace")
+    fillInput(rec3, { defective_components = 1 })
+    callAction(worker, ent3, "job_start", "melt_components", 1)
+    ok(rec3.job == nil, "БЕЗ ПРАВА ПРОИЗВОДСТВА РАБОТА НЕ НАЧИНАЕТСЯ", rec3.job)
+    ok(C.Count(rec3.inID, "defective_components") == 1, "сырьё списано не было")
+
+    -- Суперадмин обходит запрет.
+    callAction(boss, ent3, "job_start", "melt_components", 1)
+    ok(rec3.job ~= nil, "суперадмин обходит запрет производства")
+    ACCESS["industry.produce"].default = true
 end
 
 -- ================================================================

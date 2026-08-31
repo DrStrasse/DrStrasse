@@ -156,13 +156,52 @@ end
 -- ================================================================
 --  РЕЙСЫ
 -- ================================================================
-function I.RouteFor(ply)
-    if not IsValid(ply) then return nil end
-    return I.Routes[I.CharKey(ply)]
+--[[ КЛЮЧ РЕЙСА — ПО АККАУНТУ, а не по персонажу (пункт 10 из списка
+     вопросов владельца). Раньше рейс не переживал перезапуск сервера:
+     груз уезжал обратно на точку отправления, а заказ снова открывался,
+     потому что привязанный к персонажу ключ после рестарта не совпадал.
+
+     Персонаж один активный на аккаунт, поэтому рейс логично вешается
+     на SteamID64: тогда после входа игрока рейс подцепляется сам, а
+     смена персонажа не теряет груз. ]]
+function I.RouteKey(ply)
+    if not IsValid(ply) then return "" end
+    return "s" .. tostring(ply:SteamID64() or "")
 end
 
+function I.RouteFor(ply)
+    if not IsValid(ply) then return nil end
+    return I.Routes[I.RouteKey(ply)]
+end
+
+--[[ ПОДЦЕПИТЬ РЕЙС К ВОШЕДШЕМУ ИГРОКУ. Вызывается при входе: если есть
+     сохранённый рейс этого аккаунта без живого водителя, он продолжается
+     с той же стадии и с тем же грузом. ]]
+function I.AttachRoute(ply)
+    if not IsValid(ply) then return nil end
+    local sid = tostring(ply:SteamID64() or "")
+    if sid == "" then return nil end
+    for key, route in pairs(I.Routes) do
+        if not IsValid(route.driver) and route.driverSID == sid then
+            route.driver = ply
+            route.lastPos = ply:GetPos()
+            notify(ply, "Рейс восстановлен: " ..
+                (route.phase == "collect" and "догрузитесь на точке отправления"
+                                           or "везём груз на склад"), true)
+            return route
+        end
+    end
+    return nil
+end
+
+hook.Add("PlayerInitialSpawn", "GRM_Industry_RouteAttach", function(ply)
+    timer.Simple(3, function()
+        if IsValid(ply) then I.AttachRoute(ply) end
+    end)
+end)
+
 function I.TakeOrder(ply, orderID)
-    local key = I.CharKey(ply)
+    local key = I.RouteKey(ply)
     if I.Routes[key] then notify(ply, "У вас уже есть рейс", false) return false end
 
     local order = I.Orders[orderID]
@@ -175,6 +214,7 @@ function I.TakeOrder(ply, orderID)
     local route = {
         key = key,
         driver = ply,
+        driverSID = tostring(ply:SteamID64() or ""),
         cargo = cargoID,
         orders = { orderID },
         phase = "collect",
@@ -195,7 +235,7 @@ end
 
 -- Погрузка: из контейнера депо в грузовой отсек.
 function I.LoadCargo(ply, ent, itemID, count)
-    local key = I.CharKey(ply)
+    local key = I.RouteKey(ply)
     local route = I.Routes[key]
     if not route then notify(ply, "Нет активного рейса", false) return false end
     if route.phase ~= "collect" then notify(ply, "Погрузка уже закончена", false) return false end
@@ -227,7 +267,7 @@ function I.LoadCargo(ply, ent, itemID, count)
 end
 
 function I.FinishLoading(ply)
-    local key = I.CharKey(ply)
+    local key = I.RouteKey(ply)
     local route = I.Routes[key]
     if not route or route.phase ~= "collect" then notify(ply, "Сейчас нечего закрывать", false) return false end
     if C.IsEmpty(route.cargo) then notify(ply, "Пустым не поедете", false) return false end
@@ -240,7 +280,7 @@ function I.FinishLoading(ply)
 end
 
 function I.DeliverOrder(ply, ent)
-    local key = I.CharKey(ply)
+    local key = I.RouteKey(ply)
     local route = I.Routes[key]
     if not route then notify(ply, "Нет активного рейса", false) return false end
     if route.phase ~= "haul" then notify(ply, "Сначала завершите погрузку", false) return false end
@@ -317,8 +357,11 @@ function I.AbandonRoute(route, reason)
                 order.state = "open"
                 order.carrier = nil
             end
+            -- Точки отправления могло не стать (узел удалили): тогда груз
+            -- уходит на склад-получатель, а не пропадает.
             local back = I.Nodes[order.from]
-            if back then
+            if not (back and back.outID) then back = I.Nodes[order.to] end
+            if back and back.outID then
                 for _, line in ipairs(C.List(route.cargo)) do
                     C.MoveUpTo(route.cargo, back.outID, line.itemID, line.count)
                 end
@@ -356,6 +399,7 @@ function I.SaveOrders()
     for key, route in pairs(I.Routes) do
         routes[key] = {
             key = key, orders = route.orders, phase = route.phase,
+            driverSID = route.driverSID or "",
             distance = math.floor(route.distance or 0), startedAt = route.startedAt,
             cargo = C.List(route.cargo),
         }
@@ -371,42 +415,65 @@ function I.LoadOrders()
     I.Orders = {}
     for id, order in pairs(data.orders or {}) do
         if istable(order) and order.state ~= "delivered" and order.state ~= "expired" then
-            -- Взятый заказ без водителя снова открыт.
-            if order.state == "taken" then
-                order.state = "open"
-                order.carrier = nil
-            end
             I.Orders[id] = order
         end
     end
 
-    local returned = 0
-    for _, route in pairs(data.routes or {}) do
-        if istable(route) then
-            local back = nil
-            for _, orderID in ipairs(route.orders or {}) do
-                local order = I.Orders[orderID]
-                if order and I.Nodes[order.from] then back = I.Nodes[order.from] break end
+    --[[ РЕЙСЫ ВОССТАНАВЛИВАЮТСЯ, А НЕ ВЫБРАСЫВАЮТСЯ (пункт 10). Водителя
+         на сервере ещё нет — он войдёт позже, поэтому ставим driver = nil
+         и ждём входа: I.AttachRoute подцепит рейс по SteamID. Груз лежит
+         в грузовом отсеке и никуда не девается.
+
+         Раньше здесь всё возвращалось на точку отправления, а заказ снова
+         открывался: рейс был привязан к персонажу, чей ключ после
+         перезапуска не совпадал. ]]
+    local restored = 0
+    for key, route in pairs(data.routes or {}) do
+        if istable(route) and istable(route.orders) and #route.orders > 0 then
+            local alive = false
+            for _, orderID in ipairs(route.orders) do
+                if I.Orders[orderID] then alive = true break end
             end
-            if back then
-                -- Кладём сохранённый груз во временную ёмкость и перевозим
-                -- её на точку отправления: так работает обычный атомарный
-                -- перенос, а не ручная правка двух контейнеров.
-                local tmp = C.Ensure("ind:route:restore", "store", "", -1)
-                C.Clear(tmp.id)
+            if alive then
+                local cargoID = routeContainerID(key)
+                C.Remove(cargoID)
+                C.Ensure(cargoID, "store", key, ROUTE_CAPACITY)
                 for _, line in ipairs(route.cargo or {}) do
-                    C.Add(tmp.id, line.itemID, line.count)
+                    C.Add(cargoID, line.itemID, math.floor(tonumber(line.count) or 0))
                 end
-                for _, line in ipairs(route.cargo or {}) do
-                    returned = returned + C.MoveUpTo(tmp.id, back.outID, line.itemID, line.count)
+                I.Routes[key] = {
+                    key = key,
+                    driver = nil,
+                    driverSID = tostring(route.driverSID or ""),
+                    cargo = cargoID,
+                    orders = route.orders,
+                    phase = (route.phase == "haul") and "haul" or "collect",
+                    startPos = nil,
+                    distance = tonumber(route.distance) or 0,
+                    lastPos = nil,
+                    startedAt = route.startedAt or os.time(),
+                }
+                -- Заказ остаётся за водителем: он его и довезёт.
+                for _, orderID in ipairs(route.orders) do
+                    local order = I.Orders[orderID]
+                    if order then order.state = "taken" order.carrier = key end
                 end
+                restored = restored + 1
             end
         end
     end
-    C.Remove("ind:route:restore")
-    I.Routes = {}
-    if returned > 0 then
-        print("[GRM Industry] после перезапуска на точки отправления вернулось груза: " .. returned)
+
+    -- Рейс, у которого не нашлось ни одного заказа, всё равно держит груз:
+    -- возвращаем его, чтобы он не висел мёртвым контейнером.
+    for key, route in pairs(I.Routes) do
+        local any = false
+        for _, orderID in ipairs(route.orders) do if I.Orders[orderID] then any = true break end end
+        if not any then I.AbandonRoute(route, "Заказ исчез") end
+    end
+
+    if restored > 0 then
+        print("[GRM Industry] восстановлено рейсов после перезапуска: " .. restored ..
+            " (водители подцепятся при входе)")
     end
 end
 
@@ -507,7 +574,7 @@ local function openWarehouse(ply, ent, rec)
         weight = C.Weight(rec.outID),
         capacity = C.Capacity(rec.outID),
         demand = rec.demand or {},
-        canManage = ply:IsSuperAdmin(),
+        canManage = I.CanManage(ply),
         orders = orders,
         route = nil,
         itemNames = {},
@@ -558,10 +625,6 @@ end
 -- ================================================================
 --  ДЕЙСТВИЯ ЛОГИСТИКИ
 -- ================================================================
-if GRM.Access and GRM.Access.Register then
-    GRM.Access.Register("logistics.haul", { name = "Рейсы", description = "Брать и возить заказы логистики" })
-end
-
 local Actions = {}
 
 Actions.order_take = function(ply, ent, rec)
@@ -596,7 +659,7 @@ end
 
 -- Спрос склада: какие позиции и в каких границах держать.
 Actions.warehouse_demand = function(ply, ent, rec)
-    if not ply:IsSuperAdmin() then notify(ply, "Только для суперадмина", false) return false end
+    if not I.CanManage(ply) then notify(ply, "Нет права наладки цеха", false) return false end
     local demand = net.ReadTable()
     local clean = {}
     if istable(demand) then
@@ -616,7 +679,17 @@ Actions.warehouse_demand = function(ply, ent, rec)
 end
 
 -- Шкаф фракции: положить оружие с рук.
+--[[ ШКАФ ФРАКЦИИ (пункт 8). Проверяем фракцию и здесь, а не только при
+     открытии окна: действие приходит по сети, и полагаться на то, что
+     окно кто-то открывал, нельзя. ]]
+local function armoryAllowed(ply, ent)
+    local allowed, why = I.CanUseFactionNode(ply, ent)
+    if not allowed then notify(ply, "Шкаф принадлежит другой фракции", false) end
+    return allowed
+end
+
 Actions.armory_store = function(ply, ent, rec)
+    if not armoryAllowed(ply, ent) then return false end
     local class = net.ReadString()
     local wep = ply:GetWeapon(class)
     if not IsValid(wep) then notify(ply, "У вас нет этого оружия", false) return false end
@@ -634,6 +707,7 @@ end
 
 -- Шкаф фракции: взять оружие в руки.
 Actions.armory_take = function(ply, ent, rec)
+    if not armoryAllowed(ply, ent) then return false end
     local class = net.ReadString()
     if C.Count(rec.outID, class) < 1 then notify(ply, "В шкафу этого нет", false) return false end
     if ply:HasWeapon(class) then notify(ply, "Оно у вас уже есть", false) return false end

@@ -36,6 +36,7 @@ end
 local NOW = 1000
 local TIMERS = {}
 local SIMPLE = {}
+local NET_HANDLERS = {}
 local PAID = {}
 
 SERVER = true
@@ -79,7 +80,7 @@ net = {
     Start = function() net._buf = {} end,
     Send = function() end,
     SendToServer = function() end,
-    Receive = function(name, fn) end,
+    Receive = function(name, fn) NET_HANDLERS[name] = fn end,
     WriteEntity = function() end, WriteString = function() end,
     WriteUInt = function() end, WriteFloat = function() end,
     WriteBool = function() end, WriteTable = function() end,
@@ -93,9 +94,22 @@ concommand = { Add = function() end, Run = function() end }
 HUD_PRINTCONSOLE = 2
 
 GRM = GRM or {}
+--[[ Хранилище в памяти с глубокой копией. Без копии сохранённая таблица
+     продолжала бы меняться вместе с боевой, и круг save/load проверял бы
+     сам себя. ]]
+local STORE = {}
+local function deepCopy(v)
+    if type(v) ~= "table" then return v end
+    local out = {}
+    for k, x in pairs(v) do out[k] = deepCopy(x) end
+    return out
+end
 GRM.Persistence = {
-    LoadJSON = function(path, defaults) return defaults, "missing" end,
-    SaveJSON = function() return true end,
+    SaveJSON = function(path, data) STORE[path] = deepCopy(data) return true, "saved" end,
+    LoadJSON = function(path, defaults)
+        if STORE[path] == nil then return deepCopy(defaults), "missing" end
+        return deepCopy(STORE[path]), "ok"
+    end,
 }
 GRM.Audit = { Write = function() end }
 GRM.Access = { Register = function() end, Can = function() return true end }
@@ -162,11 +176,45 @@ local function newEnt(role)
     return e
 end
 
-local function newPlayer()
+local function newPlayer(sid, faction, super)
     local p = newEnt("player")
     p.pos = V(0, 0, 0)
+    p._sid = sid or "76561190000000002"
+    p._faction = faction or ""
+    p._super = super == true
+    p.SteamID64 = function() return p._sid end
+    p.GetNWString = function(_, key) return key == "GRM_Faction" and p._faction or "" end
+    p.IsSuperAdmin = function() return p._super end
     p.Alive = function() return true end
+    -- Оружие в руках: нужно для выдачи и сдачи в шкаф фракции.
+    p._weapons = {}
+    p.HasWeapon = function(_, cls) return p._weapons[cls] == true end
+    p.Give = function(_, cls) p._weapons[cls] = true end
+    p.StripWeapon = function(_, cls) p._weapons[cls] = nil end
+    p.GetWeapon = function(_, cls)
+        if not p._weapons[cls] then return nil end
+        return { GetClass = function() return cls end }
+    end
+    p.GetWeapons = function()
+        local out = {}
+        for cls in pairs(p._weapons) do out[#out + 1] = { GetClass = function() return cls end } end
+        return out
+    end
     return p
+end
+
+--[[ Вызов боевого обработчика действий: читалки net подставляем сами.
+     Так проверяется настоящая политика доступа из Actions, а не её копия. ]]
+local function callAction(ply, ent, op, itemID, count)
+    local handler = NET_HANDLERS["GRM_IND_Action"]
+    if not handler then return end
+    local strings = { op, itemID or "" }
+    local si = 0
+    net.ReadEntity = function() return ent end
+    net.ReadString = function() si = si + 1 return strings[si] or "" end
+    net.ReadUInt = function() return count or 1 end
+    net.ReadTable = function() return {} end
+    handler(64, ply)
 end
 
 --[[ Узлы и заказы живут в общих таблицах модуля, поэтому между
@@ -444,6 +492,96 @@ do
     order.deadline = os.time() - 10
     TIMERS["GRM_Industry_Logistics"]()
     ok(order.state == "expired", "просроченный заказ снят", order.state)
+end
+
+-- ================================================================
+print("\n=== 7. ШКАФ ПРИНАДЛЕЖИТ ФРАКЦИИ (пункт 8) ===")
+-- ================================================================
+do
+    --[[ БЫЛО: поле «фракция» у узла было подписью для окна, проверки не
+         было вовсе — оружие из шкафа фракции мог забрать любой прохожий. ]]
+    resetWorld()
+    local armEnt, arm = newNode("armory", V(0, 0, 0))
+    armEnt:SetFactionName("police")
+    C.Add(arm.outID, "arccw_makarov", 3)
+
+    local outsider = newPlayer("76561190000000101", "civ", false)
+    local officer  = newPlayer("76561190000000102", "police", false)
+    local chief    = newPlayer("76561190000000103", "army", true)   -- суперадмин
+
+    ok(I.CanUseFactionNode(outsider, armEnt) == false, "чужой в шкаф не пускается")
+    ok(I.CanUseFactionNode(officer, armEnt) == true, "сотрудник фракции пускается")
+    ok(I.CanUseFactionNode(chief, armEnt) == true, "суперадмин пускается всегда")
+
+    -- Действие приходит по сети, поэтому проверяем и сам обработчик:
+    -- нельзя полагаться на то, что окно кто-то открывал.
+    callAction(outsider, armEnt, "armory_take", "arccw_makarov", 1)
+    ok(C.Count(arm.outID, "arccw_makarov") == 3, "ЧУЖОЙ НЕ ВЗЯЛ ОРУЖИЕ", C.Count(arm.outID, "arccw_makarov"))
+
+    callAction(officer, armEnt, "armory_take", "arccw_makarov", 1)
+    ok(C.Count(arm.outID, "arccw_makarov") == 2, "сотрудник фракции оружие взял",
+        C.Count(arm.outID, "arccw_makarov"))
+
+    -- Шкаф без фракции — общий.
+    local pubEnt, pub = newNode("armory", V(50, 0, 0))
+    C.Add(pub.outID, "arccw_p228", 1)
+    ok(I.CanUseFactionNode(outsider, pubEnt) == true, "шкаф без фракции общий")
+    callAction(outsider, pubEnt, "armory_take", "arccw_p228", 1)
+    ok(C.Count(pub.outID, "arccw_p228") == 0, "из общего шкафа взял любой")
+end
+
+-- ================================================================
+print("\n=== 8. РЕЙС ПЕРЕЖИВАЕТ ПЕРЕЗАПУСК (пункт 10) ===")
+-- ================================================================
+do
+    --[[ БЫЛО: после рестарта рейс пропадал — груз уезжал обратно на
+         точку отправления, а заказ снова открывался. Причина: рейс был
+         привязан к персонажу, чей ключ после перезапуска не совпадал. ]]
+    resetWorld()
+    local depotEnt, depot = newNode("depot", V(0, 0, 0))
+    local whEnt, wh = newNode("warehouse", V(6000, 0, 0))
+    wh.demand = { arccw_makarov = { min = 5, max = 10 } }
+    C.Add(depot.outID, "arccw_makarov", 12)
+
+    I.RefreshOrders(wh)
+    local order
+    for _, o in pairs(I.Orders) do order = o break end
+
+    local ply = newPlayer("76561190000000201", "", false)
+    I.TakeOrder(ply, order.id)
+    local route = I.RouteFor(ply)
+    I.LoadCargo(ply, depotEnt, "arccw_makarov", 10)
+    I.FinishLoading(ply)
+    ok(route.phase == "haul", "рейс ушёл в путь")
+    ok(C.Count(route.cargo, "arccw_makarov") == 10, "в машине десять стволов")
+
+    -- Перезапуск: сохраняем и поднимаем состояние заново.
+    I.SaveOrders()
+    local savedKey = route.key
+    I.Routes = {}
+    C.Remove(route.cargo)
+    ok(I.RouteFor(ply) == nil, "после «рестарта» рейса нет")
+
+    I.LoadOrders()
+
+    ok(I.Routes[savedKey] ~= nil, "РЕЙС ВОССТАНОВЛЕН после перезапуска")
+    local back = I.Routes[savedKey]
+    ok(back.phase == "haul", "стадия сохранена: груз в пути", back.phase)
+    ok(C.Count(back.cargo, "arccw_makarov") == 10, "ГРУЗ ЦЕЛ — десять стволов в машине",
+        C.Count(back.cargo, "arccw_makarov"))
+    ok(back.driver == nil, "водителя пока нет — он ещё не зашёл")
+    ok(I.Orders[order.id] ~= nil and I.Orders[order.id].state == "taken",
+        "заказ остался за водителем, а не откатился в «открыт»")
+
+    -- Водитель заходит — рейс подцепляется сам.
+    ok(I.AttachRoute(ply) == back, "рейс подцепился к вошедшему водителю")
+    ok(I.RouteFor(ply) == back, "RouteFor нашёл восстановленный рейс")
+
+    -- И его можно довезти и сдать.
+    PAID = {}
+    ok(I.DeliverOrder(ply, whEnt) == true, "восстановленный рейс сдан")
+    ok(C.Count(wh.outID, "arccw_makarov") == 10, "груз доехал до склада")
+    ok(#PAID == 1 and PAID[1].ply == ply, "награда выплачена водителю")
 end
 
 -- ================================================================

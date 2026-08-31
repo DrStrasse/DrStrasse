@@ -66,6 +66,42 @@ local function charKey(ply)
 end
 I.CharKey = charKey
 
+--[[ ФРАКЦИЯ УЗЛА (пункт 8 из списка вопросов владельца). Раньше поле
+     «фракция» у узла было только подписью для окна: проверки не было
+     вовсе, и оружие из шкафа фракции мог забрать кто угодно.
+
+     Пустая фракция — узел общий. Фракция указана — пускаем только
+     её членов и суперадмина. ]]
+--[[ НАЛАДКА: право industry.manage ИЛИ суперадмин. Раньше действия
+     проверяли только IsSuperAdmin, и выданное capability ни на что не
+     влияло — выдали право в /factions, а человек всё равно не может. ]]
+function I.CanManage(ply)
+    if not IsValid(ply) then return false end
+    if ply:IsSuperAdmin() then return true end
+    if GRM.Access and GRM.Access.Can then
+        return GRM.Access.Can(ply, "industry.manage", {}) == true
+    end
+    return false
+end
+
+function I.FactionOf(ply)
+    if not IsValid(ply) then return "" end
+    return tostring(ply:GetNWString("GRM_Faction", "") or "")
+end
+
+function I.CanUseFactionNode(ply, ent)
+    if not IsValid(ply) then return false, "invalid_player" end
+    local faction = tostring(ent and ent.GetFactionName and ent:GetFactionName() or "")
+    if faction == "" then return true, "public" end
+    if ply:IsSuperAdmin() then return true, "superadmin" end
+    if I.FactionOf(ply) == faction then return true, "faction" end
+    if _G.FactionsAPI and _G.FactionsAPI.IsMember then
+        local ok, member = pcall(_G.FactionsAPI.IsMember, faction, ply)
+        if ok and member == true then return true, "faction" end
+    end
+    return false, "faction_mismatch"
+end
+
 local function newID(prefix)
     return tostring(prefix or "node") .. "_" .. tostring(os.time()) .. "_" .. tostring(math.random(100000, 999999))
 end
@@ -664,6 +700,16 @@ function I.OpenNode(ply, ent)
     local rec = I.NodeFor(ent)
     if not rec then notify(ply, "Узел не настроен", false) return end
 
+    -- Шкаф фракции: сначала фракция, потом окно. Поле «фракция» у узла
+    -- было подписью без проверки — оружие мог забрать любой.
+    if rec.role == "armory" then
+        local allowed, why = I.CanUseFactionNode(ply, ent)
+        if not allowed then
+            notify(ply, "Шкаф принадлежит другой фракции", false)
+            return
+        end
+    end
+
     -- Логистика обрабатывает свои роли сама.
     if I.NodeHandlers[rec.role] then
         I.NodeHandlers[rec.role](ply, ent, rec)
@@ -874,7 +920,7 @@ end
 
 -- Наладка станка: смена типа и ремонт.
 Actions.station_setup = function(ply, ent, rec)
-    if not ply:IsSuperAdmin() then notify(ply, "Только для суперадмина", false) return false end
+    if not I.CanManage(ply) then notify(ply, "Нет права наладки цеха", false) return false end
     local kind = net.ReadString()
     if not I.Stations[kind] then notify(ply, "Неизвестный тип станка", false) return false end
     if rec.job and I.Jobs[rec.job] then notify(ply, "Сначала остановите работу", false) return false end
@@ -915,13 +961,20 @@ net.Receive(NET.action, function(bits, ply)
     -- ЕДИНАЯ ТОЧКА ПРОВЕРКИ. Старые обработчики цеха и логистики не
     -- проходили через GRM.Net.Guard вообще — ни рейта, ни лимита
     -- размера, ни дистанции.
+    local cap = I.ActionCapability[op]
     if GRM.Net and GRM.Net.Guard then
         local ok = GRM.Net.Guard(ply, "industry." .. tostring(op), {
             rate = 0.25, burst = 6, maxBits = 32768, distance = 300,
+            capability = cap,
         }, { bits = bits, entity = ent })
         if ok ~= true then return end
-    elseif not inRange(ply, ent, 300) then
-        return
+    else
+        -- Без GRM.Net.Guard (например, в стендах) права всё равно проверяем.
+        if cap and GRM.Access and GRM.Access.Can and not GRM.Access.Can(ply, cap, { entity = ent }) then
+            notify(ply, "Нет права: " .. cap, false)
+            return
+        end
+        if not inRange(ply, ent, 300) then return end
     end
 
     local ok, err = pcall(fn, ply, ent, rec)
@@ -1150,10 +1203,62 @@ end)
 -- ================================================================
 --  ПРАВА
 -- ================================================================
+--[[ Пункт 9 из списка вопросов владельца: capability были зарегистрированы,
+     но нигде не спрашивались — производство держалось на честном слове.
+
+     ЗНАЧЕНИЕ default КРИТИЧНО. GRM.Access.Can возвращает
+     `definition.default == true`, когда нет ни гранта, ни провайдера:
+     то есть по умолчанию capability ЗАПРЕЩЕНА. Поэтому открытые действия
+     обязаны объявить default = true, иначе подключение проверок разом
+     заперло бы производство для всех — вразрез с решением владельца
+     «станки общие». Суперадмин обходит запрет автоматически
+     (superadminBypass по умолчанию включён). ]]
+I.ActionCapability = {
+    -- Работа у станка и торговля: открыто всем, но фракция или админ
+    -- могут закрыть точечной выдачей права в /factions → Доступы.
+    deposit          = "industry.produce",
+    withdraw         = "industry.produce",
+    job_start        = "industry.produce",
+    job_resume       = "industry.produce",
+    job_cancel       = "industry.produce",
+    supply_take      = "industry.produce",
+    storage_deposit  = "industry.produce",
+    storage_take     = "industry.produce",
+    market_sell      = "industry.produce",
+    market_buy_scrap = "industry.produce",
+    station_repair   = "industry.produce",
+
+    -- Наладка: только по выдаче. Менять тип станка и спрос склада
+    -- может не каждый — это настройка экономики сервера.
+    station_setup    = "industry.manage",
+    warehouse_demand = "industry.manage",
+
+    -- Рейсы и шкаф: открыто, но закрываемо.
+    order_take       = "industry.logistics",
+    order_load       = "industry.logistics",
+    order_go         = "industry.logistics",
+    order_deliver    = "industry.logistics",
+    route_abandon    = "industry.logistics",
+    armory_store     = "industry.logistics",
+    armory_take      = "industry.logistics",
+}
+
 if GRM.Access and GRM.Access.Register then
-    GRM.Access.Register("industry.produce", { name = "Производство", description = "Работать на станках" })
-    GRM.Access.Register("industry.manage", { name = "Наладка цеха", description = "Менять тип станка, спрос склада" })
-    GRM.Access.Register("industry.logistics", { name = "Логистика", description = "Брать заказы и водить рейсы" })
+    GRM.Access.Register("industry.produce", {
+        label = "Производство",
+        description = "Работать на станках, склады и точки сбыта",
+        default = true,          -- станки общие (решение владельца 31.08)
+    })
+    GRM.Access.Register("industry.manage", {
+        label = "Наладка цеха",
+        description = "Менять тип станка и спрос склада фракции",
+        default = false,         -- только по выдаче
+    })
+    GRM.Access.Register("industry.logistics", {
+        label = "Логистика",
+        description = "Брать заказы, возить грузы, пользоваться шкафом фракции",
+        default = true,          -- рейсы открыты, награда в руки
+    })
 end
 
 print("[GRM Industry] сервер загружен, версия " .. tostring(I.Version))
