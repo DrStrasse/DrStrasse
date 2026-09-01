@@ -114,7 +114,11 @@ local function scanHasMaterial(path) return inScan(V.state.scan.materials, path)
 local function scanHasSound(path) return inScan(V.state.scan.sounds, path) end
 
 local function playSoundPath(path)
+    path = tostring(path or "")
     if path == "" then notify("Сначала выбери звук") return end
+    -- Каталог хранит пути с префиксом sound/; звуковой движок ищет его
+    -- сам, двойной префикс (sound/sound/…) не проигрывается молча.
+    if string.sub(path, 1, 6) == "sound/" then path = string.sub(path, 7) end
     local lp = LocalPlayer()
     if not IsValid(lp) then notify("Нет игрока для прослушивания") return end
     sound.Play(path, lp:GetPos() + Vector(0, 0, 50), 1, 100)
@@ -692,7 +696,10 @@ local function drawOneNode(b, selected)
 end
 
 local function drawScene(w, h, eye, ang)
-    cam.Start3D(eye, ang, 55, w, h, 1, 4000)
+    -- Сигнатура: (eye, ang, fov, x, y, w, h, near, far) — раньше x=w,
+    -- y=h, и вьюпорт рисовался в полоску 1x4000 (режим сцены был бы
+    -- нечитаем). Все аргументы на своих местах.
+    cam.Start3D(eye, ang, 55, 0, 0, w, h, 1, 4000)
     render.SetColorMaterial()
     for gx = -240, 240, 40 do render.DrawBeam(Vector(gx, -240, 0), Vector(gx, 240, 0), 1, 0, 1, Color(36, 46, 62)) end
     for gy = -240, 240, 40 do render.DrawBeam(Vector(-240, gy, 0), Vector(240, gy, 0), 1, 0, 1, Color(36, 46, 62)) end
@@ -878,7 +885,11 @@ rebuildCode = function()
         p.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, COL.bg) end
         local e = vgui.Create("DTextEntry", p)
         e:Dock(FILL) e:DockMargin(8, 8, 8, 34)
-        e:SetMultiline(true) e:SetReadOnly(true)
+        e:SetMultiline(true)
+        -- В GMod у DTextEntry НЕТ SetReadOnly (падает «nil value»).
+        -- Текстовый вывод кода делается SetEditable(false): текст можно
+        -- выделять и копировать, но не редактировать.
+        e:SetEditable(false)
         e:SetText(content)
         local copy = mkBtn(p, "КОПИРОВАТЬ В БУФЕР", COL.accent)
         copy:Dock(BOTTOM) copy:SetTall(26) copy:DockMargin(8, 0, 8, 6)
@@ -1484,13 +1495,13 @@ local function sceneRow(sp, b)
     end
     local d = A.DefOf(b.kind)
     local head = vgui.Create("DLabel", row)
-    head:SetPos(180, 8) head:SetSize(row:GetWide() - 200, 20)
+    head:SetPos(180, 8) head:SetSize(math.max(120, row:GetWide() - 200), 20)
     head:SetText(tostring(d.name) .. " · uid " .. tostring(b.uid))
     head:SetFont("AS_Small") head:SetTextColor(COL.gold)
 
     local pos = (b.data or {}).pos or {}
     local info = vgui.Create("DLabel", row)
-    info:SetPos(180, 32) info:SetSize(row:GetWide() - 200, 48)
+    info:SetPos(180, 32) info:SetSize(math.max(120, row:GetWide() - 200), 48)
     info:SetText(string.format("поз %s %s %s · пов %s %s %s",
         tostring(tonumber(pos.x) or 0), tostring(tonumber(pos.y) or 0), tostring(tonumber(pos.z) or 0),
         tostring(tonumber((b.data or {}).ang and (b.data).ang.p) or 0),
@@ -1531,7 +1542,7 @@ local function materialRow(sp, path)
         end
     end
     local lbl = vgui.Create("DLabel", row)
-    lbl:SetPos(126, 10) lbl:SetSize(row:GetWide() - 140, 44)
+    lbl:SetPos(126, 10) lbl:SetSize(math.max(120, row:GetWide() - 140), 44)
     lbl:SetText(tostring(path)) lbl:SetFont("AS_Tiny") lbl:SetTextColor(COL.text)
     local big = mkBtn(row, "ВЕСЬ МАТЕРИАЛ", COL.accent)
     big:SetPos(126, 70) big:SetSize(150, 26)
@@ -1542,7 +1553,7 @@ end
 local function soundRow(sp, path, owner)
     local row = previewRow(sp, 40)
     local lbl = vgui.Create("DLabel", row)
-    lbl:SetPos(10, 10) lbl:SetSize(row:GetWide() - 100, 20)
+    lbl:SetPos(10, 10) lbl:SetSize(math.max(120, row:GetWide() - 100), 20)
     local text = tostring(path)
     if owner then text = tostring(owner) .. " → " .. text end
     lbl:SetText(text) lbl:SetFont("AS_Small") lbl:SetTextColor(COL.dim)
@@ -1565,7 +1576,7 @@ local function shotRow(sp, path)
         end
     end
     local lbl = vgui.Create("DLabel", row)
-    lbl:SetPos(182, 14) lbl:SetSize(row:GetWide() - 200, 24)
+    lbl:SetPos(182, 14) lbl:SetSize(math.max(120, row:GetWide() - 200), 24)
     lbl:SetText(tostring(path)) lbl:SetFont("AS_Tiny") lbl:SetTextColor(COL.text)
     local big = mkBtn(row, "ВЕСЬ КАДР", COL.accent)
     big:SetPos(182, 60) big:SetSize(150, 26)

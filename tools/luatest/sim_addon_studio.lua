@@ -27,6 +27,12 @@ local function ok(cond, name, extra)
     else fails = fails + 1 print("  FAIL " .. name .. "  " .. tostring(extra or "")) end
 end
 
+local function read(path)
+    local f = assert(io.open(path, "rb"))
+    local s = f:read("*a") f:close()
+    return s
+end
+
 local loaded, err = stub.loadModule("lua/autorun/sh_grm_addon_studio.lua")
 ok(loaded, "модуль общей части поднялся", err)
 local A = _G.GRM and _G.GRM.AddonStudio
@@ -357,6 +363,18 @@ local wJoin = table.concat(res.warnings, "\n")
 ok(has("выходит за правый край", wJoin), "виджет за краем — предупреждение")
 local okRich, richErr = A.CheckSyntax(rich)
 ok(okRich, "черновик с новыми виджетами компилируется", richErr)
+
+print("\n=== 13. КЛИЕНТСКИЙ UI: БЕЗ НЕСУЩЕСТВУЮЩИХ МЕТОДОВ DERMA ===")
+--[[ Боевой отчёт владельца: «attempt to call method 'SetReadOnly' (a nil
+     value)» в mkCodeTab — в GMod у DTextEntry SetReadOnly нет, падает всё
+     окно студии. Стенд читает клиентский файл и требует правильный API. ]]
+local clientSrc = read("lua/autorun/client/cl_grm_addon_studio.lua")
+-- В комментарии слово «SetReadOnly» допустимо — ловим именно ВЫЗОВ.
+ok(not has(":SetReadOnly(", clientSrc), "в клиенте нет вызова SetReadOnly (GMod DTextEntry его не имеет)")
+ok(has("SetEditable(false)", clientSrc), "вывод кода — SetEditable(false): копировать можно, править нельзя")
+-- Тот же приём в генераторе: buildUI не должен звать несуществующее.
+ok(not has("SetReadOnly", table.concat(A.LayoutToCode({ w = 800, h = 600, widgets = {} }), "\n")),
+    "генератор макета не использует SetReadOnly")
 
 print(string.format("\nADDON STUDIO: %d/%d, провалов: %d", total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)
