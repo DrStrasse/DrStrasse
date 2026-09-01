@@ -573,36 +573,48 @@ rebuildInspector = function()
         draw.RoundedBox(6, 0, 0, w, h - 4, colorOf(b.kind))
         draw.SimpleText(d.name .. " · " .. b.uid, "AS_Small", 8, (h - 4) / 2, Color(10, 14, 20), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
-    local del = mkBtn(host, "УДАЛИТЬ БЛОК", COL.red)
-    del:Dock(TOP) del:SetTall(24) del:DockMargin(10, 4, 10, 4)
+    --[[ Кнопки действий в одну строку: «УДАЛИТЬ БЛОК» слева, быстрое
+         действие узла справа (иначе две кнопки во всю ширину съезжают
+         и выглядят огромными). Ширины считает PerformLayout — при
+         создании панель ещё шириной 0. ]]
+    local actions = vgui.Create("DPanel", host)
+    actions:Dock(TOP) actions:SetTall(26) actions:DockMargin(10, 4, 10, 2)
+    actions:SetPaintBackground(false)
+    local del = mkBtn(actions, "УДАЛИТЬ БЛОК", COL.red)
     del.DoClick = function() deleteNode() end
 
     -- Быстрый предпросмотр узла: звук прослушать, модель — в 3D, фото/материал — открыть.
     local data = b.data or {}
     local soundPath = tostring(data.sound or "")
+    local extra
     if (b.kind == "sound" or b.kind == "music") then
-        local play = mkBtn(host, "▶ ПРОСЛУШАТЬ", COL.gold)
-        play:Dock(TOP) play:SetTall(24) play:DockMargin(10, 2, 10, 2)
-        play.DoClick = function()
+        extra = mkBtn(actions, "▶ ПРОСЛУШАТЬ", COL.gold)
+        extra.DoClick = function()
             -- Свежее значение узла (могло поменяться после выбора в пикере).
             local cur = selectedBlock()
             local s = cur and tostring((cur.data or {}).sound or "") or soundPath
             playSoundPath(s)
         end
-        play:SetTooltip("Звук играет у игрока — слышно, что именно выбрано")
+        extra:SetTooltip("Звук играет у игрока — слышно, что именно выбрано")
     elseif b.kind == "model" or b.kind == "prop" then
-        local pv = mkBtn(host, "В 3D-ВЬЮПОРТ", COL.accent)
-        pv:Dock(TOP) pv:SetTall(24) pv:DockMargin(10, 2, 10, 2)
-        pv.DoClick = function() rebuildViewport() end
-        pv:SetTooltip("Узел уже выбран — вкладка «3D», можно двигать гизмо")
+        extra = mkBtn(actions, "В 3D-ВЬЮПОРТ", COL.accent)
+        extra.DoClick = function() rebuildViewport() end
+        extra:SetTooltip("Узел уже выбран — вкладка «3D», можно двигать гизмо")
     elseif b.kind == "photo" then
-        local pv = mkBtn(host, "ПОКАЗАТЬ КАДР", COL.accent)
-        pv:Dock(TOP) pv:SetTall(24) pv:DockMargin(10, 2, 10, 2)
-        pv.DoClick = function() openImageWindow(tostring(data.path or data.material or ""), "Фото") end
+        extra = mkBtn(actions, "ПОКАЗАТЬ КАДР", COL.accent)
+        extra.DoClick = function() openImageWindow(tostring(data.path or data.material or ""), "Фото") end
     elseif b.kind == "material" then
-        local pv = mkBtn(host, "ПОКАЗАТЬ МАТЕРИАЛ", COL.accent)
-        pv:Dock(TOP) pv:SetTall(24) pv:DockMargin(10, 2, 10, 2)
-        pv.DoClick = function() openImageWindow(tostring(data.material or ""), "Материал") end
+        extra = mkBtn(actions, "ПОКАЗАТЬ МАТЕРИАЛ", COL.accent)
+        extra.DoClick = function() openImageWindow(tostring(data.material or ""), "Материал") end
+    end
+    actions.PerformLayout = function(_, w)
+        if IsValid(extra) then
+            local half = (w - 4) / 2
+            del:SetPos(0, 0) del:SetSize(half, 24)
+            extra:SetPos(half + 4, 0) extra:SetSize(half, 24)
+        else
+            del:SetPos(0, 0) del:SetSize(w, 24)
+        end
     end
 
     for _, f in ipairs(d.fields or {}) do
@@ -706,11 +718,13 @@ local function drawOneNode(b, selected)
     end
 end
 
-local function drawScene(w, h, eye, ang)
-    -- Сигнатура: (eye, ang, fov, x, y, w, h, near, far) — раньше x=w,
-    -- y=h, и вьюпорт рисовался в полоску 1x4000 (режим сцены был бы
-    -- нечитаем). Все аргументы на своих местах.
-    cam.Start3D(eye, ang, 55, 0, 0, w, h, 1, 4000)
+local function drawScene(w, h, eye, ang, sx, sy)
+    --[[ cam.Start3D(eye, ang, fov, x, y, w, h, near, far): x,y — ЭКРАННЫЕ
+         координаты верхнего левого угла вьюпорта. В Paint панели это не
+         (0,0) (сцена улетала в левый верхний угол экрана), а
+         panel:LocalToScreen(0,0). В render.Capture (снимок) экран — сам
+         RT, там (0,0) верно. ]]
+    cam.Start3D(eye, ang, 55, sx or 0, sy or 0, w, h, 1, 4000)
     render.SetColorMaterial()
     for gx = -240, 240, 40 do render.DrawBeam(Vector(gx, -240, 0), Vector(gx, 240, 0), 1, 0, 1, Color(36, 46, 62)) end
     for gy = -240, 240, 40 do render.DrawBeam(Vector(-240, gy, 0), Vector(240, gy, 0), 1, 0, 1, Color(36, 46, 62)) end
@@ -783,7 +797,10 @@ end
 local function bindViewport(vp)
     vp.Paint = function(self, w, h)
         local eye, ang = orbitCamera(w, h)
-        drawScene(w, h, eye, ang)
+        -- Экранные координаты панели: без них cam.Start3D рисует сцену
+        -- в (0,0) всего экрана (оси «улетали» на холст, панель пустая).
+        local sx, sy = self:LocalToScreen(0, 0)
+        drawScene(w, h, eye, ang, sx, sy)
         draw.RoundedBox(4, 6, h - 22, w - 12, 18, Color(8, 12, 20, 170))
         local tip = V.state.view.sceneAll and "СЦЕНА: все узлы · клик в «◀ ▶» — выбор" or "ЛКМ-гизмо · ПКМ/средняя-орбита · колесо-зум · Ctrl-шаг 1"
         draw.SimpleText(tip, "AS_Tiny", 10, h - 16, COL.dim)
@@ -1901,18 +1918,23 @@ function V.Open()
 
     local vpWrap = vgui.Create("DPanel", right)
     vpWrap.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, COL.vp) end
-    local vp = vgui.Create("DPanel", vpWrap)
-    vp:Dock(FILL) vp:DockMargin(4, 4, 4, 92)
-    vp:SetPaintBackground(false)
-    V.state.viewPanel = vp
-    bindViewport(vp)
 
-    local shot = mkBtn(vpWrap, "СНЯТЬ КАДР", COL.gold)
-    shot:Dock(BOTTOM) shot:SetTall(26) shot:DockMargin(4, 0, 4, 112)
+    --[[ Стек кнопок СНИЗУ ВВЕРХ (первая созданная — самая нижняя), затем
+         вьюпорт Dock(FILL) ПОСЛЕДНИМ: иначе FILL занимает всю панель, а
+         кнопки BOTTOM ложатся поверх сцены. На экране сверху вниз:
+         ПЕРЕМЕЩЕНИЕ, ВРАЩЕНИЕ, ◀ ▶, СЦЕНА, СНЯТЬ КАДР. ]]
+    local vp -- форвард: кнопки (и shot.DoClick) ссылаются на него ниже
+    local function vpBtn(txt, col)
+        local b = mkBtn(vpWrap, txt, col)
+        b:Dock(BOTTOM) b:SetTall(24) b:DockMargin(4, 0, 4, 2)
+        return b
+    end
+
+    local shot = vpBtn("СНЯТЬ КАДР", COL.gold)
+    shot:SetTall(26) shot:DockMargin(4, 0, 4, 4)
     shot.DoClick = function() captureShot(vp) end
 
-    local sceneAll = mkBtn(vpWrap, "СЦЕНА: ВЫКЛ", COL.card)
-    sceneAll:Dock(BOTTOM) sceneAll:SetTall(24) sceneAll:DockMargin(4, 0, 4, 84)
+    local sceneAll = vpBtn("СЦЕНА: ВЫКЛ", COL.card)
     sceneAll.DoClick = function()
         V.state.view.sceneAll = not V.state.view.sceneAll
         sceneAll:SetText(V.state.view.sceneAll and "СЦЕНА: ВКЛ" or "СЦЕНА: ВЫКЛ")
@@ -1933,20 +1955,37 @@ function V.Open()
         end
         selectNode(1)
     end
-    local prevBtn = mkBtn(vpWrap, "◀", COL.card)
-    prevBtn:Dock(BOTTOM) prevBtn:SetWide(60) prevBtn:SetTall(24) prevBtn:DockMargin(4, 0, 4, 56)
+    local navRow = vgui.Create("DPanel", vpWrap)
+    navRow:Dock(BOTTOM) navRow:SetTall(24) navRow:DockMargin(4, 0, 4, 2)
+    navRow:SetPaintBackground(false)
+    local prevBtn = mkBtn(navRow, "◀", COL.card)
+    prevBtn:SetPos(0, 0) prevBtn:SetSize(58, 24)
     prevBtn.DoClick = function() cycleVisual(-1) end
-    local nextBtn = mkBtn(vpWrap, "▶", COL.card)
-    nextBtn:Dock(BOTTOM) nextBtn:SetWide(60) nextBtn:SetTall(24) nextBtn:DockMargin(126, 0, 4, 56)
+    local nextBtn = mkBtn(navRow, "▶", COL.card)
+    nextBtn:SetPos(62, 0) nextBtn:SetSize(58, 24)
     nextBtn.DoClick = function() cycleVisual(1) end
 
-    local modeRot = mkBtn(vpWrap, "ВРАЩЕНИЕ", COL.card)
-    modeRot:Dock(BOTTOM) modeRot:SetTall(24) modeRot:DockMargin(4, 0, 4, 28)
-    modeRot.DoClick = function() V.state.view.mode = "rotate" end
+    -- Форвард-декларация: DoClick в modeBtn читает modeRot/modeMove,
+    -- которые объявляются ниже (иначе это глобалы = nil).
+    local modeRot, modeMove
+    local function modeBtn(txt)
+        local b = vpBtn(txt, COL.card)
+        b.DoClick = function()
+            V.state.view.mode = (txt == "ВРАЩЕНИЕ") and "rotate" or "move"
+            modeRot:SetTextColor(V.state.view.mode == "rotate" and COL.green or COL.text)
+            modeMove:SetTextColor(V.state.view.mode == "move" and COL.green or COL.text)
+        end
+        return b
+    end
+    modeRot = modeBtn("ВРАЩЕНИЕ")
+    modeMove = modeBtn("ПЕРЕМЕЩЕНИЕ")
+    modeMove:SetTextColor(COL.green)
 
-    local modeMove = mkBtn(vpWrap, "ПЕРЕМЕЩЕНИЕ", COL.card)
-    modeMove:Dock(BOTTOM) modeMove:SetTall(24) modeMove:DockMargin(4, 0, 4, 0)
-    modeMove.DoClick = function() V.state.view.mode = "move" end
+    vp = vgui.Create("DPanel", vpWrap)
+    vp:Dock(FILL) vp:DockMargin(4, 4, 4, 4)
+    vp:SetPaintBackground(false)
+    V.state.viewPanel = vp
+    bindViewport(vp)
     right:AddSheet("3D", vpWrap, "icon16/camera.png")
 
     local codeWrap = vgui.Create("DPanel", right)

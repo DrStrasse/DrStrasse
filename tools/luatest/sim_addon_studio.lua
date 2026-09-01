@@ -433,5 +433,19 @@ if not has("p.GetCanvas and p:GetCanvas()", clientSrc) then
 end
 ok(#badClear == 0, "нет очистки GetChildren() самого DScrollPanel (нужен GetCanvas())", table.concat(badClear, ", "))
 
+--[[ 3D-ВЬЮПОРТ. cam.Start3D(eye, ang, fov, x, y, w, h): x,y — ЭКРАННЫЕ
+     координаты. В Paint панели это не (0,0) — иначе сцена рисуется в
+     левом верхнем углу всего экрана (оси «улетали» на холст, панель
+     оставалась пустой). Нужен panel:LocalToScreen(0,0). ]]
+ok(has("local sx, sy = self:LocalToScreen(0, 0)", clientSrc),
+    "вьюпорт: сцена рисуется в координатах панели (LocalToScreen)")
+ok(has("cam.Start3D(eye, ang, 55, sx or 0, sy or 0", clientSrc),
+    "вьюпорт: cam.Start3D получает sx,sy панели, а не (0,0)")
+-- Dock(FILL) у вьюпорта должен создаваться ПОСЛЕ кнопок BOTTOM — иначе
+-- вьюпорт занимает всю панель и кнопки ложатся поверх сцены.
+local fillAt = has("vp:Dock(FILL)", clientSrc) and string.find(clientSrc, "vp:Dock(FILL)", 1, true) or 0
+local moveAt = has("local modeMove = modeBtn(", clientSrc) and string.find(clientSrc, "local modeMove = modeBtn(", 1, true) or 0
+ok(fillAt > moveAt, "вьюпорт: Dock(FILL) создаётся после кнопок BOTTOM")
+
 print(string.format("\nADDON STUDIO: %d/%d, провалов: %d", total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)
