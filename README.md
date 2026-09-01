@@ -7,9 +7,12 @@
 
 > **Передача дел:** сначала `HANDOVER.md`, потом `ARCHITECTURE.md`.
 > История правок — `CHANGELOG.md`.
+> **Правила написания аддонов и модулей — [GRM_ADDON_GUIDE.md](GRM_ADDON_GUIDE.md)**
+> (единственный свод: рендер, дублирование, оптимизация, сеть, UI, данные,
+> стенды; чеклист нового модуля, справочник «симптом → причина → правило»).
 >
 > Чистая выкладка для сервера: ветка **`release/GRMRP`**.
-> Рабочая сессия Arena: `arena/01a02d53-drstrasse`. **Master не использовать.**
+> Рабочая сессия Arena: `arena/01a05ba4-drstrasse`. **Master не использовать.**
 
 ## Состав репозитория
 
@@ -22,12 +25,13 @@
 | `tools/` | Скрипты сборки (`build_dist.py`), стиль (`lua_style.py`), аудит, luatest |
 | `dist/` | Готовые архивы для установки |
 
-Правила кода и порядок проверки правки — [CODE_STYLE.md](CODE_STYLE.md).
+Правила кода и порядок проверки правки — [CODE_STYLE.md](CODE_STYLE.md),
+полный свод правил разработки — [GRM_ADDON_GUIDE.md](GRM_ADDON_GUIDE.md).
 
 ## Установка
 
 Основной аддон: `garrysmod/addons/grm/` из архива  
-https://github.com/DrStrasse/DrStrasse/raw/arena/01a02d53-drstrasse/dist/grm_single_addon.zip  
+https://github.com/DrStrasse/DrStrasse/raw/arena/01a05ba4-drstrasse/dist/grm_single_addon.zip  
 
 Пожарный — в `garrysmod/addons/grm_fire/` (`dist/grm_fire_addon.zip`, если есть).
 

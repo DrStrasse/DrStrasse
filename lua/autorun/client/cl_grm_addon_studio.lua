@@ -66,6 +66,7 @@ V.state = {
     view = { yaw = 200, pitch = 14, dist = 120, mode = "move", hover = nil, active = nil, sceneAll = false },
     layout = { sel = 0, drag = nil, resize = nil, snap = true, grid = 8 },
     scan = { started = false, queue = {}, models = {}, materials = {}, sounds = {}, shots = {} },
+    prevDirty = false, -- предпросмотр надо пересобрать (изменился узел)
 }
 
 local function clamp(v, lo, hi) return math.max(lo, math.min(hi, v)) end
@@ -553,22 +554,26 @@ end
 rebuildInspector = function()
     local holder = V.state.inspHolder
     if not IsValid(holder) then return end
-    for _, c in ipairs(holder:GetChildren()) do c:Remove() end
+    --[[ DScrollPanel: чистим ТОЛЬКО канвас (GetChildren() самого скролла
+         = canvas + vbar, снос vbar даёт NULL Panel). Дети тоже кладём
+         сразу на канвас — не полагаемся на авто-репарент OnChildAdded. ]]
+    local host = holder.GetCanvas and holder:GetCanvas() or holder
+    for _, c in ipairs(host:GetChildren()) do c:Remove() end
     local b = selectedBlock()
     if not b then
-        local l = vgui.Create("DLabel", holder)
+        local l = vgui.Create("DLabel", host)
         l:Dock(TOP) l:SetTall(40)
         l:SetText("Выберите блок на холсте") l:SetFont("AS_Small") l:SetTextColor(COL.dim)
         return
     end
     local d = A.DefOf(b.kind)
-    local head = vgui.Create("DPanel", holder)
+    local head = vgui.Create("DPanel", host)
     head:Dock(TOP) head:SetTall(30)
     head.Paint = function(_, w, h)
         draw.RoundedBox(6, 0, 0, w, h - 4, colorOf(b.kind))
         draw.SimpleText(d.name .. " · " .. b.uid, "AS_Small", 8, (h - 4) / 2, Color(10, 14, 20), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
-    local del = mkBtn(holder, "УДАЛИТЬ БЛОК", COL.red)
+    local del = mkBtn(host, "УДАЛИТЬ БЛОК", COL.red)
     del:Dock(TOP) del:SetTall(24) del:DockMargin(10, 4, 10, 4)
     del.DoClick = function() deleteNode() end
 
@@ -576,7 +581,7 @@ rebuildInspector = function()
     local data = b.data or {}
     local soundPath = tostring(data.sound or "")
     if (b.kind == "sound" or b.kind == "music") then
-        local play = mkBtn(holder, "▶ ПРОСЛУШАТЬ", COL.gold)
+        local play = mkBtn(host, "▶ ПРОСЛУШАТЬ", COL.gold)
         play:Dock(TOP) play:SetTall(24) play:DockMargin(10, 2, 10, 2)
         play.DoClick = function()
             -- Свежее значение узла (могло поменяться после выбора в пикере).
@@ -586,22 +591,22 @@ rebuildInspector = function()
         end
         play:SetTooltip("Звук играет у игрока — слышно, что именно выбрано")
     elseif b.kind == "model" or b.kind == "prop" then
-        local pv = mkBtn(holder, "В 3D-ВЬЮПОРТ", COL.accent)
+        local pv = mkBtn(host, "В 3D-ВЬЮПОРТ", COL.accent)
         pv:Dock(TOP) pv:SetTall(24) pv:DockMargin(10, 2, 10, 2)
         pv.DoClick = function() rebuildViewport() end
         pv:SetTooltip("Узел уже выбран — вкладка «3D», можно двигать гизмо")
     elseif b.kind == "photo" then
-        local pv = mkBtn(holder, "ПОКАЗАТЬ КАДР", COL.accent)
+        local pv = mkBtn(host, "ПОКАЗАТЬ КАДР", COL.accent)
         pv:Dock(TOP) pv:SetTall(24) pv:DockMargin(10, 2, 10, 2)
         pv.DoClick = function() openImageWindow(tostring(data.path or data.material or ""), "Фото") end
     elseif b.kind == "material" then
-        local pv = mkBtn(holder, "ПОКАЗАТЬ МАТЕРИАЛ", COL.accent)
+        local pv = mkBtn(host, "ПОКАЗАТЬ МАТЕРИАЛ", COL.accent)
         pv:Dock(TOP) pv:SetTall(24) pv:DockMargin(10, 2, 10, 2)
         pv.DoClick = function() openImageWindow(tostring(data.material or ""), "Материал") end
     end
 
     for _, f in ipairs(d.fields or {}) do
-        fieldRow(holder, f, b, function()
+        fieldRow(host, f, b, function()
             rebuildCards()
             rebuildViewport()
             rebuildCode()
@@ -615,17 +620,21 @@ end
 local function buildPalette()
     local left = V.state.palette
     if not IsValid(left) then return end
-    for _, c in ipairs(left:GetChildren()) do
-        if not (c == V.state.scanStatus) then c:Remove() end
-    end
+    --[[ Чистим ТОЛЬКО канвас: дети DScrollPanel уходят в его внутренний
+         canvas, а GetChildren() самого скролла — это canvas + vbar.
+         Удаление vbar даёт «Tried to use a NULL Panel» из dscrollpanel.lua. ]]
+    local cv = left:GetCanvas()
+    for _, c in ipairs(cv:GetChildren()) do c:Remove() end
+    local yPos = 0
     for _, cat in ipairs(A.Cats) do
-        local h = vgui.Create("DLabel", left)
-        h:Dock(TOP) h:SetTall(22)
+        local h = vgui.Create("DLabel", cv)
+        h:SetPos(8, yPos) h:SetSize(cv:GetWide() - 16, 22)
         h:SetText(string.upper(cat.name)) h:SetFont("AS_Small") h:SetTextColor(COL.gold)
+        yPos = yPos + 22
         for _, d in ipairs(A.Defs) do
             if d.cat == cat.id then
-                local btn = vgui.Create("DButton", left)
-                btn:Dock(TOP) btn:SetTall(30) btn:DockMargin(6, 2, 6, 2)
+                local btn = vgui.Create("DButton", cv)
+                btn:SetPos(6, yPos) btn:SetSize(cv:GetWide() - 12, 30)
                 btn:SetText(d.name) btn:SetFont("AS_Small") btn:SetTextColor(COL.text)
                 btn.Paint = function(s, w, h)
                     draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(44, 60, 80) or COL.card)
@@ -633,9 +642,11 @@ local function buildPalette()
                 end
                 btn.DoClick = function() addBlock(d.id) end
                 btn:SetTooltip(d.hint or "")
+                yPos = yPos + 34
             end
         end
     end
+    cv:SetTall(yPos + 4)
 end
 
 -----------------------------------------------------------------------
@@ -751,9 +762,22 @@ local function handleGizmoDrag(self)
     rebuildCards() rebuildViewport() rebuildInspector()
 end
 
+--[[ ПОМЕТКА ПРЕДПОКАЗА. Вызывается при каждом изменении узла: поля
+     инспектора, гизмо, перемещение карточки, импорт, загрузка. Окно
+     «ПРЕДПРОСМОМТР» в своём Think пересобирает ряды сцен один раз —
+     модель/цвет/позиция в предпоказе меняются ЖИВЬЁМ, а не при
+     перезаходе. ]]
+function V.MarkPreviewDirty()
+    V.state.prevDirty = true
+    -- Троттлинг: гизмо помечает каждый кадр, пересборку делаем раз в 0.25 с.
+    V.state.prevDirtyAt = CurTime()
+end
+
 rebuildViewport = function()
-    -- Вьюпорт самодостаточен: Paint пересчитывает камеру из орбиты.
-    -- Пересборка здесь нужна только чтобы подсветить изменение полей.
+    -- Вьюпорт самодостаточен: Paint пересчитывает камеру из орбиты и
+    -- рисует модель каждый кадр — гизмо и поля видны сразу. Здесь только
+    -- помечаем окно предпросмотра грязным.
+    if V.state.on then V.MarkPreviewDirty() end
 end
 
 local function bindViewport(vp)
@@ -1087,7 +1111,9 @@ end
 
 renderLayoutWidgets = function(layout, parent, interactive)
     layout = A.NormalizeLayout(layout)
-    for _, c in ipairs(parent:GetChildren()) do c:Remove() end
+    -- parent может быть DScrollPanel — чистим только его канвас.
+    local host = parent.GetCanvas and parent:GetCanvas() or parent
+    for _, c in ipairs(host:GetChildren()) do c:Remove() end
     local box = vgui.Create("DPanel", parent)
     box:SetSize(layout.w, layout.h)
     box:SetPos(0, 0)
@@ -1585,7 +1611,10 @@ local function shotRow(sp, path)
 end
 
 local function clearPanel(p)
-    for _, c in ipairs(p:GetChildren()) do c:Remove() end
+    -- DScrollPanel: чистим только канвас, иначе сносится vbar
+    -- («Tried to use a NULL Panel» из dscrollpanel.lua).
+    local host = p.GetCanvas and p:GetCanvas() or p
+    for _, c in ipairs(host:GetChildren()) do c:Remove() end
 end
 
 local function previewScene(sp)
@@ -1614,8 +1643,9 @@ local function previewMaterials(sp)
     local list = vgui.Create("DScrollPanel", sp)
     list:Dock(FILL) list:DockMargin(0, 4, 0, 0)
     local function fill(filter)
+        local canvas = list:GetCanvas()
         local kids = {}
-        for _, c in ipairs(list:GetChildren()) do kids[#kids + 1] = c end
+        for _, c in ipairs(canvas:GetChildren()) do kids[#kids + 1] = c end
         for _, c in ipairs(kids) do c:Remove() end
         local shown = 0
         for _, path in ipairs(V.state.scan.materials or {}) do
@@ -1639,8 +1669,9 @@ local function previewSounds(sp)
     local list = vgui.Create("DScrollPanel", sp)
     list:Dock(FILL) list:DockMargin(0, 4, 0, 0)
     local function fill(filter)
+        local canvas = list:GetCanvas()
         local kids = {}
-        for _, c in ipairs(list:GetChildren()) do kids[#kids + 1] = c end
+        for _, c in ipairs(canvas:GetChildren()) do kids[#kids + 1] = c end
         for _, c in ipairs(kids) do c:Remove() end
         -- Звуки из узлов проекта (показ «что слышно в этом аддоне»).
         for _, b in ipairs(V.state.blocks or {}) do
@@ -1690,12 +1721,39 @@ function V.OpenPreview()
     f:MakePopup() f:ShowCloseButton(true)
     f.Paint = function(_, w, h) draw.RoundedBox(8, 0, 0, w, h, COL.bg) end
 
+    -- Шапка: предпоказ обновляется сам при изменении узлов + кнопка вручную.
+    local bar = vgui.Create("DPanel", f)
+    bar:Dock(TOP) bar:SetTall(30)
+    bar.Paint = function(_, w, h) surface.SetDrawColor(COL.side) surface.DrawRect(0, 0, w, h) end
+    local auto = vgui.Create("DLabel", bar)
+    auto:Dock(LEFT) auto:SetWide(420)
+    auto:SetText("Меняешь узел (модель/цвет/позиция/гизмо) — сцена обновляется сама")
+    auto:SetFont("AS_Tiny") auto:SetTextColor(COL.dim)
+    local upd = mkBtn(bar, "ОБНОВИТЬ СЕЙЧАС", COL.accent)
+    upd:Dock(RIGHT) upd:SetWide(140) upd:DockMargin(0, 2, 8, 2)
+
     local tabs = vgui.Create("DPropertySheet", f)
-    tabs:Dock(FILL) tabs:DockMargin(8, 8, 8, 8)
+    tabs:Dock(FILL) tabs:DockMargin(8, 0, 8, 8)
 
     local scene = vgui.Create("DScrollPanel", tabs)
     tabs:AddSheet("СЦЕНА", scene, "icon16/package.png")
     previewScene(scene)
+
+    -- Живой предпоказ: грязный флаг ставится в rebuildViewport (любое
+    -- изменение узла), Think пересобирает только вкладку «СЦЕНА» — не
+    -- каждый кадр, и роллер не прыгает понапрасну.
+    f.Think = function()
+        if V.state.prevDirty and IsValid(scene)
+            and CurTime() - (V.state.prevDirtyAt or 0) >= 0.25 then
+            V.state.prevDirty = false
+            previewScene(scene)
+        end
+    end
+    upd.DoClick = function()
+        previewScene(scene)
+        notify("Сцена предпросмотра обновлена")
+    end
+    V.state.prevDirty = false
 
     local mats = vgui.Create("DPanel", tabs)
     tabs:AddSheet("МАТЕРИАЛЫ", mats, "icon16/picture.png")
@@ -1818,13 +1876,17 @@ function V.Open()
         end
     end
 
-    -- Палитра слева.
-    local left = vgui.Create("DScrollPanel", f)
-    left:Dock(LEFT) left:SetWide(224) left:DockMargin(0, 48, 0, 0)
-    left.Paint = function(_, w, h) surface.SetDrawColor(COL.side) surface.DrawRect(0, 0, w, h) end
-    V.state.palette = left
+    -- Палитра слева: СКРОЛЛ отдельно, статус-строка отдельно (детьми
+    -- DScrollPanel можно только канвас — статус в скролле сломал бы бар).
+    local leftWrap = vgui.Create("DPanel", f)
+    leftWrap:Dock(LEFT) leftWrap:SetWide(224) leftWrap:DockMargin(0, 48, 0, 0)
+    leftWrap.Paint = function(_, w, h) surface.SetDrawColor(COL.side) surface.DrawRect(0, 0, w, h) end
+    local pal = vgui.Create("DScrollPanel", leftWrap)
+    pal:Dock(FILL)
+    pal.Paint = function() end
+    V.state.palette = pal
 
-    local scanStatus = vgui.Create("DLabel", left)
+    local scanStatus = vgui.Create("DLabel", leftWrap)
     scanStatus:Dock(BOTTOM) scanStatus:SetTall(20)
     scanStatus:SetText("Каталоги…") scanStatus:SetFont("AS_Tiny") scanStatus:SetTextColor(COL.dim)
     V.state.scanStatus = scanStatus

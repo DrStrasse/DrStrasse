@@ -375,6 +375,63 @@ ok(has("SetEditable(false)", clientSrc), "вывод кода — SetEditable(fa
 -- Тот же приём в генераторе: buildUI не должен звать несуществующее.
 ok(not has("SetReadOnly", table.concat(A.LayoutToCode({ w = 800, h = 600, widgets = {} }), "\n")),
     "генератор макета не использует SetReadOnly")
+--[[ DScrollPanel: у него GetChildren() = {canvas, vbar}; чистка детей
+     самого скролла сносит vbar («Tried to use a NULL Panel»). Все очистки
+     в клиенте должны идти через GetCanvas() или DPanel-холдер из V.state.
+     Проверка построчная: для каждой очистки смотрим ближайшее связывание
+     переменной выше и классифицируем его (GetCanvas — безопасно). ]]
+local clientLines = {}
+for line in clientSrc:gmatch("[^\n]+") do clientLines[#clientLines + 1] = line end
+local stateKind = {}
+for _, line in ipairs(clientLines) do
+    local field, var = string.match(line, "V%.state%.([%w_]+)%s*=%s*([%w_]+)")
+    if field and var then
+        for _, decl in ipairs(clientLines) do
+            local kind = string.match(decl, "^%s*local " .. var .. "%s*=%s*vgui%.Create%(\"([%w_]+)\"")
+            if kind then stateKind[field] = kind break end
+        end
+    end
+end
+local function bindingAbove(idx, name)
+    for j = idx - 1, 1, -1 do
+        local b = string.match(clientLines[j], "^%s*local " .. name .. "%s*=%s*(.+)%s*$")
+        if b then return b end
+    end
+    return nil
+end
+local badClear = {}
+for i, line in ipairs(clientLines) do
+    -- Любой обход GetChildren() (и прямое удаление, и снапшот в kids):
+    -- у DScrollPanel это canvas + vbar, vbar нельзя трогать.
+    local name = has(":GetChildren()", line)
+        and string.match(line, "ipairs%(([%w_]+)%:GetChildren") or nil
+    if name then
+        local b = bindingAbove(i, name) or ""
+        if has("GetCanvas()", b) then
+            -- канвас: безопасно
+        elseif has("vgui.Create(\"DScrollPanel\"", b) then
+            badClear[#badClear + 1] = name
+        else
+            local field = string.match(b, "V%.state%.([%w_]+)")
+            if field and stateKind[field] == "DScrollPanel" then
+                badClear[#badClear + 1] = name
+            elseif field then
+                -- DPanel-холдер из state: безопасно
+            else
+                badClear[#badClear + 1] = name .. "(unresolved)" -- нераспознанное связывание
+            end
+        end
+    end
+end
+-- Параметры-хелперы (renderLayoutWidgets(parent), clearPanel(p)): без
+-- GetCanvas-гарда они сносят vbar, когда получают DScrollPanel.
+if not has("parent.GetCanvas and parent:GetCanvas()", clientSrc) then
+    badClear[#badClear + 1] = "renderLayoutWidgets(parent)"
+end
+if not has("p.GetCanvas and p:GetCanvas()", clientSrc) then
+    badClear[#badClear + 1] = "clearPanel(p)"
+end
+ok(#badClear == 0, "нет очистки GetChildren() самого DScrollPanel (нужен GetCanvas())", table.concat(badClear, ", "))
 
 print(string.format("\nADDON STUDIO: %d/%d, провалов: %d", total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)
