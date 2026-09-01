@@ -447,5 +447,23 @@ local fillAt = has("vp:Dock(FILL)", clientSrc) and string.find(clientSrc, "vp:Do
 local moveAt = has("local modeMove = modeBtn(", clientSrc) and string.find(clientSrc, "local modeMove = modeBtn(", 1, true) or 0
 ok(fillAt > moveAt, "вьюпорт: Dock(FILL) создаётся после кнопок BOTTOM")
 
+--[[ 4) МАКЕТ/МЕНЮ/ШИРИНА. Боевой отчёт: «ТЕСТ ОКНА» сносил детей самого
+     DFrame (заголовок + кнопки) → «dframe.lua:246 Tried to use a NULL
+     Panel»; «attempt to call global 'DMenu' (a table value)» — глобал
+     DMenu перекрыт сторонним аддоном; узкие карточки/палитра — подписи
+     не влезали; невалидная модель обрывала рендер. ]]
+ok(has("parent._asLayoutContent", clientSrc),
+    "макет: контент-холдер — дети DFrame не сносятся (NULL Panel)")
+ok(not has("= DMenu()", clientSrc),
+    "меню создаются vgui.Create(\"DMenu\") — глобал DMenu может быть таблицей")
+ok(has("util.IsValidModel", clientSrc),
+    "вьюпорт: невалидная модель даёт каркас, а не ошибку render.Model")
+ok(has("local function clipText", clientSrc),
+    "надписи обрезаются по ширине через clipText (UTF-8, многоточие)")
+ok(has("CARD_W, CARD_H, PORT = 300", clientSrc),
+    "карточки шире (300) — подпись помещается")
+ok(has("SetWide(280)", clientSrc),
+    "палитра шире (280) — названия кнопок влезают")
+
 print(string.format("\nADDON STUDIO: %d/%d, провалов: %d", total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)

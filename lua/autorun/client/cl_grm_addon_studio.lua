@@ -57,7 +57,7 @@ local function colorOf(kind)
     return c
 end
 
-local CARD_W, CARD_H, PORT = 240, 96, 13
+local CARD_W, CARD_H, PORT = 300, 96, 13
 local CANVAS_W, CANVAS_H = 3000, 2000
 
 V.state = {
@@ -150,6 +150,23 @@ local function mkBtn(parent, txt, col)
         draw.RoundedBox(6, 0, 0, w, h, c)
     end
     return b
+end
+
+--[[ Обрезка надписи по ширине строки с многоточием. Кириллица — UTF-8,
+     режем по символам (string.utf8sub), а не по байтам. Нужно вызвать
+     внутри Paint (там уже установлен нужный шрифт/контекст). ]]
+local function clipText(txt, maxW, font)
+    txt = tostring(txt or "")
+    if maxW <= 0 then return "" end
+    surface.SetFont(font or "AS_Small")
+    if surface.GetTextSize(txt) <= maxW then return txt end
+    local n = string.utf8len and string.utf8len(txt) or #txt
+    while n > 0 do
+        n = n - 1
+        local cut = string.utf8sub and string.utf8sub(txt, 1, n) or string.sub(txt, 1, n)
+        if surface.GetTextSize(cut .. "…") <= maxW then return cut .. "…" end
+    end
+    return "…"
 end
 
 -----------------------------------------------------------------------
@@ -497,8 +514,8 @@ rebuildCards = function()
             draw.RoundedBox(8, 0, 0, w, h, sel and COL.nodeSel or COL.node)
             if sel then surface.SetDrawColor(COL.accent) surface.DrawOutlinedRect(0, 0, w, h, 2) end
             draw.RoundedBoxEx(8, 0, 0, w, 22, colorOf(b.kind), true, true, false, false)
-            draw.SimpleText(d.name, "AS_Tiny", 8, 11, Color(10, 14, 20), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            draw.SimpleText(string.sub(A.Caption(b.kind, b), 1, 58), "AS_Small", 8, 42, COL.text)
+            draw.SimpleText(clipText(d.name, w - 16, "AS_Tiny"), "AS_Tiny", 8, 11, Color(10, 14, 20), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(clipText(A.Caption(b.kind, b), w - 16, "AS_Small"), "AS_Small", 8, 42, COL.text)
             draw.SimpleText("uid " .. tostring(b.uid), "AS_Tiny", 8, h - 14, COL.dim)
         end
 
@@ -571,7 +588,7 @@ rebuildInspector = function()
     head:Dock(TOP) head:SetTall(30)
     head.Paint = function(_, w, h)
         draw.RoundedBox(6, 0, 0, w, h - 4, colorOf(b.kind))
-        draw.SimpleText(d.name .. " · " .. b.uid, "AS_Small", 8, (h - 4) / 2, Color(10, 14, 20), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText(clipText(d.name .. " · " .. b.uid, w - 16, "AS_Small"), "AS_Small", 8, (h - 4) / 2, Color(10, 14, 20), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
     --[[ Кнопки действий в одну строку: «УДАЛИТЬ БЛОК» слева, быстрое
          действие узла справа (иначе две кнопки во всю ширину съезжают
@@ -647,10 +664,13 @@ local function buildPalette()
             if d.cat == cat.id then
                 local btn = vgui.Create("DButton", cv)
                 btn:SetPos(6, yPos) btn:SetSize(cv:GetWide() - 12, 30)
-                btn:SetText(d.name) btn:SetFont("AS_Small") btn:SetTextColor(COL.text)
+                -- Надпись рисуем сами с обрезкой — SetText у DButton не
+                -- влезает в 280px и вылезает за кнопку.
+                btn:SetText("") btn:SetTextColor(COL.text)
                 btn.Paint = function(s, w, h)
                     draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(44, 60, 80) or COL.card)
                     draw.RoundedBox(6, 0, 0, 4, h, colorOf(d.id))
+                    draw.SimpleText(clipText(d.name, w - 16, "AS_Small"), "AS_Small", 10, h / 2, COL.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                 end
                 btn.DoClick = function() addBlock(d.id) end
                 btn:SetTooltip(d.hint or "")
@@ -693,11 +713,16 @@ local function drawOneNode(b, selected)
     local kind = b.kind
     if kind == "model" or kind == "prop" then
         local m = tostring((b.data or {}).model or "")
-        if m ~= "" then
+        --[[ Невалидный путь: render.Model кидает ошибку и обрывает Paint
+             (сетка есть, модели нет). Проверяем каталог до вызова и
+             подстраховываемся pcall — при провале рисуем каркас. ]]
+        local ok = false
+        if m ~= "" and (not util or not util.IsValidModel or util.IsValidModel(m)) then
             local c = (b.data or {}).color or {}
-            render.Model(m, pos, angV, scale,
+            ok = pcall(render.Model, m, pos, angV, scale,
                 Color(tonumber(c.r) or 255, tonumber(c.g) or 255, tonumber(c.b) or 255))
-        else
+        end
+        if not ok then
             render.DrawWireframeBox(pos, angV, Vector(-20, -20, 0), Vector(20, 20, 40))
         end
     elseif kind == "entity" then
@@ -740,7 +765,14 @@ local function drawScene(w, h, eye, ang, sx, sy)
         end
     else
         local b = selectedBlock()
-        if b then drawOneNode(b, true) end
+        -- Ничего не выбрано (или узел не визуальный) — показываем первый
+        -- визуальный узел проекта, иначе вьюпорт выглядит пустым.
+        if not b or not (isVisual(b) or (b.data and b.data.pos)) then
+            for _, nb in ipairs(V.state.blocks) do
+                if isVisual(nb) or (nb.data and nb.data.pos) then b = nb break end
+            end
+        end
+        if b then drawOneNode(b, b == selectedBlock()) end
     end
     cam.End3D()
 end
@@ -1128,10 +1160,24 @@ end
 
 renderLayoutWidgets = function(layout, parent, interactive)
     layout = A.NormalizeLayout(layout)
-    -- parent может быть DScrollPanel — чистим только его канвас.
-    local host = parent.GetCanvas and parent:GetCanvas() or parent
+    --[[ Хост рисования. DScrollPanel — вложенный канвас. DFrame/DPanel —
+         отдельный контент-холдер: чистить детей самого окна нельзя
+         (заголовок и кнопки закрытия дают «Tried to use a NULL Panel»
+         из dframe.lua). Холдер создаётся один раз и переживает
+         пересборки (ТЕСТ ОКНА открывается повторно). ]]
+    local host = parent.GetCanvas and parent:GetCanvas() or nil
+    if not host then
+        local content = parent._asLayoutContent
+        if not IsValid(content) then
+            content = vgui.Create("DPanel", parent)
+            parent._asLayoutContent = content
+            content:Dock(FILL)
+            content:SetPaintBackground(false)
+        end
+        host = content
+    end
     for _, c in ipairs(host:GetChildren()) do c:Remove() end
-    local box = vgui.Create("DPanel", parent)
+    local box = vgui.Create("DPanel", host)
     box:SetSize(layout.w, layout.h)
     box:SetPos(0, 0)
     box.Paint = function(_, w, h)
@@ -1295,7 +1341,7 @@ rebuildLayout = function()
         renderLayoutWidgets(work.layout, f, false)
     end)
     tb("ШАБЛОНЫ", function()
-        local menu = DMenu()
+        local menu = vgui.Create("DMenu")
         if #(work.templates or {}) == 0 then
             menu:AddOption("Шаблонов нет", function() end):SetEnabled(false)
         else
@@ -1865,7 +1911,7 @@ function V.Open()
     end)
     headerBtn("ПРЕДПРОСМОТР", COL.gold, function() V.OpenPreview() end)
     headerBtn("ПРОЕКТЫ", COL.card, function()
-        local menu = DMenu()
+        local menu = vgui.Create("DMenu")
         local projects = V.state.projects or {}
         if #projects == 0 then
             menu:AddOption("Проектов нет", function() end):SetEnabled(false)
@@ -1896,7 +1942,7 @@ function V.Open()
     -- Палитра слева: СКРОЛЛ отдельно, статус-строка отдельно (детьми
     -- DScrollPanel можно только канвас — статус в скролле сломал бы бар).
     local leftWrap = vgui.Create("DPanel", f)
-    leftWrap:Dock(LEFT) leftWrap:SetWide(224) leftWrap:DockMargin(0, 48, 0, 0)
+    leftWrap:Dock(LEFT) leftWrap:SetWide(280) leftWrap:DockMargin(0, 48, 0, 0)
     leftWrap.Paint = function(_, w, h) surface.SetDrawColor(COL.side) surface.DrawRect(0, 0, w, h) end
     local pal = vgui.Create("DScrollPanel", leftWrap)
     pal:Dock(FILL)
@@ -2010,8 +2056,8 @@ function V.Open()
     bar:Dock(TOP) bar:SetTall(36)
     bar.Paint = function(_, w, h)
         draw.RoundedBox(0, 0, 0, w, h, Color(18, 24, 34))
-        draw.SimpleText("Палитра слева → блок на холст. Выход (справа) → вход (слева). ПКМ по порту — снять связь. Delete — удалить блок. ПКМ/колесо по пустому — панорама.",
-            "AS_Tiny", 12, h / 2, COL.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText(clipText("Палитра слева → блок на холст. Выход (справа) → вход (слева). ПКМ по порту — снять связь. Delete — удалить блок. ПКМ/колесо по пустому — панорама.",
+            w - 20, "AS_Tiny"), "AS_Tiny", 12, h / 2, COL.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
 
     local canvas = vgui.Create("DPanel", mid)
