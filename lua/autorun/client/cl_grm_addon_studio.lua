@@ -63,8 +63,8 @@ local CANVAS_W, CANVAS_H = 3000, 2000
 V.state = {
     on = false, work = nil, blocks = {}, selected = 0, linking = nil, toPort = "in",
     panX = 0, panY = 0, projects = {}, drag = nil,
-    view = { yaw = 200, pitch = 14, dist = 120, mode = "move", hover = nil, active = nil },
-    layout = { sel = 0, drag = nil },
+    view = { yaw = 200, pitch = 14, dist = 120, mode = "move", hover = nil, active = nil, sceneAll = false },
+    layout = { sel = 0, drag = nil, resize = nil, snap = true, grid = 8 },
     scan = { started = false, queue = {}, models = {}, materials = {}, sounds = {}, shots = {} },
 }
 
@@ -95,6 +95,45 @@ end
 local function angleFrom(t)
     t = t or {}
     return Angle(tonumber(t.p) or 0, tonumber(t.y) or 0, tonumber(t.r) or 0)
+end
+
+--[[ Визуальные узлы: их можно показать в 3D-сцене и на панели
+     предпросмотра. Звук/музыка/фото рисуются маркером на своей позиции. ]]
+local function isVisual(b)
+    local k = b and b.kind or ""
+    return k == "model" or k == "prop" or k == "entity" or k == "screen" or k == "light"
+end
+
+local function inScan(list, path)
+    if not list or path == "" then return false end
+    return list[path] ~= nil or list[string.lower(path)] ~= nil
+end
+
+local function scanHasModel(path) return inScan(V.state.scan.models, path) end
+local function scanHasMaterial(path) return inScan(V.state.scan.materials, path) end
+local function scanHasSound(path) return inScan(V.state.scan.sounds, path) end
+
+local function playSoundPath(path)
+    if path == "" then notify("Сначала выбери звук") return end
+    local lp = LocalPlayer()
+    if not IsValid(lp) then notify("Нет игрока для прослушивания") return end
+    sound.Play(path, lp:GetPos() + Vector(0, 0, 50), 1, 100)
+end
+
+local function openImageWindow(path, title)
+    local f = vgui.Create("DFrame")
+    f:SetSize(620, 480) f:Center() f:SetTitle(title or "Просмотр") f:MakePopup()
+    f.Paint = function(_, w, h) draw.RoundedBox(8, 0, 0, w, h, COL.bg) end
+    local img = vgui.Create("DImage", f)
+    img:Dock(FILL) img:DockMargin(10, 10, 10, 10)
+    local ok, m = pcall(Material, path)
+    if ok then img:SetMaterial(m)
+    else
+        img.Paint = function(_, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, COL.card)
+            draw.SimpleText("Материал не загружается: " .. tostring(path), "AS_Small", w / 2, h / 2, COL.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+    end
 end
 
 local function mkBtn(parent, txt, col)
@@ -529,6 +568,34 @@ rebuildInspector = function()
     del:Dock(TOP) del:SetTall(24) del:DockMargin(10, 4, 10, 4)
     del.DoClick = function() deleteNode() end
 
+    -- Быстрый предпросмотр узла: звук прослушать, модель — в 3D, фото/материал — открыть.
+    local data = b.data or {}
+    local soundPath = tostring(data.sound or "")
+    if (b.kind == "sound" or b.kind == "music") then
+        local play = mkBtn(holder, "▶ ПРОСЛУШАТЬ", COL.gold)
+        play:Dock(TOP) play:SetTall(24) play:DockMargin(10, 2, 10, 2)
+        play.DoClick = function()
+            -- Свежее значение узла (могло поменяться после выбора в пикере).
+            local cur = selectedBlock()
+            local s = cur and tostring((cur.data or {}).sound or "") or soundPath
+            playSoundPath(s)
+        end
+        play:SetTooltip("Звук играет у игрока — слышно, что именно выбрано")
+    elseif b.kind == "model" or b.kind == "prop" then
+        local pv = mkBtn(holder, "В 3D-ВЬЮПОРТ", COL.accent)
+        pv:Dock(TOP) pv:SetTall(24) pv:DockMargin(10, 2, 10, 2)
+        pv.DoClick = function() rebuildViewport() end
+        pv:SetTooltip("Узел уже выбран — вкладка «3D», можно двигать гизмо")
+    elseif b.kind == "photo" then
+        local pv = mkBtn(holder, "ПОКАЗАТЬ КАДР", COL.accent)
+        pv:Dock(TOP) pv:SetTall(24) pv:DockMargin(10, 2, 10, 2)
+        pv.DoClick = function() openImageWindow(tostring(data.path or data.material or ""), "Фото") end
+    elseif b.kind == "material" then
+        local pv = mkBtn(holder, "ПОКАЗАТЬ МАТЕРИАЛ", COL.accent)
+        pv:Dock(TOP) pv:SetTall(24) pv:DockMargin(10, 2, 10, 2)
+        pv.DoClick = function() openImageWindow(tostring(data.material or ""), "Материал") end
+    end
+
     for _, f in ipairs(d.fields or {}) do
         fieldRow(holder, f, b, function()
             rebuildCards()
@@ -591,7 +658,39 @@ local function nodeWorld(b)
 end
 
 --[[ Сцена вьюпорта. Рисуется и в Paint панели, и в render.Capture —
-     одна и та же функция, снимок ровно то, что видно. ]]
+     одна и та же функция, снимок ровно то, что видно. В режиме «СЦЕНА»
+     показываются ВСЕ визуальные узлы проекта — глазами оценивается
+     композиция (позиции/повороты/цвета), а не один блок. ]]
+local function drawOneNode(b, selected)
+    local pos, angV, scale = nodeWorld(b)
+    local kind = b.kind
+    if kind == "model" or kind == "prop" then
+        local m = tostring((b.data or {}).model or "")
+        if m ~= "" then
+            local c = (b.data or {}).color or {}
+            render.Model(m, pos, angV, scale,
+                Color(tonumber(c.r) or 255, tonumber(c.g) or 255, tonumber(c.b) or 255))
+        else
+            render.DrawWireframeBox(pos, angV, Vector(-20, -20, 0), Vector(20, 20, 40))
+        end
+    elseif kind == "entity" then
+        render.DrawWireframeBox(pos, angV, Vector(-20, -20, 0), Vector(20, 20, 40))
+    elseif kind == "screen" then
+        render.DrawWireframeBox(pos, angV, Vector(-40, -8, 0), Vector(40, 8, 50))
+    elseif kind == "light" then
+        render.DrawWireframeSphere(pos, 12, 8, 8, Color(250, 200, 90, 120))
+    else
+        render.DrawWireframeSphere(pos, 10, 8, 8, colorOf(b.kind))
+    end
+    if selected and GRM.Gizmo and (kind == "model" or kind == "prop" or kind == "entity" or kind == "screen") then
+        local size = V.state.view.mode == "rotate" and 26 or 34
+        GRM.Gizmo.Draw(V.state.view.mode, pos, angV, size, V.state.view.hover, V.state.view.active)
+    end
+    if selected and not V.state.view.sceneAll then
+        render.DrawWireframeBox(pos, angV, Vector(-24, -24, -4), Vector(24, 24, 52))
+    end
+end
+
 local function drawScene(w, h, eye, ang)
     cam.Start3D(eye, ang, 55, w, h, 1, 4000)
     render.SetColorMaterial()
@@ -601,31 +700,15 @@ local function drawScene(w, h, eye, ang)
     render.DrawBeam(Vector(0, 0, 0), Vector(0, 80, 0), 1.6, 0, 1, Color(86, 214, 116))
     render.DrawBeam(Vector(0, 0, 0), Vector(0, 0, 40), 1.6, 0, 1, Color(84, 150, 255))
 
-    local b = selectedBlock()
-    if b then
-        local pos, angV, scale = nodeWorld(b)
-        local kind = b.kind
-        if kind == "model" or kind == "prop" then
-            local m = tostring((b.data or {}).model or "")
-            if m ~= "" then
-                local c = (b.data or {}).color or {}
-                render.Model(m, pos, angV, scale,
-                    Color(tonumber(c.r) or 255, tonumber(c.g) or 255, tonumber(c.b) or 255))
+    if V.state.view.sceneAll then
+        for i, b in ipairs(V.state.blocks) do
+            if isVisual(b) or (b.data and b.data.pos) then
+                drawOneNode(b, V.state.selected == i)
             end
-        elseif kind == "entity" then
-            render.DrawWireframeBox(pos, angV, Vector(-20, -20, 0), Vector(20, 20, 40))
-        elseif kind == "screen" then
-            render.DrawWireframeBox(pos, angV, Vector(-40, -8, 0), Vector(40, 8, 50))
-        elseif kind == "light" then
-            render.DrawWireframeSphere(pos, 12, 8, 8, Color(250, 200, 90, 120))
-        else
-            render.DrawWireframeSphere(pos, 10, 8, 8, colorOf(b.kind))
         end
-
-        if GRM.Gizmo and (kind == "model" or kind == "prop" or kind == "entity" or kind == "screen") then
-            local size = V.state.view.mode == "rotate" and 26 or 34
-            GRM.Gizmo.Draw(V.state.view.mode, pos, angV, size, V.state.view.hover, V.state.view.active)
-        end
+    else
+        local b = selectedBlock()
+        if b then drawOneNode(b, true) end
     end
     cam.End3D()
 end
@@ -671,7 +754,8 @@ local function bindViewport(vp)
         local eye, ang = orbitCamera(w, h)
         drawScene(w, h, eye, ang)
         draw.RoundedBox(4, 6, h - 22, w - 12, 18, Color(8, 12, 20, 170))
-        draw.SimpleText("ЛКМ-гизмо · ПКМ/средняя-орбита · колесо-зум · Ctrl-шаг 1", "AS_Tiny", 10, h - 16, COL.dim)
+        local tip = V.state.view.sceneAll and "СЦЕНА: все узлы · клик в «◀ ▶» — выбор" or "ЛКМ-гизмо · ПКМ/средняя-орбита · колесо-зум · Ctrl-шаг 1"
+        draw.SimpleText(tip, "AS_Tiny", 10, h - 16, COL.dim)
     end
     vp.OnMousePressed = function(self, mc)
         local b = selectedBlock()
@@ -929,10 +1013,67 @@ end
 -----------------------------------------------------------------------
 -- КОНСТРУКТОР ОКОН (вкладка «МАКЕТ»)
 -----------------------------------------------------------------------
---[[ Реальная сборка виджетов из макета. Одна функция на два случая:
-     редактор (клик = выбрать, перетаскивание = двигать) и «ТЕСТ ОКНА»
-     (тот же код — значит, дизайн работоспособен, а не «нарисован»).
-     Каждый виджет несёт _asIndex — связь с массивом layout.widgets. ]]
+--[[ Реальная сборка виджетов из макета. Одна функция на ВСЕ случаи:
+     редактор («МАКЕТ», интерактив + ресайз за углы), «ТЕСТ ОКНА»
+     (тот же код — значит, дизайн работоспособен, а не «нарисован») и
+     окно предпросмотра. Углы/рёбра тащатся чистыми A.GrowRect /
+     A.MoveRect — стенд проверяет геометрию без Derma. ]]
+local function widgetCtrl(w, ctrl)
+    if not ctrl then return end
+    if w.kind == "button" then ctrl:SetText(tostring(w.label or "Кнопка"))
+    elseif w.kind == "label" then ctrl:SetText(tostring(w.text or "Текст"))
+    elseif w.kind == "entry" then ctrl:SetPlaceholderText(tostring(w.placeholder or "Ввод…"))
+    elseif w.kind == "textarea" then ctrl:SetPlaceholderText(tostring(w.placeholder or "Текст…"))
+    elseif w.kind == "check" then ctrl:SetText(tostring(w.label or "Галка"))
+    elseif w.kind == "slider" then
+        ctrl:SetMinMax(tonumber(w.min) or 0, tonumber(w.max) or 100)
+        ctrl:SetValue(tonumber(w.value) or 50)
+    elseif w.kind == "select" then
+        for opt in tostring(w.options or ""):gmatch("[^;]+") do ctrl:AddChoice(string.Trim(opt)) end
+    elseif w.kind == "list" then
+        for opt in tostring(w.options or ""):gmatch("[^;]+") do ctrl:AddLine(string.Trim(opt)) end
+    elseif w.kind == "progress" then
+        local minV, maxV = tonumber(w.min) or 0, tonumber(w.max) or 100
+        local frac = (tonumber(w.value) or minV) - minV
+        if maxV > minV then frac = frac / (maxV - minV) end
+        ctrl:SetFraction(math.Clamp(frac, 0, 1))
+    elseif w.kind == "image" then
+        local ok, m = pcall(Material, tostring(w.material or ""))
+        if ok then ctrl:SetMaterial(m) end
+    elseif w.kind == "model" then
+        ctrl:SetFOV(tonumber(w.fov) or 30)
+        if scanHasModel(tostring(w.model or "")) then
+            ctrl:SetModel(tostring(w.model))
+            ctrl:SetAnimated(true)
+        end
+    end
+end
+
+local function widgetPaint(w, self, ww, hh)
+    --[[ Реальные виджеты (кнопка, текст, поле, слайдер, список…) рисуют
+         себя сами — оборачивать их Paint нельзя. Здесь только заглушки
+         для пустых картинок/моделей и кастомная панель. ]]
+    if w.kind == "panel" then
+        draw.RoundedBox(4, 0, 0, ww, hh, Color(30, 40, 54))
+        draw.SimpleText(tostring(w.caption or "Панель"), "AS_Tiny", 4, 2, COL.dim)
+    elseif w.kind == "model" and not scanHasModel(tostring(w.model or "")) then
+        draw.RoundedBox(4, 0, 0, ww, hh, Color(30, 40, 54))
+        draw.SimpleText("модель не найдена в каталоге", "AS_Tiny", ww / 2, hh / 2, COL.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    elseif w.kind == "image" and tostring(w.material or "") == "" then
+        draw.RoundedBox(4, 0, 0, ww, hh, Color(30, 40, 54))
+        draw.SimpleText("нет материала", "AS_Tiny", ww / 2, hh / 2, COL.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
+end
+
+local function edgeAt(mx, my, w, h)
+    local s, e = 7, ""
+    if mx <= s then e = e .. "w" end
+    if mx >= w - s then e = e .. "e" end
+    if my <= s then e = e .. "n" end
+    if my >= h - s then e = e .. "s" end
+    return e
+end
+
 renderLayoutWidgets = function(layout, parent, interactive)
     layout = A.NormalizeLayout(layout)
     for _, c in ipairs(parent:GetChildren()) do c:Remove() end
@@ -950,53 +1091,36 @@ renderLayoutWidgets = function(layout, parent, interactive)
         local w, h = tonumber(wgt.w) or 100, tonumber(wgt.h) or 30
         local x, y = tonumber(wgt.x) or 8, tonumber(wgt.y) or 8
         local ctrl
-        if wgt.kind == "button" then
-            local b = vgui.Create("DButton", box)
-            b:SetText(tostring(wgt.label or "Кнопка"))
-            b.DoClick = function() end -- действие назначает агент (см. манифест)
-            ctrl = b
-        elseif wgt.kind == "label" then
-            local l = vgui.Create("DLabel", box)
-            l:SetText(tostring(wgt.text or "Текст"))
-            ctrl = l
-        elseif wgt.kind == "entry" then
-            local e = vgui.Create("DTextEntry", box)
-            e:SetPlaceholderText(tostring(wgt.placeholder or "Ввод…"))
-            ctrl = e
-        elseif wgt.kind == "check" then
-            local c = vgui.Create("DCheckBox", box)
-            c:SetText(tostring(wgt.label or "Галка"))
-            ctrl = c
-        elseif wgt.kind == "slider" then
-            local s = vgui.Create("DSlider", box)
-            s:SetMinMax(tonumber(wgt.min) or 0, tonumber(wgt.max) or 100)
-            s:SetValue(tonumber(wgt.value) or 50)
-            ctrl = s
+        if wgt.kind == "button" then ctrl = vgui.Create("DButton", box)
+        elseif wgt.kind == "label" then ctrl = vgui.Create("DLabel", box)
+        elseif wgt.kind == "entry" then ctrl = vgui.Create("DTextEntry", box)
+        elseif wgt.kind == "textarea" then
+            ctrl = vgui.Create("DTextEntry", box)
+            ctrl:SetMultiline(true)
+        elseif wgt.kind == "check" then ctrl = vgui.Create("DCheckBox", box)
+        elseif wgt.kind == "slider" then ctrl = vgui.Create("DSlider", box)
+        elseif wgt.kind == "select" then ctrl = vgui.Create("DComboBox", box)
         elseif wgt.kind == "list" then
-            local l = vgui.Create("DListView", box)
-            l:AddColumn("Вариант")
-            for opt in tostring(wgt.options or ""):gmatch("[^;]+") do l:AddLine(string.Trim(opt)) end
-            ctrl = l
-        elseif wgt.kind == "image" then
-            local img = vgui.Create("DImage", box)
-            if tostring(wgt.material or "") ~= "" then
-                img:SetMaterial(Material(tostring(wgt.material)))
-            end
-            ctrl = img
-        else
-            local p = vgui.Create("DPanel", box)
-            p.Paint = function(_, ww, hh)
-                draw.RoundedBox(4, 0, 0, ww, hh, Color(30, 40, 54))
-                draw.SimpleText(tostring(wgt.caption or "Панель"), "AS_Tiny", 4, 2, COL.dim)
-            end
-            ctrl = p
-        end
+            ctrl = vgui.Create("DListView", box)
+            ctrl:AddColumn("Вариант")
+        elseif wgt.kind == "image" then ctrl = vgui.Create("DImage", box)
+        elseif wgt.kind == "model" then ctrl = vgui.Create("DModelPanel", box)
+        elseif wgt.kind == "progress" then ctrl = vgui.Create("DProgress", box)
+        else ctrl = vgui.Create("DPanel", box) end
+        widgetCtrl(wgt, ctrl)
         ctrl:SetPos(0, 0)
         ctrl:SetSize(w, h)
+        ctrl.Paint = (function(prev)
+            return function(self, ww, hh)
+                widgetPaint(wgt, self, ww, hh)
+                if prev then prev(self, ww, hh) end
+            end
+        end)(ctrl.Paint)
+
         if interactive then
-            --[[ Хост-обводка: клики и перетаскивание обрабатывает ХОСТ,
+            --[[ Хост-обводка: клики, движение и ресайз обрабатывает ХОСТ,
                  а не сам виджет. Иначе DTextEntry теряет ввод текста
-                 (его OnMousePressed занят фокусом), а DButton — отрисовку. ]]
+                 (его OnMousePressed занят фокусом), а кнопки — отрисовку. ]]
             local host = vgui.Create("DPanel", box)
             host:SetPos(x, y)
             host:SetSize(w, h)
@@ -1008,17 +1132,43 @@ renderLayoutWidgets = function(layout, parent, interactive)
                 if selected then
                     surface.SetDrawColor(COL.accent)
                     surface.DrawOutlinedRect(0, 0, ww, hh)
+                    -- Ручки ресайза: 4 угла + 4 ребра.
+                    local hs = 5
+                    surface.SetDrawColor(230, 240, 250)
+                    for _, p in ipairs({ { 0, 0 }, { ww / 2, 0 }, { ww, 0 }, { 0, hh / 2 },
+                        { ww, hh / 2 }, { 0, hh }, { ww / 2, hh }, { ww, hh } }) do
+                        surface.DrawRect(p[1] - hs / 2, p[2] - hs / 2, hs, hs)
+                    end
                 else
                     surface.SetDrawColor(70, 90, 115, 60)
                     surface.DrawOutlinedRect(0, 0, ww, hh)
                 end
             end
+            local function commit(rect)
+                wgt.x, wgt.y, wgt.w, wgt.h = rect.x, rect.y, rect.w, rect.h
+                host:SetPos(wgt.x, wgt.y)
+                host:SetSize(wgt.w, wgt.h)
+                ctrl:SetSize(wgt.w, wgt.h)
+            end
+            local function finishDrag()
+                V.state.layout.drag = nil
+                V.state.layout.resize = nil
+                if V.state.layout.snap then
+                    commit(A.SnapRect(wgt, V.state.layout.grid or 8))
+                    rebuildCode()
+                end
+            end
             host.OnMousePressed = function(_, mc)
                 if mc == MOUSE_LEFT then
                     V.state.layout.sel = i
-                    V.state.layout.drag = { wgt = wgt, ox = 0, oy = 0 }
                     local mx, my = host:CursorPos()
-                    V.state.layout.drag.ox, V.state.layout.drag.oy = mx, my
+                    local edge = edgeAt(mx, my, w, h)
+                    local bx, by = box:CursorPos()
+                    if edge ~= "" then
+                        V.state.layout.resize = { wgt = wgt, edge = edge, ox = bx, oy = by }
+                    else
+                        V.state.layout.drag = { wgt = wgt, ox = mx, oy = my }
+                    end
                     rebuildInspector()
                 end
                 if mc == MOUSE_RIGHT then
@@ -1029,20 +1179,30 @@ renderLayoutWidgets = function(layout, parent, interactive)
                 end
             end
             host.Think = function()
+                if not input.IsMouseDown(MOUSE_LEFT) then
+                    if V.state.layout.drag and V.state.layout.drag.wgt == wgt then finishDrag() end
+                    if V.state.layout.resize and V.state.layout.resize.wgt == wgt then finishDrag() end
+                    return
+                end
                 local drag = V.state.layout.drag
-                if not drag or drag.wgt ~= wgt then return end
-                if input.IsMouseDown(MOUSE_LEFT) then
+                if drag and drag.wgt == wgt then
+                    local mx, my = host:CursorPos()
+                    commit(A.MoveRect(wgt, mx - drag.ox, my - drag.oy, { w = layout.w, h = layout.h }))
+                    return
+                end
+                local res = V.state.layout.resize
+                if res and res.wgt == wgt then
                     local mx, my = box:CursorPos()
-                    wgt.x = math.Clamp(mx - drag.ox, 0, math.max(0, layout.w - w))
-                    wgt.y = math.Clamp(my - drag.oy, 0, math.max(0, layout.h - h))
-                    host:SetPos(wgt.x, wgt.y)
-                else
-                    V.state.layout.drag = nil
+                    commit(A.GrowRect(wgt, res.edge, mx - res.ox, my - res.oy,
+                        { w = layout.w, h = layout.h }, 12))
                 end
             end
         else
             ctrl:SetPos(x, y)
             ctrl:SetSize(w, h)
+            if wgt.kind == "button" then
+                ctrl.DoClick = function() notify("Клик: " .. tostring(wgt.label or "кнопка")) end
+            end
         end
     end
     return box
@@ -1050,7 +1210,8 @@ end
 
 --[[ Шаблоны макета: сохраняются в проекте (project.templates) и уходят
      с манифестом. «ТЕСТ ОКНА» открывает настоящее DFrame с виджетами —
-     работоспособность проверяется до компиляции. ]]
+     работоспособность проверяется до компиляции. Инспектор строится по
+     A.WidgetFields (те же поля, что видит генератор). ]]
 rebuildLayout = function()
     local left = V.state.layoutHolder
     if not IsValid(left) then return end
@@ -1058,13 +1219,16 @@ rebuildLayout = function()
     local work = V.state.work
     if not work then return end
     work.layout = A.NormalizeLayout(work.layout or {})
+    local sel = V.state.layout.sel
+    if sel > #work.layout.widgets then sel = 0 end
+    V.state.layout.sel = sel
 
     local bar = vgui.Create("DPanel", left)
     bar:Dock(TOP) bar:SetTall(34)
     bar.Paint = function(_, w, h) draw.RoundedBox(0, 0, 0, w, h, Color(18, 24, 34)) end
 
-    local function tb(txt, fn)
-        local b = mkBtn(bar, txt, COL.card)
+    local function tb(txt, fn, col)
+        local b = mkBtn(bar, txt, col or COL.card)
         b:Dock(LEFT) b:SetWide(96) b:SetTall(26) b:DockMargin(4, 4, 0, 4)
         b.DoClick = fn
         return b
@@ -1110,17 +1274,39 @@ rebuildLayout = function()
             end
         end)
     end)
+    local snapBtn = tb(V.state.layout.snap and "СЕТКА: ВКЛ" or "СЕТКА: ВЫКЛ", function()
+        V.state.layout.snap = not V.state.layout.snap
+        rebuildLayout()
+    end, V.state.layout.snap and COL.green or COL.card)
+    tb("ЦЕНТР", function()
+        local wgt = work.layout.widgets[V.state.layout.sel]
+        if not wgt then return end
+        local lim = { w = work.layout.w, h = work.layout.h }
+        wgt.x = math.max(0, math.floor((lim.w - (tonumber(wgt.w) or 100)) / 2))
+        wgt.y = math.max(0, math.floor((lim.h - (tonumber(wgt.h) or 30)) / 2))
+        rebuildLayout() rebuildCode()
+    end)
+    tb("ДУБЛИРОВАТЬ", function()
+        local wgt = work.layout.widgets[V.state.layout.sel]
+        if not wgt then return end
+        local copy = A.NormalizeWidget(wgt, work.layout)
+        copy.x = math.min(work.layout.w - (copy.w or 100), (copy.x or 0) + 16)
+        copy.y = math.min(work.layout.h - (copy.h or 30), (copy.y or 0) + 16)
+        work.layout.widgets[#work.layout.widgets + 1] = copy
+        V.state.layout.sel = #work.layout.widgets
+        rebuildLayout() rebuildCode()
+    end)
 
-    -- Палитра виджетов (по правому краю этой вкладки не влезет — строка кнопок).
+    -- Палитра виджетов: добавляются в середину холста (там, где видно).
     local kinds = vgui.Create("DScrollPanel", bar)
     kinds:Dock(FILL) kinds:SetTall(30) kinds:DockMargin(2, 2, 2, 2)
     kinds.Paint = function() end
     for _, k in ipairs(A.WidgetKinds) do
         local b = vgui.Create("DButton", kinds)
-        b:Dock(LEFT) b:SetWide(86) b:SetTall(26) b:DockMargin(2, 0, 2, 0)
+        b:Dock(LEFT) b:SetWide(96) b:SetTall(26) b:DockMargin(2, 0, 2, 0)
         b:SetText(k.name) b:SetFont("AS_Tiny")
         b.DoClick = function()
-            local wgt = { kind = k.id, x = 12, y = 12, w = 120, h = 30 }
+            local wgt = { kind = k.id, x = 24, y = 24, w = 130, h = 34 }
             for kk, vv in pairs(A.WidgetDefaults[k.id] or {}) do wgt[kk] = vv end
             work.layout.widgets[#work.layout.widgets + 1] = wgt
             V.state.layout.sel = #work.layout.widgets
@@ -1133,50 +1319,82 @@ rebuildLayout = function()
     local box = renderLayoutWidgets(work.layout, scroll, true)
     box:Dock(TOP)
 
-    -- Инспектор выбранного виджета.
+    -- Инспектор выбранного виджета: x/y/w/h + поля A.WidgetFields.
     local wgt = work.layout.widgets[V.state.layout.sel]
     local inspector = vgui.Create("DPanel", left)
-    inspector:Dock(BOTTOM) inspector:SetTall(120)
+    inspector:Dock(BOTTOM) inspector:SetTall(170)
     inspector.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, Color(22, 30, 42)) end
     if not wgt then
         local l = vgui.Create("DLabel", inspector)
         l:Dock(TOP) l:SetTall(20)
-        l:SetText("Выбери виджет и перетащи его") l:SetFont("AS_Tiny") l:SetTextColor(COL.dim)
-    else
-        local names = { { "x", "x" }, { "y", "y" }, { "w", "w" }, { "h", "h" } }
-        local cur = 0
-        for _, pair in ipairs(names) do
-            local k, lab = pair[1], pair[2]
-            local lbl = vgui.Create("DLabel", inspector)
-            lbl:SetPos(10 + cur * 110, 8) lbl:SetSize(50, 18)
-            lbl:SetText(lab) lbl:SetFont("AS_Tiny") lbl:SetTextColor(COL.dim)
-            local e = vgui.Create("DTextEntry", inspector)
-            e:SetPos(40 + cur * 110, 6) e:SetSize(60, 20)
-            e:SetText(tostring(tonumber(wgt[k]) or 0))
-            e.OnChange = function(self)
-                local n = tonumber(self:GetText())
-                if n then
-                    wgt[k] = math.Clamp(n, 0, 4000)
-                    rebuildLayout() rebuildCode()
-                end
+        l:SetText("Выбери виджет: тащи за тело, за углы — ресайз, ПКМ — удалить")
+        l:SetFont("AS_Tiny") l:SetTextColor(COL.dim)
+        return
+    end
+
+    local function gridRow(lab, k, y)
+        local lbl = vgui.Create("DLabel", inspector)
+        lbl:SetPos(10, y) lbl:SetSize(34, 18)
+        lbl:SetText(lab) lbl:SetFont("AS_Tiny") lbl:SetTextColor(COL.dim)
+        local e = vgui.Create("DTextEntry", inspector)
+        e:SetPos(44, y - 2) e:SetSize(52, 20)
+        e:SetText(tostring(math.floor(tonumber(wgt[k]) or 0)))
+        e.OnChange = function(self)
+            local n = tonumber(self:GetText())
+            if n then
+                wgt[k] = math.Clamp(math.floor(n), 0, k == "w" and work.layout.w or 4000)
+                rebuildLayout() rebuildCode()
             end
-            cur = cur + 1
         end
-        local del = mkBtn(inspector, "УДАЛИТЬ", COL.red)
-        del:SetPos(10, 40) del:SetSize(88, 24)
-        del.DoClick = function()
-            table.remove(work.layout.widgets, V.state.layout.sel)
-            V.state.layout.sel = 0
-            rebuildLayout() rebuildCode()
-        end
-        local txt = vgui.Create("DTextEntry", inspector)
-        txt:SetPos(120, 40) txt:SetSize(math.max(120, inspector:GetWide() - 240), 24)
-        txt:SetText(tostring(wgt.label or wgt.text or wgt.caption or ""))
-        txt.OnChange = function(self)
-            local k = wgt.label ~= nil and "label" or (wgt.text ~= nil and "text" or "caption")
-            wgt[k] = self:GetText()
+        return e
+    end
+    gridRow("x", "x", 8)
+    gridRow("y", "y", 8)
+    gridRow("w", "w", 36)
+    gridRow("h", "h", 36)
+    -- Кнопка «в сетку» — применить снап прямо сейчас.
+    local snapNow = mkBtn(inspector, "В СЕТКУ", COL.card)
+    snapNow:SetPos(10, 60) snapNow:SetSize(88, 24)
+    snapNow.DoClick = function()
+        local r = A.SnapRect(wgt, V.state.layout.grid or 8)
+        wgt.x, wgt.y, wgt.w, wgt.h = r.x, r.y, r.w, r.h
+        rebuildLayout() rebuildCode()
+    end
+    local del = mkBtn(inspector, "УДАЛИТЬ", COL.red)
+    del:SetPos(108, 60) del:SetSize(88, 24)
+    del.DoClick = function()
+        table.remove(work.layout.widgets, V.state.layout.sel)
+        V.state.layout.sel = 0
+        rebuildLayout() rebuildCode()
+    end
+
+    -- Поля по типу виджета, ниже геометрии.
+    local fy = 90
+    for _, f in ipairs(A.WidgetFields(wgt.kind)) do
+        local lbl = vgui.Create("DLabel", inspector)
+        lbl:SetPos(10, fy) lbl:SetSize(110, 18)
+        lbl:SetText(tostring(f.label)) lbl:SetFont("AS_Tiny") lbl:SetTextColor(COL.dim)
+        local e = vgui.Create("DTextEntry", inspector)
+        e:SetPos(122, fy - 2) e:SetSize(math.max(120, inspector:GetWide() - 200), 22)
+        e:SetText(tostring(wgt[f.key] or ""))
+        e.OnChange = function(self)
+            wgt[f.key] = self:GetText()
             rebuildLayout()
         end
+        if f.type == "model" or f.type == "material" then
+            local pick = mkBtn(inspector, "…", COL.accent)
+            pick:SetPos(math.max(250, inspector:GetWide() - 62), fy - 2)
+            pick:SetSize(52, 22)
+            pick.DoClick = function()
+                openPicker(f.type == "model" and PICKER_SOURCES.model or PICKER_SOURCES.material,
+                    tostring(f.label), function(v)
+                        wgt[f.key] = v
+                        rebuildLayout() rebuildCode()
+                    end)
+            end
+        end
+        fy = fy + 26
+        if fy > 132 then break end
     end
 end
 
@@ -1233,6 +1451,261 @@ rebuildCheck = function()
             #res.errors, #res.warnings, okSyntax and "OK" or "ошибка")
         sum:SetText(head)
         sum:SetTextColor(#res.errors > 0 and COL.red or (okSyntax and COL.green or COL.gold))
+    end
+end
+
+-----------------------------------------------------------------------
+-- ПРЕДПРОСМОТР / ПРЕДПОКАЗ (окно + вкладки)
+-----------------------------------------------------------------------
+--[[ Отдельное окно «ПРЕДПРОСМОТР»: всё, что можно посмотреть ДО
+     компиляции. СЦЕНА — DModelPanel на каждый визуальный узел (орбита
+     мышью), МАТЕРИАЛЫ/ТЕКСТУРЫ — загрузка из каталога, ЗВУКИ — «▶» и
+     прослушивание, КАДРЫ — снятые снимки, ТЕСТ ОКНА — рабочий макет. ]]
+local function previewRow(sp, h)
+    local row = vgui.Create("DPanel", sp)
+    row:Dock(TOP) row:SetTall(h) row:DockMargin(10, 4, 10, 4)
+    row.Paint = function(_, w, hh) draw.RoundedBox(6, 0, 0, w, hh, COL.card) end
+    return row
+end
+
+local function sceneRow(sp, b)
+    local row = previewRow(sp, 176)
+    local m = vgui.Create("DModelPanel", row)
+    m:SetPos(8, 8) m:SetSize(160, 160) m:SetFOV(30)
+    local path = tostring((b.data or {}).model or "")
+    if (b.kind == "model" or b.kind == "prop") and scanHasModel(path) then
+        m:SetModel(path)
+        m:SetAnimated(true)
+    else
+        m.Paint = function(_, w, hh)
+            draw.RoundedBox(5, 0, 0, w, hh, Color(34, 44, 58))
+            draw.SimpleText(b.kind == "model" and "нет модели" or b.kind, "AS_Tiny", w / 2, hh / 2, COL.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+    end
+    local d = A.DefOf(b.kind)
+    local head = vgui.Create("DLabel", row)
+    head:SetPos(180, 8) head:SetSize(row:GetWide() - 200, 20)
+    head:SetText(tostring(d.name) .. " · uid " .. tostring(b.uid))
+    head:SetFont("AS_Small") head:SetTextColor(COL.gold)
+
+    local pos = (b.data or {}).pos or {}
+    local info = vgui.Create("DLabel", row)
+    info:SetPos(180, 32) info:SetSize(row:GetWide() - 200, 48)
+    info:SetText(string.format("поз %s %s %s · пов %s %s %s",
+        tostring(tonumber(pos.x) or 0), tostring(tonumber(pos.y) or 0), tostring(tonumber(pos.z) or 0),
+        tostring(tonumber((b.data or {}).ang and (b.data).ang.p) or 0),
+        tostring(tonumber((b.data or {}).ang and (b.data).ang.y) or 0),
+        tostring(tonumber((b.data or {}).ang and (b.data).ang.r) or 0)))
+    info:SetFont("AS_Tiny") info:SetTextColor(COL.dim)
+
+    local to3d = mkBtn(row, "В 3D-вьюпорт", COL.accent)
+    to3d:SetPos(180, 120) to3d:SetSize(140, 26)
+    to3d.DoClick = function()
+        for i, ob in ipairs(V.state.blocks) do
+            if ob == b then selectNode(i) break end
+        end
+        notify("Узел выбран — смотри вкладку «3D»")
+    end
+    if b.kind == "light" then
+        local col = (b.data or {}).color or {}
+        local sw = vgui.Create("DPanel", row)
+        sw:SetPos(336, 124) sw:SetSize(20, 20)
+        sw.Paint = function(_, w, h)
+            surface.SetDrawColor(tonumber(col.r) or 250, tonumber(col.g) or 200, tonumber(col.b) or 90, 255)
+            surface.DrawRect(0, 0, w, h)
+        end
+    end
+    return row
+end
+
+local function materialRow(sp, path)
+    local row = previewRow(sp, 120)
+    local img = vgui.Create("DImage", row)
+    img:SetPos(8, 8) img:SetSize(104, 104)
+    local ok, mt = pcall(Material, path)
+    if ok then img:SetMaterial(mt)
+    else
+        img.Paint = function(_, w, h)
+            draw.RoundedBox(5, 0, 0, w, h, Color(34, 44, 58))
+            draw.SimpleText("?", "AS_Body", w / 2, h / 2, COL.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+    end
+    local lbl = vgui.Create("DLabel", row)
+    lbl:SetPos(126, 10) lbl:SetSize(row:GetWide() - 140, 44)
+    lbl:SetText(tostring(path)) lbl:SetFont("AS_Tiny") lbl:SetTextColor(COL.text)
+    local big = mkBtn(row, "ВЕСЬ МАТЕРИАЛ", COL.accent)
+    big:SetPos(126, 70) big:SetSize(150, 26)
+    big.DoClick = function() openImageWindow(path, "Материал") end
+    return row
+end
+
+local function soundRow(sp, path, owner)
+    local row = previewRow(sp, 40)
+    local lbl = vgui.Create("DLabel", row)
+    lbl:SetPos(10, 10) lbl:SetSize(row:GetWide() - 100, 20)
+    local text = tostring(path)
+    if owner then text = tostring(owner) .. " → " .. text end
+    lbl:SetText(text) lbl:SetFont("AS_Small") lbl:SetTextColor(COL.dim)
+    local pl = mkBtn(row, "▶", COL.gold)
+    pl:SetPos(row:GetWide() - 54, 8) pl:SetSize(44, 24)
+    pl.DoClick = function() playSoundPath(path) end
+    return row
+end
+
+local function shotRow(sp, path)
+    local row = previewRow(sp, 130)
+    local img = vgui.Create("DImage", row)
+    img:SetPos(8, 8) img:SetSize(160, 112)
+    local ok, mt = pcall(Material, path)
+    if ok then img:SetMaterial(mt)
+    else
+        img.Paint = function(_, w, h)
+            draw.RoundedBox(5, 0, 0, w, h, Color(34, 44, 58))
+            draw.SimpleText("нет кадра", "AS_Tiny", w / 2, h / 2, COL.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+    end
+    local lbl = vgui.Create("DLabel", row)
+    lbl:SetPos(182, 14) lbl:SetSize(row:GetWide() - 200, 24)
+    lbl:SetText(tostring(path)) lbl:SetFont("AS_Tiny") lbl:SetTextColor(COL.text)
+    local big = mkBtn(row, "ВЕСЬ КАДР", COL.accent)
+    big:SetPos(182, 60) big:SetSize(150, 26)
+    big.DoClick = function() openImageWindow(path, "Кадр") end
+    return row
+end
+
+local function clearPanel(p)
+    for _, c in ipairs(p:GetChildren()) do c:Remove() end
+end
+
+local function previewScene(sp)
+    clearPanel(sp)
+    local shown = 0
+    for _, b in ipairs(V.state.blocks or {}) do
+        if isVisual(b) then
+            if shown >= 10 then break end
+            sceneRow(sp, b)
+            shown = shown + 1
+        end
+    end
+    if shown == 0 then
+        local l = vgui.Create("DLabel", sp)
+        l:Dock(TOP) l:SetTall(40)
+        l:SetText("В проекте нет визуальных узлов (модель/проп/энтити/экран/свет)")
+        l:SetFont("AS_Small") l:SetTextColor(COL.dim)
+    end
+end
+
+local function previewMaterials(sp)
+    clearPanel(sp)
+    local search = vgui.Create("DTextEntry", sp)
+    search:Dock(TOP) search:SetTall(28) search:DockMargin(10, 6, 10, 0)
+    search:SetPlaceholderText("Поиск по материалам…")
+    local list = vgui.Create("DScrollPanel", sp)
+    list:Dock(FILL) list:DockMargin(0, 4, 0, 0)
+    local function fill(filter)
+        local kids = {}
+        for _, c in ipairs(list:GetChildren()) do kids[#kids + 1] = c end
+        for _, c in ipairs(kids) do c:Remove() end
+        local shown = 0
+        for _, path in ipairs(V.state.scan.materials or {}) do
+            if shown >= 40 then break end
+            local s = tostring(path)
+            if filter == "" or string.find(string.lower(s), string.lower(filter), 1, true) then
+                materialRow(list, s)
+                shown = shown + 1
+            end
+        end
+    end
+    fill("")
+    search.OnChange = function(_, txt) fill(tostring(txt or "")) end
+end
+
+local function previewSounds(sp)
+    clearPanel(sp)
+    local search = vgui.Create("DTextEntry", sp)
+    search:Dock(TOP) search:SetTall(28) search:DockMargin(10, 6, 10, 0)
+    search:SetPlaceholderText("Поиск по звукам…")
+    local list = vgui.Create("DScrollPanel", sp)
+    list:Dock(FILL) list:DockMargin(0, 4, 0, 0)
+    local function fill(filter)
+        local kids = {}
+        for _, c in ipairs(list:GetChildren()) do kids[#kids + 1] = c end
+        for _, c in ipairs(kids) do c:Remove() end
+        -- Звуки из узлов проекта (показ «что слышно в этом аддоне»).
+        for _, b in ipairs(V.state.blocks or {}) do
+            local s = tostring((b.data or {}).sound or "")
+            if s ~= "" and (filter == "" or string.find(string.lower(s), string.lower(filter), 1, true)) then
+                soundRow(list, s, b.uid)
+            end
+        end
+        -- Каталог, если нашлись.
+        local shown = 0
+        for _, path in ipairs(V.state.scan.sounds or {}) do
+            if shown >= 30 then break end
+            local s = tostring(path)
+            if filter == "" or string.find(string.lower(s), string.lower(filter), 1, true) then
+                soundRow(list, s, nil)
+                shown = shown + 1
+            end
+        end
+    end
+    fill("")
+    search.OnChange = function(_, txt) fill(tostring(txt or "")) end
+end
+
+local function previewShots(sp)
+    clearPanel(sp)
+    local shots = V.state.scan.shots or {}
+    if #shots == 0 then
+        local l = vgui.Create("DLabel", sp)
+        l:Dock(TOP) l:SetTall(40)
+        l:SetText("Снимков нет — вкладка «3D» → «СНЯТЬ КАДР»")
+        l:SetFont("AS_Small") l:SetTextColor(COL.dim)
+        return
+    end
+    for _, path in ipairs(shots) do shotRow(sp, tostring(path)) end
+end
+
+function V.OpenPreview()
+    if IsValid(V.state.prevFrame) then
+        V.state.prevFrame:SetVisible(true)
+        return
+    end
+    local f = vgui.Create("DFrame")
+    V.state.prevFrame = f
+    if GRM.UI and GRM.UI.Track then GRM.UI.Track("addon_studio_preview", f) end
+    f:SetSize(math.Clamp(ScrW() - 40, 900, 1500), math.Clamp(ScrH() - 40, 560, 900))
+    f:Center() f:SetTitle("ПРЕДПРОСМОТР — " .. tostring((V.state.work and V.state.work.name) or "проект"))
+    f:MakePopup() f:ShowCloseButton(true)
+    f.Paint = function(_, w, h) draw.RoundedBox(8, 0, 0, w, h, COL.bg) end
+
+    local tabs = vgui.Create("DPropertySheet", f)
+    tabs:Dock(FILL) tabs:DockMargin(8, 8, 8, 8)
+
+    local scene = vgui.Create("DScrollPanel", tabs)
+    tabs:AddSheet("СЦЕНА", scene, "icon16/package.png")
+    previewScene(scene)
+
+    local mats = vgui.Create("DPanel", tabs)
+    tabs:AddSheet("МАТЕРИАЛЫ", mats, "icon16/picture.png")
+    previewMaterials(mats)
+
+    local snds = vgui.Create("DPanel", tabs)
+    tabs:AddSheet("ЗВУКИ", snds, "icon16/sound.png")
+    previewSounds(snds)
+
+    local shots = vgui.Create("DPanel", tabs)
+    tabs:AddSheet("КАДРЫ", shots, "icon16/camera.png")
+    previewShots(shots)
+
+    local win = vgui.Create("DPanel", tabs)
+    tabs:AddSheet("ТЕСТ ОКНА", win, "icon16/application_view_tile.png")
+    local work = V.state.work
+    if work then
+        renderLayoutWidgets(work.layout or { w = 800, h = 600 }, win, false)
+    else
+        local l = vgui.Create("DLabel", win)
+        l:SetText("Нет проекта") l:SetFont("AS_Small") l:SetTextColor(COL.dim)
     end
 end
 
@@ -1304,6 +1777,7 @@ function V.Open()
         sendChunked("save:" .. id, "local ASPROJECT = " .. A.ToLuaText(work))
         notify("Сохранение " .. tostring(id) .. "…")
     end)
+    headerBtn("ПРЕДПРОСМОТР", COL.gold, function() V.OpenPreview() end)
     headerBtn("ПРОЕКТЫ", COL.card, function()
         local menu = DMenu()
         local projects = V.state.projects or {}
@@ -1361,15 +1835,44 @@ function V.Open()
     bindViewport(vp)
 
     local shot = mkBtn(vpWrap, "СНЯТЬ КАДР", COL.gold)
-    shot:Dock(BOTTOM) shot:SetTall(26) shot:DockMargin(4, 0, 4, 62)
+    shot:Dock(BOTTOM) shot:SetTall(26) shot:DockMargin(4, 0, 4, 112)
     shot.DoClick = function() captureShot(vp) end
 
+    local sceneAll = mkBtn(vpWrap, "СЦЕНА: ВЫКЛ", COL.card)
+    sceneAll:Dock(BOTTOM) sceneAll:SetTall(24) sceneAll:DockMargin(4, 0, 4, 84)
+    sceneAll.DoClick = function()
+        V.state.view.sceneAll = not V.state.view.sceneAll
+        sceneAll:SetText(V.state.view.sceneAll and "СЦЕНА: ВКЛ" or "СЦЕНА: ВЫКЛ")
+        sceneAll:SetTextColor(V.state.view.sceneAll and COL.green or COL.text)
+    end
+
+    local function cycleVisual(step)
+        local idx = math.max(1, V.state.selected)
+        local n = #V.state.blocks
+        if n == 0 then return end
+        for off = 1, n do
+            local j = ((idx - 1 + step * off) % n) + 1
+            local b = V.state.blocks[j]
+            if isVisual(b) or (b.data and b.data.pos) then
+                selectNode(j)
+                return
+            end
+        end
+        selectNode(1)
+    end
+    local prevBtn = mkBtn(vpWrap, "◀", COL.card)
+    prevBtn:Dock(BOTTOM) prevBtn:SetWide(60) prevBtn:SetTall(24) prevBtn:DockMargin(4, 0, 4, 56)
+    prevBtn.DoClick = function() cycleVisual(-1) end
+    local nextBtn = mkBtn(vpWrap, "▶", COL.card)
+    nextBtn:Dock(BOTTOM) nextBtn:SetWide(60) nextBtn:SetTall(24) nextBtn:DockMargin(126, 0, 4, 56)
+    nextBtn.DoClick = function() cycleVisual(1) end
+
     local modeRot = mkBtn(vpWrap, "ВРАЩЕНИЕ", COL.card)
-    modeRot:Dock(BOTTOM) modeRot:SetTall(24) modeRot:DockMargin(4, 0, 4, 34)
+    modeRot:Dock(BOTTOM) modeRot:SetTall(24) modeRot:DockMargin(4, 0, 4, 28)
     modeRot.DoClick = function() V.state.view.mode = "rotate" end
 
     local modeMove = mkBtn(vpWrap, "ПЕРЕМЕЩЕНИЕ", COL.card)
-    modeMove:Dock(BOTTOM) modeMove:SetTall(24) modeMove:DockMargin(4, 0, 4, 6)
+    modeMove:Dock(BOTTOM) modeMove:SetTall(24) modeMove:DockMargin(4, 0, 4, 0)
     modeMove.DoClick = function() V.state.view.mode = "move" end
     right:AddSheet("3D", vpWrap, "icon16/camera.png")
 
@@ -1453,7 +1956,18 @@ function V.Open()
         end
     end
     f.OnKeyCodePressed = function(_, code)
-        if code == KEY_DELETE then deleteNode() end
+        if code == KEY_DELETE then
+            -- В макете Delete удаляет виджет, на холсте — узел.
+            local work = V.state.work
+            if V.state.layout.sel > 0 and work and work.layout
+                and V.state.layout.sel <= #work.layout.widgets then
+                table.remove(work.layout.widgets, V.state.layout.sel)
+                V.state.layout.sel = 0
+                rebuildLayout() rebuildCode()
+            else
+                deleteNode()
+            end
+        end
     end
 
     applyPan()

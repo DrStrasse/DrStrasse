@@ -1394,10 +1394,14 @@ A.WidgetKinds = {
     { id = "button", name = "КНОПКА", color = COL3(90, 210, 120) },
     { id = "label", name = "ТЕКСТ", color = COL3(220, 220, 225) },
     { id = "entry", name = "ПОЛЕ", color = COL3(140, 220, 210) },
+    { id = "textarea", name = "ТЕКСТ-ОБЛАСТЬ", color = COL3(150, 200, 220) },
     { id = "check", name = "ЧЕКБОКС", color = COL3(110, 200, 160) },
     { id = "slider", name = "СЛАЙДЕР", color = COL3(250, 190, 90) },
+    { id = "select", name = "ВЫБОР", color = COL3(170, 170, 230) },
     { id = "list", name = "СПИСОК", color = COL3(190, 150, 230) },
     { id = "image", name = "КАРТИНКА", color = COL3(120, 210, 180) },
+    { id = "model", name = "МОДЕЛЬ 3D", color = COL3(80, 200, 160) },
+    { id = "progress", name = "ПРОГРЕСС", color = COL3(250, 160, 90) },
     { id = "panel", name = "ПАНЕЛЬ", color = COL3(90, 130, 170) },
 }
 
@@ -1405,12 +1409,125 @@ A.WidgetDefaults = {
     button = { label = "Кнопка", target = "" },
     label = { text = "Текст" },
     entry = { placeholder = "Ввод…", var = "input" },
+    textarea = { placeholder = "Многострочный текст…", var = "notes" },
     check = { label = "Галка" },
     slider = { label = "Параметр", min = 0, max = 100, value = 50 },
+    select = { label = "Выбор", options = "Первый;Второй" },
     list = { options = "Вариант 1;Вариант 2" },
     image = { material = "" },
+    model = { model = "", fov = 30 },
+    progress = { label = "Прогресс", min = 0, max = 100, value = 40 },
     panel = { caption = "Панель" },
 }
+
+--- Поля, которые инспектор макета показывает для вида виджета.
+function A.WidgetFields(kind)
+    local by = {
+        button = { { "label", "Подпись" }, { "target", "Действие (uid узла/текст)" } },
+        label = { { "text", "Текст" } },
+        entry = { { "placeholder", "Плейсхолдер" }, { "var", "Переменная" } },
+        textarea = { { "placeholder", "Плейсхолдер" }, { "var", "Переменная" } },
+        check = { { "label", "Подпись" } },
+        slider = { { "label", "Подпись" }, { "min", "Мин." }, { "max", "Макс." }, { "value", "Текущее" } },
+        select = { { "label", "Подпись" }, { "options", "Варианты (;)" } },
+        list = { { "options", "Строки (;)" } },
+        image = { { "material", "Материал" } },
+        model = { { "model", "Модель" }, { "fov", "FOV" } },
+        progress = { { "label", "Подпись" }, { "min", "Мин." }, { "max", "Макс." }, { "value", "Текущее" } },
+        panel = { { "caption", "Подпись" } },
+    }
+    local list = by[kind]
+    if not list then return { { "caption", "Подпись" } } end
+    local out = {}
+    for _, row in ipairs(list) do
+        out[#out + 1] = { key = row[1], label = row[2],
+            type = (row[1] == "min" or row[1] == "max" or row[1] == "value" or row[1] == "fov") and "number"
+                or (row[1] == "model" and "model" or (row[1] == "material" and "material" or "text")) }
+    end
+    return out
+end
+
+--- Нормализация ОДНОГО виджета: числа, диапазоны, длина строк.
+function A.NormalizeWidget(wgt, opts)
+    opts = opts or { w = 1600, h = 1000 }
+    local rec = { kind = tostring(wgt.kind or "panel") }
+    local x, y = tonumber(wgt.x) or 0, tonumber(wgt.y) or 0
+    local w, h = tonumber(wgt.w) or 100, tonumber(wgt.h) or 30
+    rec.x = math.Clamp(x, 0, math.max(0, opts.w - 12))
+    rec.y = math.Clamp(y, 0, math.max(0, opts.h - 12))
+    rec.w = math.Clamp(w, 12, math.max(12, opts.w))
+    rec.h = math.Clamp(h, 12, math.max(12, opts.h))
+    for k in pairs(A.WidgetDefaults[rec.kind] or {}) do
+        if wgt[k] ~= nil then rec[k] = wgt[k] end
+    end
+    -- Диапазоны числовых пар: min < max, value внутри.
+    local minV, maxV = tonumber(rec.min), tonumber(rec.max)
+    if minV and maxV then
+        if minV > maxV then minV, maxV = maxV, minV end
+        rec.min, rec.max = minV, maxV
+        local v = tonumber(rec.value)
+        if v then rec.value = math.Clamp(v, minV, maxV) end
+    end
+    -- Строки: пробелы по краям и лимит.
+    for k, v in pairs(rec) do
+        if type(v) == "string" then
+            if k ~= "var" and k ~= "options" then v = string.Trim(v) end
+            if #v > A.MaxTextLen then v = string.sub(v, 1, A.MaxTextLen) end
+            rec[k] = v
+        end
+    end
+    return rec
+end
+
+--- Прилипание к сетке: возвращает {x,y,w,h} кратные grid.
+function A.SnapRect(rect, grid)
+    rect = rect or {}
+    local g = tonumber(grid) or 8
+    if g < 2 then g = 8 end
+    local function snap(v) return math.floor(v / g + 0.5) * g end
+    return { x = snap(tonumber(rect.x) or 0), y = snap(tonumber(rect.y) or 0),
+        w = math.max(12, snap(tonumber(rect.w) or 100)), h = math.max(12, snap(tonumber(rect.h) or 30)) }
+end
+
+--- Движение: сдвиг с клампом по границам холста.
+function A.MoveRect(rect, dx, dy, limit)
+    rect = rect or {}
+    limit = limit or { w = 1600, h = 1000 }
+    local w, h = tonumber(rect.w) or 100, tonumber(rect.h) or 30
+    return { x = math.Clamp((tonumber(rect.x) or 0) + (dx or 0), 0, math.max(0, limit.w - w)),
+        y = math.Clamp((tonumber(rect.y) or 0) + (dy or 0), 0, math.max(0, limit.h - h)),
+        w = w, h = h }
+end
+
+--- Ресайз за ребро/угол. edge: строка из букв n/w/e/s (можно "nw").
+--[[ Ключевая чистая функция «подтягивания за углы»: правка края не
+     трогает противоположный, минимальный размер соблюдается, край не
+     выходит за холст. Используется и редактором, и стендом. ]]
+function A.GrowRect(rect, edge, dx, dy, limit, minSize)
+    rect = rect or {}
+    limit = limit or { w = 1600, h = 1000 }
+    minSize = minSize or 12
+    local x, y = tonumber(rect.x) or 0, tonumber(rect.y) or 0
+    local w, h = tonumber(rect.w) or 100, tonumber(rect.h) or 30
+    local e = tostring(edge or "")
+    if string.find(e, "e", 1, true) then
+        w = math.Clamp(w + (dx or 0), minSize, math.max(minSize, limit.w - x))
+    end
+    if string.find(e, "s", 1, true) then
+        h = math.Clamp(h + (dy or 0), minSize, math.max(minSize, limit.h - y))
+    end
+    if string.find(e, "w", 1, true) then
+        local nx = math.Clamp(x + (dx or 0), 0, math.max(0, x + w - minSize))
+        w = w + (x - nx)
+        x = nx
+    end
+    if string.find(e, "n", 1, true) then
+        local ny = math.Clamp(y + (dy or 0), 0, math.max(0, y + h - minSize))
+        h = h + (y - ny)
+        y = ny
+    end
+    return { x = x, y = y, w = w, h = h }
+end
 
 --- Нормализация макета: пределы, неизвестные виджеты — мимо.
 function A.NormalizeLayout(layout, limit)
@@ -1424,21 +1541,7 @@ function A.NormalizeLayout(layout, limit)
     for i = 1, math.min(#raw, 300) do
         local wgt = raw[i]
         if istable(wgt) and kinds[wgt.kind] then
-            local w = tonumber(wgt.w) or 100
-            local h = tonumber(wgt.h) or 30
-            local x = tonumber(wgt.x) or 8
-            local y = tonumber(wgt.y) or 8
-            local rec = { kind = wgt.kind,
-                x = math.Clamp(x, 0, limit.w - 8), y = math.Clamp(y, 0, limit.h - 8),
-                w = math.Clamp(w, 12, limit.w), h = math.Clamp(h, 12, limit.h) }
-            for k in pairs(A.WidgetDefaults[wgt.kind] or {}) do
-                if wgt[k] ~= nil then rec[k] = wgt[k] end
-            end
-            -- Строковые поля с лимитом.
-            for k, v in pairs(rec) do
-                if type(v) == "string" and #v > A.MaxTextLen then rec[k] = string.sub(v, 1, A.MaxTextLen) end
-            end
-            out.widgets[#out.widgets + 1] = rec
+            out.widgets[#out.widgets + 1] = A.NormalizeWidget(wgt, out)
         end
     end
     return out
@@ -1457,22 +1560,85 @@ function A.LayoutToCode(layout, proj)
         "    root:SetPaintBackground(false)",
     }
     for _, w in ipairs(layout.widgets) do
+        local x, y = numberToString(tonumber(w.x) or 0), numberToString(tonumber(w.y) or 0)
         out[#out + 1] = ""
         if w.kind == "button" then
             out[#out + 1] = "    local b = vgui.Create(\"DButton\", root)"
-            out[#out + 1] = "    b:SetPos(" .. numberToString(tonumber(w.x) or 8) .. ", " .. numberToString(tonumber(w.y) or 8) .. ")"
+            out[#out + 1] = "    b:SetPos(" .. x .. ", " .. y .. ")"
             out[#out + 1] = "    b:SetSize(" .. numberToString(tonumber(w.w) or 100) .. ", " .. numberToString(tonumber(w.h) or 30) .. ")"
             out[#out + 1] = "    b:SetText(" .. string.format("%q", tostring(w.label or "")) .. ")"
             out[#out + 1] = "    b.DoClick = function() -- действие " .. tostring(w.target or "(не задано)") .. " end"
         elseif w.kind == "label" then
             out[#out + 1] = "    local l = vgui.Create(\"DLabel\", root)"
-            out[#out + 1] = "    l:SetPos(" .. numberToString(tonumber(w.x) or 8) .. ", " .. numberToString(tonumber(w.y) or 8) .. ")"
+            out[#out + 1] = "    l:SetPos(" .. x .. ", " .. y .. ")"
             out[#out + 1] = "    l:SetSize(" .. numberToString(tonumber(w.w) or 100) .. ", " .. numberToString(tonumber(w.h) or 20) .. ")"
             out[#out + 1] = "    l:SetText(" .. string.format("%q", tostring(w.text or "")) .. ")"
+        elseif w.kind == "entry" then
+            out[#out + 1] = "    local e = vgui.Create(\"DTextEntry\", root)"
+            out[#out + 1] = "    e:SetPos(" .. x .. ", " .. y .. ")"
+            out[#out + 1] = "    e:SetSize(" .. numberToString(tonumber(w.w) or 160) .. ", " .. numberToString(tonumber(w.h) or 24) .. ")"
+            out[#out + 1] = "    e:SetPlaceholderText(" .. string.format("%q", tostring(w.placeholder or "")) .. ")"
+        elseif w.kind == "textarea" then
+            out[#out + 1] = "    local t = vgui.Create(\"DTextEntry\", root)"
+            out[#out + 1] = "    t:SetPos(" .. x .. ", " .. y .. ")"
+            out[#out + 1] = "    t:SetSize(" .. numberToString(tonumber(w.w) or 240) .. ", " .. numberToString(tonumber(w.h) or 80) .. ")"
+            out[#out + 1] = "    t:SetMultiline(true)"
+            out[#out + 1] = "    t:SetPlaceholderText(" .. string.format("%q", tostring(w.placeholder or "")) .. ")"
+        elseif w.kind == "check" then
+            out[#out + 1] = "    local c = vgui.Create(\"DCheckBox\", root)"
+            out[#out + 1] = "    c:SetPos(" .. x .. ", " .. y .. ")"
+            out[#out + 1] = "    c:SetSize(" .. numberToString(tonumber(w.w) or 120) .. ", " .. numberToString(tonumber(w.h) or 24) .. ")"
+            out[#out + 1] = "    c:SetText(" .. string.format("%q", tostring(w.label or "")) .. ")"
+        elseif w.kind == "slider" then
+            out[#out + 1] = "    local s = vgui.Create(\"DSlider\", root)"
+            out[#out + 1] = "    s:SetPos(" .. x .. ", " .. y .. ")"
+            out[#out + 1] = "    s:SetSize(" .. numberToString(tonumber(w.w) or 240) .. ", " .. numberToString(tonumber(w.h) or 24) .. ")"
+            out[#out + 1] = "    s:SetMinMax(" .. numberToString(tonumber(w.min) or 0) .. ", " .. numberToString(tonumber(w.max) or 100) .. ")"
+            out[#out + 1] = "    s:SetValue(" .. numberToString(tonumber(w.value) or 50) .. ")"
+        elseif w.kind == "select" then
+            out[#out + 1] = "    local c = vgui.Create(\"DComboBox\", root)"
+            out[#out + 1] = "    c:SetPos(" .. x .. ", " .. y .. ")"
+            out[#out + 1] = "    c:SetSize(" .. numberToString(tonumber(w.w) or 160) .. ", " .. numberToString(tonumber(w.h) or 24) .. ")"
+            for opt in tostring(w.options or ""):gmatch("[^;]+") do
+                out[#out + 1] = "    c:AddChoice(" .. string.format("%q", string.Trim(opt)) .. ")"
+            end
+        elseif w.kind == "list" then
+            out[#out + 1] = "    local l = vgui.Create(\"DListView\", root)"
+            out[#out + 1] = "    l:SetPos(" .. x .. ", " .. y .. ")"
+            out[#out + 1] = "    l:SetSize(" .. numberToString(tonumber(w.w) or 240) .. ", " .. numberToString(tonumber(w.h) or 120) .. ")"
+            out[#out + 1] = "    l:AddColumn(\"Вариант\")"
+            for opt in tostring(w.options or ""):gmatch("[^;]+") do
+                out[#out + 1] = "    l:AddLine(" .. string.format("%q", string.Trim(opt)) .. ")"
+            end
+        elseif w.kind == "image" then
+            out[#out + 1] = "    local img = vgui.Create(\"DImage\", root)"
+            out[#out + 1] = "    img:SetPos(" .. x .. ", " .. y .. ")"
+            out[#out + 1] = "    img:SetSize(" .. numberToString(tonumber(w.w) or 120) .. ", " .. numberToString(tonumber(w.h) or 90) .. ")"
+            if tostring(w.material or "") ~= "" then
+                out[#out + 1] = '    img:SetMaterial(Material("' .. string.gsub(tostring(w.material), "\\", "/") .. '"))'
+            end
+        elseif w.kind == "model" then
+            out[#out + 1] = "    local m = vgui.Create(\"DModelPanel\", root)"
+            out[#out + 1] = "    m:SetPos(" .. x .. ", " .. y .. ")"
+            out[#out + 1] = "    m:SetSize(" .. numberToString(tonumber(w.w) or 180) .. ", " .. numberToString(tonumber(w.h) or 180) .. ")"
+            out[#out + 1] = "    m:SetFOV(" .. numberToString(tonumber(w.fov) or 30) .. ")"
+            if tostring(w.model or "") ~= "" then
+                out[#out + 1] = '    m:SetModel("' .. string.gsub(tostring(w.model), "\\", "/") .. '")'
+                out[#out + 1] = "    m:SetAnimated(true)"
+            end
+        elseif w.kind == "progress" then
+            out[#out + 1] = "    local p = vgui.Create(\"DProgress\", root)"
+            out[#out + 1] = "    p:SetPos(" .. x .. ", " .. y .. ")"
+            out[#out + 1] = "    p:SetSize(" .. numberToString(tonumber(w.w) or 240) .. ", " .. numberToString(tonumber(w.h) or 18) .. ")"
+            local minV, maxV = tonumber(w.min) or 0, tonumber(w.max) or 100
+            local frac = (tonumber(w.value) or minV) - minV
+            if maxV > minV then frac = frac / (maxV - minV) end
+            out[#out + 1] = "    p:SetFraction(" .. numberToString(math.Clamp(frac, 0, 1)) .. ")"
         else
             out[#out + 1] = "    local c = vgui.Create(\"DPanel\", root)"
-            out[#out + 1] = "    c:SetPos(" .. numberToString(tonumber(w.x) or 8) .. ", " .. numberToString(tonumber(w.y) or 8) .. ")"
+            out[#out + 1] = "    c:SetPos(" .. x .. ", " .. y .. ")"
             out[#out + 1] = "    c:SetSize(" .. numberToString(tonumber(w.w) or 100) .. ", " .. numberToString(tonumber(w.h) or 30) .. ")"
+            out[#out + 1] = "    c:SetPaintBackground(false)"
         end
     end
     out[#out + 1] = "    return root"

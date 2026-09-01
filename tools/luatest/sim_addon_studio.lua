@@ -287,5 +287,76 @@ local full = A.Generate(place)
 ok(has("5. ТУЛ РАЗМЕЩЕНИЯ", full), "компиляция содержит раздел тула")
 ok(has("6. КОНЕЦ", full), "компиляция закрыта")
 
+print("\n=== 11. КОНСТРУКТОР ОКОН: НОВЫЕ ВИДЖЕТЫ И ГЕОМЕТРИЯ ===")
+local wKinds = {}
+for _, k in ipairs(A.WidgetKinds) do wKinds[k.id] = true end
+ok(wKinds.model and wKinds.progress and wKinds.select and wKinds.textarea,
+    "в палитре есть модель 3D, прогресс, выбор, текст-область")
+local wf = A.WidgetFields("slider")
+local hasNum = false
+for _, f in ipairs(wf) do if f.type == "number" then hasNum = true end end
+ok(#wf >= 3 and hasNum, "у слайдера есть подпись и числовые min/max/value")
+
+-- Нормализация виджета: диапазоны и пределы.
+local nw = A.NormalizeWidget({ kind = "slider", min = 100, max = 10, value = 500, x = -50, y = 20 }, { w = 800, h = 600 })
+ok(nw.min == 10 and nw.max == 100 and nw.value == 100, "min>max меняются местами, value клампится")
+ok(nw.x == 0 and nw.w >= 12, "координаты и размеры в пределах холста")
+
+-- Снап к сетке.
+local sr = A.SnapRect({ x = 13, y = 17, w = 100, h = 34 }, 8)
+local function gridOk(r)
+    for _, v in ipairs({ r.x, r.y, r.w, r.h }) do if v % 8 ~= 0 then return false end end
+    return true
+end
+ok(gridOk(sr) and sr.x == 16, "SnapRect кратен сетке 8")
+sr = A.SnapRect({ x = 13, y = 17, w = 40, h = 30 }, 4)
+ok(sr.x == 12 and sr.w == 40, "сетка 4: тоже кратна")
+
+-- Движение с клампом по границам холста.
+local mv = A.MoveRect({ x = 790, y = 590, w = 100, h = 30 }, 50, 50, { w = 800, h = 600 })
+ok(mv.x == 700 and mv.y == 570, "MoveRect не выпускает за край")
+
+-- Ресайз за рёбра: правый край двигает только w, левый — x и w.
+local g0 = A.GrowRect({ x = 10, y = 10, w = 100, h = 50 }, "e", 20, 0, { w = 800, h = 600 }, 12)
+ok(g0.w == 120 and g0.x == 10, "GrowRect: правый край")
+local g1 = A.GrowRect({ x = 10, y = 10, w = 100, h = 50 }, "w", 20, 0, { w = 800, h = 600 }, 12)
+ok(g1.x == 30 and g1.w == 80, "GrowRect: левый край (правый неподвижен)")
+local g2 = A.GrowRect({ x = 10, y = 10, w = 100, h = 50 }, "nw", 20, 20, { w = 800, h = 600 }, 12)
+ok(g2.x == 30 and g2.y == 30 and g2.w == 80 and g2.h == 30, "GrowRect: угол nw")
+local g3 = A.GrowRect({ x = 10, y = 10, w = 20, h = 20 }, "w", 500, 0, { w = 800, h = 600 }, 12)
+ok(g3.w == 12 and g3.x == 18, "GrowRect: минимальный размер при сжатии")
+
+-- Новые виды в генераторе buildUI.
+local rich = A.Normalize({ name = "rich", nodes = { { uid = "n1", kind = "export", data = { name = "r", kind = "module" } } },
+    layout = { w = 900, h = 700, widgets = {
+        { kind = "model", x = 10, y = 10, w = 180, h = 180, model = "models/props/c17/chair02a.mdl" },
+        { kind = "progress", x = 200, y = 10, w = 240, h = 18, min = 0, max = 200, value = 50 },
+        { kind = "select", x = 200, y = 40, w = 160, h = 24, options = "А;Б" },
+        { kind = "textarea", x = 200, y = 80, w = 240, h = 60 },
+    } } })
+local rc = A.LayoutToCode(rich.layout)
+local rt = table.concat(rc, "\n")
+ok(has('vgui.Create("DModelPanel"', rt) and has("SetModel", rt), "buildUI: модель 3D")
+ok(has('vgui.Create("DProgress"', rt) and has("SetFraction", rt), "buildUI: прогресс")
+ok(has('vgui.Create("DComboBox"', rt) and has("AddChoice", rt), "buildUI: выбор")
+ok(has("SetMultiline", rt), "buildUI: текст-область")
+local rfull = A.Generate(rich)
+ok(has("4.5 МАКЕТ ОКНА", rfull) and has("DModelPanel", rfull), "компиляция: раздел макета с новыми виджетами")
+
+-- Раундтрип с новыми видами виджетов.
+local rtext = A.ToLuaText(rich)
+local rback = A.ParseText("return " .. rtext)
+ok(rback and #rback.layout.widgets == 4 and rback.layout.widgets[1].kind == "model"
+    and rback.layout.widgets[2].value == 50, "новые виджеты переживают раундтрип")
+
+print("\n=== 12. ВАЛИДАТОР: МАКЕТ И ПРЕДПРОСМОТР ===")
+local wide = A.Normalize({ name = "wide", nodes = { { uid = "n1", kind = "export", data = { name = "w", kind = "module" } } },
+    layout = { w = 400, h = 300, widgets = { { kind = "button", x = 300, y = 10, w = 200, h = 30, label = "За краем" } } } })
+res = A.Validate(wide, {})
+local wJoin = table.concat(res.warnings, "\n")
+ok(has("выходит за правый край", wJoin), "виджет за краем — предупреждение")
+local okRich, richErr = A.CheckSyntax(rich)
+ok(okRich, "черновик с новыми виджетами компилируется", richErr)
+
 print(string.format("\nADDON STUDIO: %d/%d, провалов: %d", total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)

@@ -98,9 +98,9 @@ action — `resource.action`; hook — `GRM_<Domain><PastTense>`; backend — к
 ### Прочее
 | Файл | Назначение |
 |---|---|
-| `sh_grm_addon_studio.lua` | Студия аддонов: каталог узлов (34 шт.), манифест, макеты/шаблоны, `A.Validate`, `A.CheckSyntax`, генератор GLua + тул размещения |
+| `sh_grm_addon_studio.lua` | Студия аддонов: каталог узлов (34 шт.), манифест, виджеты/шаблоны макета, `A.SnapRect`/`A.GrowRect`/`A.MoveRect`, `A.Validate`, `A.CheckSyntax`, генератор GLua + тул размещения |
 | `sv_grm_addon_studio.lua` | Студия аддонов (сервер): права, net (чанки 8 КБ), сохранение проектов/снимков |
-| `cl_grm_addon_studio.lua` | Студия аддонов (клиент): граф, палитра, инспектор, 3D-вьюпорт с гизмо, макет-конструктор, проверка, компиляция |
+| `cl_grm_addon_studio.lua` | Студия аддонов (клиент): граф, палитра, инспектор, 3D-вьюпорт с гизмо (режим «СЦЕНА»), конструктор окон (12 виджетов, ресайз, сетка), окно предпросмотра (модели/материалы/звуки/кадры), проверка, компиляция |
 | `sh_grm_inventory.lua` | Инвентарь v1.7 |
 | `sh_grm_identity.lua` | AccountKey/CharacterKey |
 | `sh_grm_doors.lua` / `sh_grm_doors_access.lua` | Двери v4.0, доступ |
