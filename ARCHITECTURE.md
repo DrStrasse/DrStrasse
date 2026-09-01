@@ -98,6 +98,9 @@ action — `resource.action`; hook — `GRM_<Domain><PastTense>`; backend — к
 ### Прочее
 | Файл | Назначение |
 |---|---|
+| `sh_grm_addon_studio.lua` | Студия аддонов: каталог узлов (34 шт.), манифест, макеты/шаблоны, `A.Validate`, `A.CheckSyntax`, генератор GLua + тул размещения |
+| `sv_grm_addon_studio.lua` | Студия аддонов (сервер): права, net (чанки 8 КБ), сохранение проектов/снимков |
+| `cl_grm_addon_studio.lua` | Студия аддонов (клиент): граф, палитра, инспектор, 3D-вьюпорт с гизмо, макет-конструктор, проверка, компиляция |
 | `sh_grm_inventory.lua` | Инвентарь v1.7 |
 | `sh_grm_identity.lua` | AccountKey/CharacterKey |
 | `sh_grm_doors.lua` / `sh_grm_doors_access.lua` | Двери v4.0, доступ |
@@ -182,6 +185,8 @@ grm_faction_duty.json          — статус службы по CharacterKey
 grm_wallet.json                — внешний писатель (безвреден, см. HANDOVER)
 gnews_log.txt                  — лог госновостей
 grm_industry/                  — узлы, задачи, заказы: map_<map>.json + orders_<map>.json
+grm_studio/                    — проекты студии аддонов: <slug>.json
+grm_studio/shots/              — снимки студии: <slug>_<nnn>.jpg
 grm_admin_log.json             — админ-лог
 grm_player_taxes.json          — налоги игроков
 spawn_points_global_<map>.json — глобальные спавнпоинты
@@ -213,7 +218,8 @@ grm_core/audit/YYYY-MM-DD.jsonl — общий аудит
 `/salary_admin`, `/logistics_admin`, `/models_admin`, `/weapons_admin`, `/mask_admin`,
 `!grmmenu`/`!grmadmin`/`!econadmin`, `/scanvehicles`, `/spawnmenu`, `/vshop_admin`,
 `/phoneshop_admin`, `/phone_access`, `/phone_admin_remove`, `/grm_access` `/доступы`,
-`/faction_perms`, `/grm_wanted`, `/grm_cctv_access`, `/roomtap_access`, `/roomtap_shop`.
+`/faction_perms`, `/grm_wanted`, `/grm_cctv_access`, `/roomtap_access`, `/roomtap_shop`,
+`/studio` `/адонстудия` `/addonstudio` — студия аддонов (суперадмин).
 
 **Консольные (админ):** `grm_logistics_place_*`, `grm_logistics_save/load`,
 `grm_logistics_admin_menu`, `grm_logistics_crates`, `grm_fc_save/load`,

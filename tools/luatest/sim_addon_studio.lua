@@ -1,0 +1,291 @@
+--[[--------------------------------------------------------------------
+    sim_addon_studio — общая часть «Студии аддонов»: каталог узлов,
+    нормализация манифеста, раундтрип и генератор GLua-кода.
+
+    Запуск: ./.luabuild/lj/src/luajit tools/luatest/sim_addon_studio.lua
+----------------------------------------------------------------------]]
+local stub = dofile("tools/luatest/lib_gmod_stub.lua")
+stub.install()
+
+-- Стенд обязан проверять источник: если AddNetworkString/CompileString
+-- не пришли из стаба, модуль не поднимется и «зелёный» отчёт лжёт.
+if not _G.AddCSLuaFile then
+    _G.AddCSLuaFile = function() end
+end
+if not _G.util or not _G.util.AddNetworkString then
+    _G.util = _G.util or {}
+    _G.util.AddNetworkString = function() end
+end
+_G.CompileString = function(src, name)
+    return loadstring(src, name)
+end
+
+local fails, total = 0, 0
+local function ok(cond, name, extra)
+    total = total + 1
+    if cond then print("  ok   " .. name)
+    else fails = fails + 1 print("  FAIL " .. name .. "  " .. tostring(extra or "")) end
+end
+
+local loaded, err = stub.loadModule("lua/autorun/sh_grm_addon_studio.lua")
+ok(loaded, "модуль общей части поднялся", err)
+local A = _G.GRM and _G.GRM.AddonStudio
+ok(A and A.Version == "1.0.0", "версия 1.0.0")
+
+print("\n=== 1. КАТАЛОГ УЗЛОВ ===")
+local ids, cats, allDefs = {}, {}, {}
+for _, d in ipairs(A.Defs) do
+    ids[d.id] = (ids[d.id] or 0) + 1
+    cats[d.cat] = true
+    allDefs[#allDefs + 1] = d.id
+end
+ok(#A.Defs >= 20, "узлов достаточно для редактора аддона: " .. #A.Defs)
+local dup = false
+for id, n in pairs(ids) do if n > 1 then dup = true print("    дубль: " .. id) end end
+ok(not dup, "id узлов уникальны")
+local catOk = true
+for _, c in ipairs(A.Cats) do if not cats[c.id] then catOk = false end end
+ok(catOk, "категории палитры ссылаются на существующие cat")
+local portOk, fieldOk = true, true
+for _, d in ipairs(A.Defs) do
+    local ports = d.ports or {}
+    if type(ports["in"]) ~= "table" or type(ports.out) ~= "table" or #ports["in"] == 0 or #ports.out == 0 then
+        portOk = false print("    плохие порты: " .. d.id)
+    end
+    local seen = {}
+    for _, f in ipairs(d.fields or {}) do
+        if seen[f.key] then fieldOk = false print("    дубль поля: " .. d.id .. "." .. f.key) end
+        seen[f.key] = true
+        if A.Defaults(d.id)[f.key] == nil then
+            fieldOk = false print("    дефолт поля не в Defaults: " .. d.id .. "." .. f.key)
+        end
+    end
+end
+ok(portOk, "у каждого узла есть входы и выходы")
+ok(fieldOk, "поля инспектора уникальны и покрыты дефолтами")
+
+-- Дефолты — глубокие копии: правка одного узла не трогает другой.
+local d1 = A.Defaults("model")
+local d2 = A.Defaults("model")
+d1.pos.x = 99
+ok(d2.pos.x == 0, "Defaults — независимые копии (позиция)")
+
+print("\n=== 2. НОРМАЛИЗАЦИЯ ===")
+local dirty = {
+    name = "Вывеска «Цитадель»",
+    id = "",
+    nodes = {
+        { uid = "n1", kind = "model", x = 40, y = 40, data = { model = "models/props_c17/chair02a.mdl", pos = { x = 1, y = 2, z = 3 } } },
+        { uid = "n1", kind = "entity", x = -100, y = 99999, data = { class = "grm_comp_police" } },
+        { uid = "n9", kind = "unknown_kind", data = {} },
+    },
+    edges = {
+        { a = "n1", ap = "out", b = "n1", bp = "in" },
+        { a = "n1", ap = "out", b = "n2", bp = "in" },
+        { a = "zz", ap = "out", b = "n2", bp = "in" },
+    },
+}
+local norm = A.Normalize(dirty)
+-- Дубль uid (n1 у двух узлов) и неизвестный тип отбрасываются целиком:
+-- переименовывать опасно, связи уже адресуют существующий n1.
+ok(#norm.nodes == 1 and norm.nodes[1].kind == "model", "неизвестный тип и дубль uid отброшены", #norm.nodes)
+ok(norm.nodes[1].x == 40 and norm.nodes[1].y == 40, "координаты первого узла не тронуты")
+ok(#norm.edges == 0, "петля и ссылки на отсутствующих отброшены", #norm.edges)
+ok(norm.id ~= "", "пустой id заменён slug'ом")
+-- Узлы с разными uid и разными типами сохраняются оба.
+local mixed = A.Normalize({ nodes = {
+    { uid = "n1", kind = "model", x = 0, y = 0, data = {} },
+    { uid = "n2", kind = "entity", x = -100, y = 99999, data = { class = "grm_comp_police" } },
+} })
+ok(#mixed.nodes == 2, "разные узлы сохраняются")
+ok(mixed.nodes[2].x == 0 and mixed.nodes[2].y == 1900, "координаты приведены в холст")
+
+print("\n=== 3. МАНИФЕСТ: РАУНДТРИП ===")
+local proj = A.Normalize({
+    name = 'Цитадель "второе ядро"',
+    id = "citadel_core",
+    desc = "Ядро цитадели: экран + терминал",
+    nodes = {
+        { uid = "n1", kind = "entity", x = 40, y = 60, data = { class = "grm_citadel_core", kv = "model = models/props_c17/console01.mdl" } },
+        { uid = "n2", kind = "screen", x = 340, y = 60, data = { size = "512x256", page = "menu_main" } },
+        { uid = "n3", kind = "menu", x = 640, y = 60, data = { title = "Ядро", w = 640, h = 420 } },
+        { uid = "n4", kind = "button", x = 940, y = 60, data = { label = "ПУСК", target = "n3" } },
+        { uid = "n5", kind = "condition", x = 340, y = 320, data = { type = "faction", a = "Орден", op = "==", b = "" } },
+        { uid = "n6", kind = "sound", x = 640, y = 320, data = { sound = "sound/ambient/alarms/klaxon1.wav", vol = 0.8 } },
+        { uid = "n7", kind = "export", x = 1200, y = 60, data = { kind = "core", name = "citadel_core", path = "lua/autorun/sh_citadel_core.lua" } },
+    },
+    edges = {
+        { a = "n1", ap = "out", b = "n2", bp = "in" },
+        { a = "n2", ap = "out", b = "n3", bp = "in" },
+        { a = "n3", ap = "out", b = "n4", bp = "in" },
+        { a = "n5", ap = "else", b = "n6", bp = "in" },
+    },
+})
+local text = A.ToLuaText(proj)
+ok(string.find(text, '["format"] = "grm_addon_studio"') ~= nil, "манифест содержит формат")
+ok(string.find(text, "Цитадель") ~= nil, "кириллица сохраняется в манифесте")
+
+-- Распарсить обратно: стаб CompileString = loadstring.
+local parsed = A.ParseText("return " .. text)
+ok(istable(parsed), "ParseText возвращает проект")
+ok(parsed and parsed.id == "citadel_core" and parsed.name == 'Цитадель "второе ядро"',
+    "имя с кавычками переживает раундтрип")
+ok(parsed and #parsed.nodes == 7 and #parsed.edges == 4, "узлы и связи на месте", parsed and #parsed.nodes)
+ok(parsed and parsed.nodes[2].data.page == "menu_main", "данные узла на месте")
+local cond = nil
+for _, n in ipairs(parsed.nodes or {}) do if n.kind == "condition" then cond = n end end
+ok(cond and cond.data.a == "Орден", "кириллическое значение условия на месте")
+
+print("\n=== 4. ГЕНЕРАТОР КОДА ===")
+local code = A.Generate(proj)
+ok(string.find(code, "СТУДИЯ АДДОНА") ~= nil, "шапка компиляции есть")
+ok(string.find(code, "local ASPROJECT") ~= nil, "манифест в тексте компиляции")
+ok(string.find(code, 'ents%.Create%("grm_citadel_core"%)') ~= nil, "entity: класс из аддона попал в код")
+ok(string.find(code, 'render%.CreateRenderTarget') ~= nil, "screen: рендер-таргет попал в код")
+ok(string.find(code, 'vgui%.Create%("DFrame"%)') ~= nil, "menu: окно Derma попал в код")
+ok(string.find(code, 'SetText%("ПУСК"%)') ~= nil, "button: подпись кнопки попала в код")
+ok(string.find(code, "фракция") ~= nil or string.find(code, "GRM_Faction") ~= nil, "condition: проверка фракции")
+ok(string.find(code, "sound%.Play") ~= nil, "sound: звук попал в код")
+ok(string.find(code, "СВЯЗЬ") ~= nil, "отчёт связей есть")
+ok(string.find(code, "иначе") ~= nil, "связь по ветке «иначе» помечена")
+ok(string.find(code, "ЭКСПОРТ") ~= nil, "узел экспорта виден")
+ok(string.find(code, "sh_citadel_core.lua") ~= nil, "путь экспорта виден в коде")
+
+print("\n=== 5. ПОВЕДЕНИЕ НА ОТКАТАХ ===")
+-- Узел без модели: генератор не должен падать и должен писать модели.
+local dumb = A.Generate(A.Normalize({
+    name = "Пустой",
+    nodes = { { uid = "n1", kind = "model", x = 0, y = 0, data = { model = "" } } },
+}))
+ok(string.find(dumb, 'ent:SetModel%(%""%)') ~= nil, "пустая модель не роняет генератор")
+-- [[ Найденная на откате ловушка: `(` и `)` в pattern — метасимволы
+--     захвата, а не скобки. Без `%` поиск `ent:SetModel("")` молча не
+--     находит строку, хотя она в тексте есть. ]]
+-- Перебор строк: длинная кириллическая строка режется нормализацией.
+local long = A.Normalize({ name = "x", nodes = {
+    { uid = "n1", kind = "text", x = 0, y = 0, data = { text = string.rep("я", 20000) } },
+} })
+ok(#(long.nodes[1].data.text or "") <= A.MaxTextLen, "длинные строки режутся")
+
+print("\n=== 6. ПОДПИСИ И IDENT ===")
+ok(A.Ident("Студия Аддонов!") ~= "" and A.Ident("Студия Аддонов!") ~= nil, "Ident из кириллицы")
+ok(A.Slug('Цитадель "v2"') == "Цитадель_v2", "Slug из имени с кавычками")
+ok(A.Caption("model", { data = { model = "models/props_c17/chair02a.mdl" } }) ~= "", "подпись карточки не пустая")
+ok(A.Stats(proj).nodes == 7 and A.Stats(proj).edges == 4, "статистика корректна")
+
+print("\n=== 7. НОВЫЕ ТИПЫ: ИГРОК, ЭФФЕКТЫ, ПУТИ, ПРИВЯЗКИ, ЧАТ, КЛАВИШИ, МУЗЫКА ===")
+local need = { player = true, effect = true, material = true, path = true, anchor = true,
+    chat = true, chatbutton = true, keys = true, music = true }
+local haveAll = true
+for _, d in ipairs(A.Defs) do need[d.id] = nil end
+for id in pairs(need) do haveAll = false print("    нет типа: " .. id) end
+ok(haveAll, "все заказанные типы в каталоге")
+
+local function genNode(kind, data)
+    local p = A.Normalize({ name = "t", nodes = { { uid = "n1", kind = kind, x = 0, y = 0, data = data } } })
+    return A.Generate(p)
+end
+--[[ Поиск с ПЛЕЙНЫМ флагом: `SetHealth(150)` содержит скобки — в
+     pattern они метасимволы, а `%150` — «обратная ссылка» и валит
+     `find` ошибкой «invalid capture index». Ловушка уже наступала в
+     этом же стенде с `ent:SetModel("")`. ]]
+local function has(needle, hay) return string.find(hay or "", needle, 1, true) ~= nil end
+local p = genNode("player", { health = 150, armor = 50 })
+ok(has("SetHealth(150)", p), "player: здоровье")
+ok(has("SetArmor(50)", p), "player: броня")
+ok(has("util.ScreenShake", genNode("effect", { type = "shake" })), "effect: тряска экрана")
+ok(has("ParticleEffect", genNode("effect", { type = "particle", name = "explosion" })), "effect: частицы")
+ok(has(":SetMaterial(", genNode("material", { material = "models/props/chair.vmt" })), "material: текстура")
+local pathCode = genNode("path", { points = "0,0,0\n100,0,0\n0,100,0" })
+ok(has("local PATH", pathCode), "path: таблица точек")
+ok(has(":SetParent(", genNode("anchor", { child = "n1", parent = "n2" })), "anchor: крепление")
+ok(has("ChatPrint", genNode("chat", { text = "Привет" })), "chat: сообщение")
+ok(has("/me", genNode("chatbutton", { buttons = "Привет|/me здоровается" })), "chatbutton: быстрые команды")
+ok(has("PlayerButtonDown", genNode("keys", { key = "IN_USE", mode = "press" })), "keys: клавиши")
+ok(has("SoundPatch", genNode("music", { sound = "sound/music/track.wav", loop = true })), "music: фоновый звук")
+
+print("\n=== 8. ВАЛИДАТОР (тест на работоспособность) ===")
+local good = A.Normalize({
+    name = "Хороший", nodes = {
+        { uid = "n1", kind = "entity", data = { class = "grm_comp_police" } },
+        { uid = "n2", kind = "export", data = { name = "x", kind = "module" } },
+    }, edges = {},
+})
+local cat = A.CatalogIndex({ "grm_comp_police", "models/a/b.mdl" })
+local res = A.Validate(good, { ents = cat, models = cat })
+ok(#res.errors == 0, "чистый проект: ошибок нет", table.concat(res.errors, "; "))
+
+local bad = A.Normalize({ name = "bad", nodes = {
+    { uid = "n1", kind = "entity", data = { class = "no_such_class" } },
+    { uid = "n2", kind = "model", data = { model = "" } },
+    { uid = "n3", kind = "condition", data = { type = "compare", a = "1", op = "==", b = "2" } },
+}, edges = { { a = "n1", ap = "bogus", b = "n2", bp = "no" } } })
+res = A.Validate(bad, { ents = cat, models = cat })
+local errJoin = table.concat(res.errors, "\n")
+ok(string.find(errJoin, "не найден среди") ~= nil, "несуществующий класс — ошибка")
+ok(string.find(errJoin, "модель не выбрана") ~= nil, "пустая модель — ошибка")
+ok(string.find(errJoin, "не существует") ~= nil, "несуществующий порт — ошибка")
+local noExport = A.Normalize({ name = "без экспорта", nodes = {
+    { uid = "n1", kind = "model", data = { model = "models/a/b.mdl" } },
+} })
+res = A.Validate(noExport, { ents = cat, models = cat, sounds = {} })
+ok(#res.warnings >= 1, "нет узла экспорта → предупреждение", table.concat(res.warnings, "; "))
+
+-- Синтаксис черновика.
+local okSyn, synErr = A.CheckSyntax(good)
+ok(okSyn, "черновик компилируется", synErr)
+
+print("\n=== 9. КОНСТРУКТОР ОКОН: МАКЕТ И ШАБЛОНЫ ===")
+local withLayout = A.Normalize({
+    name = "Меню", nodes = { { uid = "n1", kind = "menu", x = 0, y = 0, data = { title = "Меню" } },
+        { uid = "n2", kind = "export", data = { name = "m", kind = "module" } } },
+    layout = { w = 900, h = 700, widgets = {
+        { kind = "button", x = 10, y = 10, w = 120, h = 30, label = "ПУСК" },
+        { kind = "entry", x = 150, y = 10, w = 200, h = 30, placeholder = "Логин" },
+        { kind = "slider", x = 10, y = 50, w = 300, h = 30, min = 0, max = 100, value = 42 },
+        { kind = "bogus", x = 0, y = 0, w = 10, h = 10 },
+    } },
+    templates = {
+        { id = "t1", name = "Основной", layout = { w = 800, h = 600, widgets = {
+            { kind = "label", x = 5, y = 5, w = 100, h = 20, text = "Привет" } } } },
+        { id = "t1", name = "Дубль (отброшен)", layout = {} },
+    },
+})
+ok(#withLayout.layout.widgets == 3, "неизвестный виджет отброшен", #withLayout.layout.widgets)
+ok(withLayout.layout.widgets[1].label == "ПУСК", "значение виджета сохраняется (не дефолт)")
+ok(withLayout.layout.widgets[3].value == 42, "значение слайдера сохраняется")
+ok(#withLayout.templates == 1 and withLayout.templates[1].name == "Основной", "шаблон один, дубль отброшен")
+
+-- Раундтрип макета внутри проекта.
+local mtext = A.ToLuaText(withLayout)
+local mback = A.ParseText("return " .. mtext)
+ok(mback and #mback.layout.widgets == 3, "макет переживает раундтрип")
+ok(mback and #mback.templates == 1 and mback.templates[1].layout.widgets[1].text == "Привет",
+    "шаблон переживает раундтрип")
+
+local layCode = A.LayoutToCode(withLayout.layout)
+local layText = table.concat(layCode, "\n")
+ok(has("function buildUI", layText), "генератор макета: buildUI")
+ok(has("SetPos(10,", layText), "генератор макета: координаты")
+ok(has('SetText("ПУСК")', layText), "генератор макета: подпись кнопки")
+
+print("\n=== 10. КОНСТРУКТОР РАЗМЕЩЕНИЯ: ТУЛ И UNDO ===")
+local place = A.Normalize({
+    name = "Ядро цитадели", nodes = {
+        { uid = "n1", kind = "entity", x = 0, y = 0, data = { class = "grm_citadel_core" } },
+        { uid = "n2", kind = "light", x = 0, y = 0, data = { pos = { x = 0, y = 0, z = 50 } } },
+        { uid = "n3", kind = "export", x = 0, y = 0, data = { name = "citadel", kind = "prefab",
+            placeable = true, tool = "grm_studio_citadel", toolcat = "GRM Studio" } },
+    },
+})
+local tool = A.ToolFile(place, "grm_studio_citadel", "GRM Studio")
+ok(has("TOOL.LeftClick", tool), "тул: LeftClick")
+ok(has("undo.Create", tool), "тул: undo")
+ok(has('ents.Create("grm_citadel_core")', tool), "тул: класс ядра цитадели")
+ok(has("grm_studio_citadel.lua", tool), "тул: имя файла в шапке")
+local full = A.Generate(place)
+ok(has("5. ТУЛ РАЗМЕЩЕНИЯ", full), "компиляция содержит раздел тула")
+ok(has("6. КОНЕЦ", full), "компиляция закрыта")
+
+print(string.format("\nADDON STUDIO: %d/%d, провалов: %d", total - fails, total, fails))
+os.exit(fails == 0 and 0 or 1)
