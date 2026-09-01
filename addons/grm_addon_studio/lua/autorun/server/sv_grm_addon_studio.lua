@@ -74,13 +74,20 @@ function A.ProjectPath(slug)
 end
 
 --- Сохранение с read-back (грм-правило: file.Write сам по себе не успех).
+--- GRM.Persistence — часть основного аддона GRM: без него честно отказ.
 function A.SaveProject(slug, proj)
+    if not GRM.Persistence or not GRM.Persistence.SaveJSON then
+        return nil, "no_grm_persistence"
+    end
     local path = A.ProjectPath(slug)
     local ok, res = GRM.Persistence.SaveJSON(path, A.Normalize(proj), { version = A.FormatVersion })
     return ok, res
 end
 
 function A.LoadProject(slug)
+    if not GRM.Persistence or not GRM.Persistence.LoadJSON then
+        return nil, "no_grm_persistence"
+    end
     local path = A.ProjectPath(slug)
     local data, res = GRM.Persistence.LoadJSON(path, nil, {
         version = A.FormatVersion,

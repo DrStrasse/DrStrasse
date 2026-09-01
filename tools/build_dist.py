@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Пересборка архивов dist/ из рабочего дерева.
 
-Четыре архива:
+Архивы:
   grm_single_addon.zip  — весь аддон, файлы под префиксом grm/
   grm_full_code.zip     — то же самое, но без префикса
   grm_economy.zip       — экономика, банк, документы, служебные компьютеры
                           и модули розыска/штрафов, от которых они зависят
   grm_fix_hud_tab_currency.zip — точечный фикс HUD/TAB/валюты
   grm_textscreens.zip   — 3D2D Textscreens (отдельная папка в addons/)
+  grm_addon_studio.zip  — Студия аддона (отдельный аддон, addons/grm_addon_studio/)
 
 Запуск: python3 tools/build_dist.py
 """
@@ -189,6 +190,8 @@ def main():
     build("grm_fix_hud_tab_currency.zip", HUD_FIX_FILES)
     # 3D2D Textscreens: отдельный аддон, ставится рядом с grm
     build_addon("grm_textscreens.zip", "grm_textscreens", prefix="grm_textscreens/")
+    # Студия аддона: отдельный аддон (в lua/ её нет — см. addons/grm_addon_studio)
+    build_addon("grm_addon_studio.zip", "grm_addon_studio", prefix="grm_addon_studio/")
     pack_system_prone()
 
 

@@ -18,10 +18,12 @@
 
 | Путь | Что это |
 |---|---|
-| `lua/` | Весь код (авторан, энтити, оружие, тулзы, easychat) |
+| `lua/` | Весь код основного модуля (авторан, энтити, оружие, тулзы, easychat) |
 | `materials/` | Материалы (интерфейс, оверлеи, текстуры) |
 | `models/` | Модели |
+| `addons/grm_addon_studio/` | **Студия аддона** — отдельный аддон (`dist/grm_addon_studio.zip`) |
 | `addons/grm_fire/` | Отдельный пожарный аддон (vFire, рукава, гидранты, насосы) |
+| `addons/grm_textscreens/` | 3D2D Textscreens (сторонний, только пакуется) |
 | `tools/` | Скрипты сборки (`build_dist.py`), стиль (`lua_style.py`), аудит, luatest |
 | `dist/` | Готовые архивы для установки |
 
@@ -32,6 +34,12 @@
 
 Основной аддон: `garrysmod/addons/grm/` из архива  
 https://github.com/DrStrasse/DrStrasse/raw/arena/01a05ba4-drstrasse/dist/grm_single_addon.zip  
+
+Студия аддона — **отдельный аддон**: `garrysmod/addons/grm_addon_studio/` из архива  
+https://github.com/DrStrasse/DrStrasse/raw/arena/01a05ba4-drstrasse/dist/grm_addon_studio.zip  
+В `grm_single_addon.zip` её нет (в `lua/` файлы студии не входят). Без
+основного GRM студия открывается, но сохранение проектов откажет
+(`no_grm_persistence`) — нужен установленный GRM.
 
 Пожарный — в `garrysmod/addons/grm_fire/` (`dist/grm_fire_addon.zip`, если есть).
 

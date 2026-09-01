@@ -1,5 +1,35 @@
 # CHANGELOG — история изменений
 
+## 2026-09-01 — Студия аддона вынесена в отдельный аддон
+
+Заказ владельца: «Лучше всего аддон-студию вынести в отдельный аддон,
+а из модуля GRM убрать».
+
+- Файлы `sh_/sv_/cl_grm_addon_studio.lua` переехали из `lua/autorun/` в
+  **`addons/grm_addon_studio/lua/autorun/`** (+ рамка `addon.json`).
+- В `lua/` студии больше нет — она не попадает в `grm_single_addon.zip`
+  и `grm_full_code.zip`. Сборка: новый архив **`dist/grm_addon_studio.zip`**
+  (`build_addon` в `tools/build_dist.py`).
+- Студия ставится рядом с GRM: `addons/grm` + `addons/grm_addon_studio`.
+  Без основного GRM студия открывается, сохранение/загрузка честно
+  отказывает `no_grm_persistence` (guard, а не падение на nil).
+- `tools/lua_style.py` теперь сканирует и `addons/` (сторонний код
+  `grm_textscreens/` и паковые `weapon_extinguisher/weapon_firehose`
+  остаются вне форматирования — правило владельца).
+- Стенд `sim_addon_studio.lua`: 108/108 (новый раздел: файлы по адресу
+  `addons/grm_addon_studio/`, в `lua/autorun` их нет, guard
+  `no_grm_persistence`). Откат переноса краснит стенд.
+
+### Первые боевые отчёты и их фиксы (до выноса)
+
+- `DScrollPanel`: чистка только `GetCanvas()` — инспектор снова
+  редактируемый; `SetEditable(false)` вместо несуществующего `SetReadOnly`.
+- 3D-вьюпорт: `cam.Start3D` в экранных координатах панели
+  (`LocalToScreen`), `Dock(FILL)` после кнопок.
+- «ТЕСТ ОКНА» не сносит заголовок DFrame (контент-холдер), меню через
+  `vgui.Create("DMenu")`, карточки 300/палитра 280 + `clipText`,
+  модель-каркас при невалидном пути.
+
 ## 2026-09-01 — Студия аддона (GRM Addon Studio v1.0)
 
 Заказ владельца: «студия с графами, с 3D-моделями, со считыванием

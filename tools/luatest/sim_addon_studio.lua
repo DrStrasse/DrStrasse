@@ -33,7 +33,7 @@ local function read(path)
     return s
 end
 
-local loaded, err = stub.loadModule("lua/autorun/sh_grm_addon_studio.lua")
+local loaded, err = stub.loadModule("addons/grm_addon_studio/lua/autorun/sh_grm_addon_studio.lua")
 ok(loaded, "модуль общей части поднялся", err)
 local A = _G.GRM and _G.GRM.AddonStudio
 ok(A and A.Version == "1.0.0", "версия 1.0.0")
@@ -368,7 +368,8 @@ print("\n=== 13. КЛИЕНТСКИЙ UI: БЕЗ НЕСУЩЕСТВУЮЩИХ М
 --[[ Боевой отчёт владельца: «attempt to call method 'SetReadOnly' (a nil
      value)» в mkCodeTab — в GMod у DTextEntry SetReadOnly нет, падает всё
      окно студии. Стенд читает клиентский файл и требует правильный API. ]]
-local clientSrc = read("lua/autorun/client/cl_grm_addon_studio.lua")
+local clientSrc = read("addons/grm_addon_studio/lua/autorun/client/cl_grm_addon_studio.lua")
+local serverSrc = read("addons/grm_addon_studio/lua/autorun/server/sv_grm_addon_studio.lua")
 -- В комментарии слово «SetReadOnly» допустимо — ловим именно ВЫЗОВ.
 ok(not has(":SetReadOnly(", clientSrc), "в клиенте нет вызова SetReadOnly (GMod DTextEntry его не имеет)")
 ok(has("SetEditable(false)", clientSrc), "вывод кода — SetEditable(false): копировать можно, править нельзя")
@@ -464,6 +465,27 @@ ok(has("CARD_W, CARD_H, PORT = 300", clientSrc),
     "карточки шире (300) — подпись помещается")
 ok(has("SetWide(280)", clientSrc),
     "палитра шире (280) — названия кнопок влезают")
+
+--[[ 5) ОТДЕЛЬНЫЙ АДДОН. Владелец: «Аддон-студию вынести в отдельный
+     аддон, из модуля GRM убрать». Файлы живут в addons/grm_addon_studio/
+     и собираются отдельным архивом; в lua/autorun их быть не должно
+     (иначе студия попадёт в grm_single_addon.zip второй раз). ]]
+local function exists(p)
+    local f = io.open(p, "rb")
+    if not f then return false end
+    f:close() return true
+end
+local hasAddonJson = exists("addons/grm_addon_studio/addon.json")
+local hasAddonCl = exists("addons/grm_addon_studio/lua/autorun/client/cl_grm_addon_studio.lua")
+local hasAddonSv = exists("addons/grm_addon_studio/lua/autorun/server/sv_grm_addon_studio.lua")
+ok(hasAddonJson, "аддон: есть addon.json")
+ok(hasAddonCl and hasAddonSv, "аддон: cl+sv на месте")
+local inMainSh = exists("lua/autorun/sh_grm_addon_studio.lua")
+local inMainCl = exists("lua/autorun/client/cl_grm_addon_studio.lua")
+local inMainSv = exists("lua/autorun/server/sv_grm_addon_studio.lua")
+ok(not inMainSh and not inMainCl and not inMainSv,
+    "аддон: в lua/autorun файлов студии нет (не дублируется в основной сборке)")
+ok(has("no_grm_persistence", serverSrc or ""), "аддон: без GRM.Persistence — честный отказ, не nil")
 
 print(string.format("\nADDON STUDIO: %d/%d, провалов: %d", total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)

@@ -98,9 +98,6 @@ action — `resource.action`; hook — `GRM_<Domain><PastTense>`; backend — к
 ### Прочее
 | Файл | Назначение |
 |---|---|
-| `sh_grm_addon_studio.lua` | Студия аддонов: каталог узлов (34 шт.), манифест, виджеты/шаблоны макета, `A.SnapRect`/`A.GrowRect`/`A.MoveRect`, `A.Validate`, `A.CheckSyntax`, генератор GLua + тул размещения |
-| `sv_grm_addon_studio.lua` | Студия аддонов (сервер): права, net (чанки 8 КБ), сохранение проектов/снимков |
-| `cl_grm_addon_studio.lua` | Студия аддонов (клиент): граф, палитра, инспектор, 3D-вьюпорт с гизмо (режим «СЦЕНА»), конструктор окон (12 виджетов, ресайз, сетка), окно предпросмотра (модели/материалы/звуки/кадры), проверка, компиляция |
 | `sh_grm_inventory.lua` | Инвентарь v1.7 |
 | `sh_grm_identity.lua` | AccountKey/CharacterKey |
 | `sh_grm_doors.lua` / `sh_grm_doors_access.lua` | Двери v4.0, доступ |
@@ -165,6 +162,23 @@ action — `resource.action`; hook — `GRM_<Domain><PastTense>`; backend — к
 `grm_citadel_core`, `grm_door_admin`, `grm_duty_npc`, `grm_jobs`, `grm_lab_tool`,
 `grm_minimap`, `grm_perm_tool`, `grm_property`, `grm_quest_tool`, `grm_service_tool`,
 `grm_sliding_door`, `grm_vendor_tool`, `vehicle_dealer_tool`.
+
+---
+
+## 4.5. Отдельные аддоны (`addons/`)
+
+Ставятся рядом с `addons/grm` (основным) и собираются в свои архивы.
+
+| Папка | Архив | Что это |
+|---|---|---|
+| `addons/grm_addon_studio/` | `dist/grm_addon_studio.zip` | Студия аддона: каталог узлов (34 шт.), манифест, виджеты/шаблоны макета (`A.SnapRect`/`A.GrowRect`/`A.MoveRect`, `A.Validate`, `A.CheckSyntax`), генератор GLua + тул размещения (sh); сервер: права, net (чанки 8 КБ), сохранение проектов/снимков в `data/grm_studio/` (sv); клиент: граф, палитра, инспектор, 3D-вьюпорт с гизмо («СЦЕНА»), конструктор окон (12 виджетов), предпросмотр, проверка, компиляция (cl) |
+| `addons/grm_fire/` | (вручную) | Пожарный аддон: vFire-пак, рукава, гидранты, насосы |
+| `addons/grm_textscreens/` | `dist/grm_textscreens.zip` | 3D2D Textscreens (сторонний аддон, только пакуется) |
+
+В `lua/` студии нет — она не входит в `grm_single_addon.zip`. Зависимости от
+основного GRM (шрифты темы, `GRM.Persistence`, `GRM.Gizmo`) опциональны:
+без основного аддона студия открывается, сохранение честно отказывает
+`no_grm_persistence`.
 
 ---
 

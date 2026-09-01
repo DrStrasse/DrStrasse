@@ -33,12 +33,17 @@ import os
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LUA_DIR = os.path.join(ROOT, "lua")
+# Основной модуль + отдельные аддоны (grm_addon_studio, grm_textscreens…).
+SCAN_DIRS = ("lua", "addons")
 
 # Сторонние библиотеки: форматируются апстримом, у нас — как есть.
+# Паковые файлы пожарного аддона владелец просил парсером не чинить.
 VENDORED = (
     "lua/easychat/",
     "lua/autorun/easychat_init.lua",
+    "addons/grm_fire/lua/weapons/weapon_extinguisher.lua",
+    "addons/grm_fire/lua/weapons/weapon_firehose.lua",
+    "addons/grm_textscreens/",
 )
 
 INDENT = "    "
@@ -50,15 +55,16 @@ def is_vendored(rel: str) -> bool:
 
 
 def iter_files():
-    for base, _dirs, names in os.walk(LUA_DIR):
-        for name in sorted(names):
-            if not name.endswith(".lua"):
-                continue
-            path = os.path.join(base, name)
-            rel = os.path.relpath(path, ROOT).replace(os.sep, "/")
-            if is_vendored(rel):
-                continue
-            yield rel, path
+    for scan in SCAN_DIRS:
+        for base, _dirs, names in os.walk(os.path.join(ROOT, scan)):
+            for name in sorted(names):
+                if not name.endswith(".lua"):
+                    continue
+                path = os.path.join(base, name)
+                rel = os.path.relpath(path, ROOT).replace(os.sep, "/")
+                if is_vendored(rel):
+                    continue
+                yield rel, path
 
 
 def expand_indent(line: str) -> str:
