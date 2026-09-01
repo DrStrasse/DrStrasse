@@ -127,6 +127,13 @@ JSON — `util.JSONToTable(txt, false, true)`; деньги только чер�
 
 Полный список — `ARCHITECTURE.md`.
 
+**Чат (EasyChat):** команды с ведущим `/` или `!`, не распознанные ни
+одним модулем (например `!noclip`), выполняются локально как консольные
+и **никогда не выдаются в глобальный чат**. Реестр известных команд —
+`GRM.EasyChat.CmdList` в `lua/autorun/zz_grm_easychat_cmds.lua`: новую
+чат-команду модуля нужно вносить туда (контролирует
+`sim_easychat_unknown_cmd.lua` → `tools/luatest/`).
+
 ## Зависимости
 
 - **ArcCW** — оружие.
